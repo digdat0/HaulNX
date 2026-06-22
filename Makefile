@@ -40,7 +40,11 @@ include $(DEVKITPRO)/libnx/switch_rules
 TARGET	:=	TicoDLplus
 APP_TITLE	:=	TicoDL+
 APP_AUTHOR	:=	digdat0
-APP_VERSION	:=	2.0.0
+# Single source of truth: the version string lives in the VERSION file. It is
+# baked into the .nacp (APP_VERSION) and regenerated into include/version.h (the
+# version the running app compares against for self-update) by the version_header
+# rule below. Bump VERSION only — everything else follows.
+APP_VERSION	:=	$(strip $(shell cat $(TOPDIR)/VERSION | tr -d '\r'))
 BUILD		:=	build
 SOURCES		:=	source
 DATA		:=	data
@@ -160,14 +164,21 @@ ifneq ($(ROMFS),)
 	export NROFLAGS += --romfsdir=$(CURDIR)/$(ROMFS)
 endif
 
-.PHONY: $(BUILD) clean all plutonium
+.PHONY: $(BUILD) clean all plutonium version_header
 
 #---------------------------------------------------------------------------------
 all: $(BUILD)
 
-$(BUILD): plutonium
+$(BUILD): plutonium version_header
 	@[ -d $@ ] || mkdir -p $@
 	@$(MAKE) --no-print-directory -C $(BUILD) -f $(CURDIR)/Makefile
+
+# Regenerate include/version.h from VERSION. Only rewrites the file when the
+# string actually changed, so unchanged builds don't trigger a full recompile.
+version_header:
+	@printf '#ifndef VERSION_H\n#define VERSION_H\n#define APP_VERSION_STR "%s"\n#endif\n' "$(APP_VERSION)" > $(CURDIR)/include/version.h.tmp
+	@cmp -s $(CURDIR)/include/version.h.tmp $(CURDIR)/include/version.h 2>/dev/null || cp $(CURDIR)/include/version.h.tmp $(CURDIR)/include/version.h
+	@rm -f $(CURDIR)/include/version.h.tmp
 
 plutonium:
 	@$(MAKE) --no-print-directory -C $(CURDIR)/Plutonium

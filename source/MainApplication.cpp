@@ -35,6 +35,9 @@ static std::string g_filter;
 static char g_files_id[256], g_files_base[512], g_files_target[64];
 static bool g_files_manual = false;
 
+#define FILES_SUBTITLE \
+    "A download  - all  Y filter  X refresh  L/R repo  B back"
+
 struct DirEnt {
     std::string name;
     bool is_dir;
@@ -198,7 +201,7 @@ static void rebuild_files(MainLayout *lay, const char *target) {
         bool inst = file_installed(target, f->name);
         g_marks.push_back(inst ? 1 : 0);
         char row[220];
-        snprintf(row, sizeof(row), "%s %-46.46s  %s", inst ? "*" : " ", f->name,
+        snprintf(row, sizeof(row), "%s %-68.68s %10s", inst ? "*" : " ", f->name,
                  human_size(f->size).c_str());
         lay->AddRow(row);
     }
@@ -290,28 +293,38 @@ static std::vector<DirEnt> list_dir(const std::string &path) {
 
 // ---- MainLayout -----------------------------------------------------------
 MainLayout::MainLayout() : Layout::Layout() {
-    this->SetBackgroundColor(pu::ui::Color(28, 30, 38, 255));
+    this->SetBackgroundColor(pu::ui::Color(24, 26, 33, 255));
     const s32 sw = (s32)pu::ui::render::ScreenWidth;
 
-    this->title = pu::ui::elm::TextBlock::New(45, 42, "TicoDL+");
+    // Blue header bar across the top.
+    this->header = pu::ui::elm::Rectangle::New(0, 0, sw, 150,
+                                               pu::ui::Color(36, 72, 140, 255));
+    this->Add(this->header);
+
+    this->title = pu::ui::elm::TextBlock::New(45, 34, "TicoDL+");
     this->title->SetColor(pu::ui::Color(255, 255, 255, 255));
     this->Add(this->title);
 
-    this->status = pu::ui::elm::TextBlock::New(sw - 420, 48, "");
-    this->status->SetColor(pu::ui::Color(190, 195, 210, 255));
+    this->status = pu::ui::elm::TextBlock::New(sw - 430, 42, "");
+    this->status->SetColor(pu::ui::Color(210, 222, 245, 255));
     this->Add(this->status);
 
-    this->subtitle = pu::ui::elm::TextBlock::New(45, 112, "");
-    this->subtitle->SetColor(pu::ui::Color(170, 175, 190, 255));
+    this->subtitle = pu::ui::elm::TextBlock::New(45, 100, "");
+    this->subtitle->SetColor(pu::ui::Color(190, 205, 232, 255));
     this->Add(this->subtitle);
 
+    // Menu fills the rest of the 1080 canvas (scales to 720 in handheld).
     this->menu = pu::ui::elm::Menu::New(
-        0, 172, sw, pu::ui::Color(226, 228, 234, 255),
-        pu::ui::Color(120, 170, 225, 255), 84, 10);
+        0, 156, sw, pu::ui::Color(236, 238, 244, 255),
+        pu::ui::Color(120, 170, 225, 255), 84, 11);
     this->Add(this->menu);
 }
 
-void MainLayout::SetTitle(const std::string &t) { this->title->SetText(t); }
+void MainLayout::SetTitle(const std::string &t) {
+    // Keep the app name visible alongside the per-screen breadcrumb.
+    this->title->SetText(t.empty() ? std::string("TicoDL+")
+                                   : std::string("TicoDL+     ") + t);
+}
 void MainLayout::SetStatus(const std::string &t) { this->status->SetText(t); }
 void MainLayout::SetSubtitle(const std::string &t) { this->subtitle->SetText(t); }
 void MainLayout::ClearMenu() { this->menu->ClearItems(); }
@@ -349,8 +362,15 @@ void MainLayout::PageDown() { this->MoveBy(this->menu->GetNumberOfItemsToShow())
 void MainApplication::Toast(const std::string &msg) {
     auto tb = pu::ui::elm::TextBlock::New(0, 0, msg);
     tb->SetColor(pu::ui::Color(255, 255, 255, 255));
-    auto t = pu::ui::extras::Toast::New(tb, pu::ui::Color(40, 44, 54, 230));
+    auto t = pu::ui::extras::Toast::New(tb, pu::ui::Color(46, 120, 78, 240));
     this->StartOverlayWithTimeout(t, 1200);
+}
+
+void MainApplication::ToastErr(const std::string &msg) {
+    auto tb = pu::ui::elm::TextBlock::New(0, 0, msg);
+    tb->SetColor(pu::ui::Color(255, 255, 255, 255));
+    auto t = pu::ui::extras::Toast::New(tb, pu::ui::Color(160, 52, 52, 240));
+    this->StartOverlayWithTimeout(t, 1500);
 }
 
 bool MainApplication::Confirm(const std::string &title, const std::string &msg) {
@@ -374,7 +394,7 @@ void MainApplication::GotoHome() {
     this->screen = Screen::Home;
     this->layout->ClearMenu();
     if (g_prefs.group_consoles) {
-        this->layout->SetTitle("TicoDL+   Consoles");
+        this->layout->SetTitle("Consoles");
         this->layout->SetSubtitle(
             "A open  Y add  X del  L queue  R installed  RS settings  ZL/ZR page");
         for (int i = 0; i < g_cfg.console_count; i++) {
@@ -387,7 +407,7 @@ void MainApplication::GotoHome() {
             this->layout->AddRow("(no collections - press Y to add)");
         }
     } else {
-        this->layout->SetTitle("TicoDL+   Repos");
+        this->layout->SetTitle("Repos");
         this->layout->SetSubtitle(
             "A browse  X edit  Y add  - delete  L queue  R installed  RS settings");
         for (int c = 0; c < g_cfg.console_count; c++) {
@@ -431,7 +451,7 @@ void MainApplication::GotoFiles(int ci, int ri) {
     ConsoleGroup *g = &g_cfg.consoles[ci];
     Repo *rp = &g->repos[ri];
     this->layout->SetTitle(std::string(g->console) + " > " + rp->label);
-    this->layout->SetSubtitle("A download  Y filter  X refresh  L queue  B back");
+    this->layout->SetSubtitle(FILES_SUBTITLE);
     this->screen = Screen::Files;
     show_files(this->layout.get(), rp->id, rp->download_base, g->target, false);
 }
@@ -439,7 +459,7 @@ void MainApplication::GotoFiles(int ci, int ri) {
 void MainApplication::GotoQueue() {
     this->screen = Screen::Queue;
     this->layout->SetTitle("Download Queue");
-    this->layout->SetSubtitle("A cancel  X retry  Y clear  ZL/ZR page  B back");
+    this->layout->SetSubtitle("A cancel  X retry  Y clear  - log  ZL/ZR page  B back");
     this->layout->ClearMenu();
 }
 
@@ -479,7 +499,7 @@ void MainApplication::GotoInstalled(const std::string &path) {
         shown = "roms" + shown.substr(strlen(ROMS_ROOT));
     }
     this->layout->SetTitle(std::string("Installed: ") + shown);
-    this->layout->SetSubtitle("A open  - delete  R home  B back");
+    this->layout->SetSubtitle("A open  X rename  - delete  B back/up");
     this->layout->ClearMenu();
     for (int i = 0; i < (int)g_inst.size(); i++) {
         char row[220];
@@ -536,6 +556,10 @@ void MainApplication::GotoPicker(Pending what) {
 }
 
 void MainApplication::GotoLog() {
+    // Remember where we came from (Settings or Queue) so B returns there.
+    if (this->screen != Screen::Log) {
+        this->log_origin = this->screen;
+    }
     this->screen = Screen::Log;
     this->layout->SetTitle("Download Log");
     this->layout->SetSubtitle("B back");
@@ -566,15 +590,23 @@ void MainApplication::HandleInput(u64 down, u64 held) {
         this->layout->ClearMenu();
         for (int i = 0; i < n; i++) {
             const QueueItem *it = &qv[i].item;
-            char row[200];
+            char info[64] = "";
             if (it->status == Q_DOWNLOADING && it->total) {
                 int pct = (int)((it->now * 100) / it->total);
-                snprintf(row, sizeof(row), "%-5s %3d%%  %-44.44s",
-                         qstatus(it->status), pct, it->name);
-            } else {
-                snprintf(row, sizeof(row), "%-5s       %-44.44s",
-                         qstatus(it->status), it->name);
+                if (it->speed) {
+                    snprintf(info, sizeof(info), "%d%% / %s @ %s/s", pct,
+                             human_size(it->total).c_str(),
+                             human_size(it->speed).c_str());
+                } else {
+                    snprintf(info, sizeof(info), "%d%% / %s", pct,
+                             human_size(it->total).c_str());
+                }
+            } else if (it->total) {
+                snprintf(info, sizeof(info), "%s", human_size(it->total).c_str());
             }
+            char row[220];
+            snprintf(row, sizeof(row), "%-5s %-40.40s  %s", qstatus(it->status),
+                     it->name, info);
             this->layout->AddRow(row);
         }
         if (n == 0) {
@@ -583,8 +615,15 @@ void MainApplication::HandleInput(u64 down, u64 held) {
         this->layout->SetSel(keep);
     }
 
-    if ((this->status_tick++ % 60) == 0) {
-        this->RefreshStatus();
+    // SD/battery refresh at most ~every 30s (psm/statvfs aren't free, and the
+    // input callback runs every frame — uncapped fps would spam them).
+    {
+        static u64 last = 0;
+        u64 now = armGetSystemTick();
+        if (last == 0 || armTicksToNs(now - last) >= 30000000000ULL) {
+            this->RefreshStatus();
+            last = now;
+        }
     }
 
     // Keep the console awake while downloads are active (main-thread only).
@@ -624,11 +663,15 @@ void MainApplication::HandleInput(u64 down, u64 held) {
     }
 
     // Global tools (shoulders + right stick), available from list screens.
-    if ((down & HidNpadButton_L) && this->screen != Screen::Queue) {
+    // In the Files view L/R are repurposed to switch repos (handled below),
+    // so the global queue/installed shortcuts skip that screen.
+    if ((down & HidNpadButton_L) && this->screen != Screen::Queue &&
+        this->screen != Screen::Files) {
         this->GotoQueue();
         return;
     }
-    if ((down & HidNpadButton_R) && this->screen != Screen::Installed) {
+    if ((down & HidNpadButton_R) && this->screen != Screen::Installed &&
+        this->screen != Screen::Files) {
         this->GotoInstalled(ROMS_ROOT);
         return;
     }
@@ -727,8 +770,45 @@ void MainApplication::HandleInput(u64 down, u64 held) {
                     bool ok = queue_add(url, f->name, g_files_target, auth,
                                         f->size, is_archive_name(f->name),
                                         f->md5);
-                    this->Toast(ok ? std::string("Queued: ") + f->name
-                                   : "Queue is full");
+                    if (ok) {
+                        this->Toast(std::string("Queued: ") + f->name);
+                    } else {
+                        this->ToastErr("Queue is full");
+                    }
+                }
+            }
+        } else if (down & HidNpadButton_Minus) {
+            // Download all: queue every file matching the current filter.
+            if (g_have_item && !g_files.empty()) {
+                char msg[80];
+                snprintf(msg, sizeof(msg), "Queue all %d file(s)?",
+                         (int)g_files.size());
+                if (this->Confirm("Download all", msg)) {
+                    char auth[320];
+                    creds_auth_header(&g_creds, auth, sizeof(auth));
+                    int ok = 0;
+                    bool full = false;
+                    for (int k = 0; k < (int)g_files.size(); k++) {
+                        ArchiveFile *f = &g_item.files[g_files[k]];
+                        char url[1024];
+                        ia_file_url(&g_item, f, url, sizeof(url));
+                        if (queue_add(url, f->name, g_files_target, auth,
+                                      f->size, is_archive_name(f->name),
+                                      f->md5)) {
+                            ok++;
+                        } else {
+                            full = true;
+                            break;
+                        }
+                    }
+                    char t[80];
+                    if (full) {
+                        snprintf(t, sizeof(t), "Queued %d (queue full)", ok);
+                        this->ToastErr(t);
+                    } else {
+                        snprintf(t, sizeof(t), "Queued %d file(s)", ok);
+                        this->Toast(t);
+                    }
                 }
             }
         } else if (down & HidNpadButton_Y) {
@@ -742,8 +822,16 @@ void MainApplication::HandleInput(u64 down, u64 held) {
             this->layout->SetSubtitle("Refreshing...");
             show_files(this->layout.get(), g_files_id, g_files_base,
                        g_files_target, true);
-            this->layout->SetSubtitle(
-                "A download  Y filter  X refresh  L queue  B back");
+            this->layout->SetSubtitle(FILES_SUBTITLE);
+        } else if ((down & (HidNpadButton_L | HidNpadButton_R)) &&
+                   !g_files_manual) {
+            // Switch to the previous/next repo of the same console.
+            ConsoleGroup *g = &g_cfg.consoles[this->sel_ci];
+            if (g->repo_count > 1) {
+                int dir = (down & HidNpadButton_R) ? 1 : -1;
+                int nr = (this->sel_ri + dir + g->repo_count) % g->repo_count;
+                this->GotoFiles(this->sel_ci, nr);
+            }
         }
         break;
     }
@@ -751,6 +839,9 @@ void MainApplication::HandleInput(u64 down, u64 held) {
     case Screen::Queue: {
         if (down & HidNpadButton_B) {
             this->GotoHome();
+        } else if (down & HidNpadButton_Minus) {
+            this->GotoLog();
+            return;
         } else if (down & HidNpadButton_Y) {
             queue_clear_finished();
             this->Toast("Cleared");
@@ -924,6 +1015,21 @@ void MainApplication::HandleInput(u64 down, u64 held) {
                         {"OK"}, true);
                 }
             }
+        } else if (down & HidNpadButton_X) {
+            s32 i = this->layout->Sel();
+            if (i >= 0 && i < (s32)g_inst.size()) {
+                char nm[256] = {0};
+                if (prompt("Rename to", g_inst[i].name.c_str(), nm, sizeof(nm))) {
+                    std::string from = this->inst_path + "/" + g_inst[i].name;
+                    std::string to = this->inst_path + "/" + nm;
+                    if (rename(from.c_str(), to.c_str()) == 0) {
+                        this->Toast("Renamed");
+                    } else {
+                        this->ToastErr("Rename failed");
+                    }
+                    this->GotoInstalled(this->inst_path);
+                }
+            }
         } else if (down & HidNpadButton_Minus) {
             s32 i = this->layout->Sel();
             if (i >= 0 && i < (s32)g_inst.size()) {
@@ -1024,7 +1130,7 @@ void MainApplication::HandleInput(u64 down, u64 held) {
                              this->pending_id.c_str());
                     this->layout->SetTitle(std::string("URL > ") + cname);
                     this->layout->SetSubtitle(
-                        "A download  Y filter  X refresh  L queue  B back");
+                        "A download  - all  Y filter  X refresh  B back");
                     this->screen = Screen::Files;
                     show_files(this->layout.get(), this->pending_id.c_str(), base,
                                cname, false);
@@ -1036,7 +1142,11 @@ void MainApplication::HandleInput(u64 down, u64 held) {
 
     case Screen::Log: {
         if (down & HidNpadButton_B) {
-            this->GotoSettings();
+            if (this->log_origin == Screen::Queue) {
+                this->GotoQueue();
+            } else {
+                this->GotoSettings();
+            }
         }
         break;
     }
@@ -1061,7 +1171,7 @@ void MainApplication::OnLoad() {
     this->sel_ri = 0;
     this->pending = Pending::None;
     this->inst_path = ROMS_ROOT;
-    this->status_tick = 0;
+    this->log_origin = Screen::Settings;
 
     this->layout = MainLayout::New();
     this->LoadLayout(this->layout);
@@ -1074,4 +1184,17 @@ void MainApplication::OnLoad() {
         (void)touch;
         this->HandleInput(down, held);
     });
+}
+
+// Orderly teardown after the UI loop ends. The background queue thread MUST be
+// joined (queue_exit) before the process exits, or libnx faults on a still-
+// running thread — that was the "an error occurred" crash on +. Tear services
+// down in reverse init order; queue_exit before net_exit since the worker uses
+// sockets/curl.
+void MainApplication::Shutdown() {
+    queue_exit();
+    appletSetMediaPlaybackState(false);
+    net_exit();
+    psmExit();
+    romfsExit();
 }

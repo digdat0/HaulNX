@@ -5,6 +5,7 @@
 
 class MainLayout : public pu::ui::Layout {
   private:
+    pu::ui::elm::Rectangle::Ref header;
     pu::ui::elm::TextBlock::Ref title;
     pu::ui::elm::TextBlock::Ref status;
     pu::ui::elm::TextBlock::Ref subtitle;
@@ -52,15 +53,17 @@ class MainApplication : public pu::ui::Application {
     Pending pending;
     std::string pending_id;  // archive id for a Manual-URL download
     std::string inst_path;   // current dir in the installed browser
-    int status_tick;
+    Screen log_origin;       // screen to return to from the log viewer
 
   public:
     using Application::Application;
     PU_SMART_CTOR(MainApplication)
 
     void OnLoad() override;
+    void Shutdown();
 
     void Toast(const std::string &msg);
+    void ToastErr(const std::string &msg);
     bool Confirm(const std::string &title, const std::string &msg);
 
     void GotoHome();

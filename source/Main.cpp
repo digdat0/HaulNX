@@ -22,5 +22,6 @@ int main() {
         diagAbortWithResult(rc);
     }
     main->Show();
+    main->Shutdown();
     return 0;
 }

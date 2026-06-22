@@ -4,6 +4,18 @@ Notes for each release. `release.sh` pulls the section matching the version in
 `VERSION` and attaches it to the GitHub release. Add a `## <version>` section
 here before running a release.
 
+## 2.0.1
+- Fixed a crash when exiting with **+** ("software was closed because an error
+  occurred"). The app now shuts the background download worker thread and its
+  services down cleanly on exit; a download interrupted by exiting keeps its
+  partial file and resumes on the next launch.
+- **Download all**: press **−** in a file list to queue every file matching the
+  current filter at once (with a confirmation).
+- **L/R switch repo** while browsing a file list — jump to the previous/next
+  repo of the same console without backing out (restores 1.x behavior).
+- Build: the version string now comes from a single source (the `VERSION` file);
+  the Makefile bakes it into the app and regenerates `version.h` automatically.
+
 ## 2.0.0
 - New **graphical UI** (Plutonium / SDL2) replacing the text console: full-screen
   menus with on-screen highlight, dialogs, toasts, and the Switch's shared fonts.
