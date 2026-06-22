@@ -5,10 +5,11 @@ A Nintendo Switch homebrew that browses and downloads game files from
 layout used by **TICO**, decompressing archives along the way. Built for the
 devkitPro / libnx toolchain.
 
-> Created by **digdat0**. TicoDL+ ships **no ROMs and no credentials** — you
-> point it at public archive.org collections (and optionally supply your own
-> archive.org keys for restricted items). You are responsible for complying with
-> the laws that apply to you.
+> Created by **digdat0**. TicoDL+ ships **no ROMs, no collections, and no
+> credentials** — it's an empty downloader. **You provide your own** archive.org
+> item ids (and optionally your own archive.org keys for restricted items). No
+> links to any content are bundled. You are responsible for complying with the
+> laws that apply to you.
 
 ---
 
@@ -49,8 +50,10 @@ devkitPro / libnx toolchain.
    ```
 3. Launch it from the homebrew menu.
 
-On first run it seeds a default `dl_sources.json` with collections for many
-systems. From then on you can update in-app (see **Updating** below).
+On first run it seeds an **empty** `dl_sources.json` containing only the list of
+supported console folders — **no collections or links are included**. Add your
+own collections in-app (press **Y** and enter an archive.org item id) or by
+editing `dl_sources.json` on your SD card.
 
 ---
 
@@ -179,7 +182,8 @@ All config lives under `sdmc:/switch/ticodlplus/`.
 
 ### `dl_sources.json`
 
-Seeded on first run; editable by hand. Schema:
+Seeded empty on first run; you fill it in. Schema (the `a_id` values shown are
+placeholders — substitute the archive.org item ids you choose to use):
 
 ```json
 {
@@ -189,9 +193,9 @@ Seeded on first run; editable by hand. Schema:
       "target": "snes",
       "repos": [
         {
-          "label": "USA Complete",
-          "a_id": "snes-usa-romset-complete-collection.-7z",
-          "URL": "https://archive.org/download/snes-usa-romset-complete-collection.-7z",
+          "label": "My SNES set",
+          "a_id": "<your-archive.org-item-id>",
+          "URL": "",
           "active": true
         }
       ]
