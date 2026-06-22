@@ -42,6 +42,19 @@ but it works.**
 
 ---
 
+## Screenshots
+
+_Coming soon._
+
+<!-- Drop images in docs/screenshots/ and reference them here, e.g.:
+![Main menu](docs/screenshots/main-menu.jpg)
+![Browsing a repo](docs/screenshots/browse.jpg)
+![Download queue](docs/screenshots/queue.jpg)
+![Settings](docs/screenshots/settings.jpg)
+-->
+
+---
+
 ## pre-req
 
 1. Download TICO from https://ticoverse.com/
@@ -271,6 +284,62 @@ against the console's own certificate store. This works on **real hardware**.
 Emulators that stub the `ssl` service (e.g. Ryujinx) will fail HTTPS regardless
 of the app — metadata browsing and downloads should be tested on hardware. Every
 request's result is logged to `debug.log`.
+
+---
+
+## Building from source
+
+TicoDL+ builds with the **devkitPro** toolchain (devkitA64 + libnx) plus a few
+portlibs. Source layout and build steps below.
+
+### Prerequisites
+
+1. Install **devkitPro** and the `switch-dev` group — see the
+   [Getting Started guide](https://devkitpro.org/wiki/Getting_Started). Make sure
+   `DEVKITPRO` is set in your environment (the installer sets this; on Windows use
+   the **MSYS2** shell that ships with devkitPro).
+2. Install the portlibs the app links against (dependencies, e.g. the
+   bzip2/xz/zstd/lz4/expat codecs, are pulled in automatically):
+   ```sh
+   dkp-pacman -S switch-curl switch-libarchive switch-zlib
+   ```
+
+### Build
+
+```sh
+make            # builds TicoDLplus.nro (auto-bumps the patch version)
+make clean      # removes build output (does not bump the version)
+```
+
+On Windows, run these inside the devkitPro MSYS2 shell, e.g.:
+
+```sh
+/c/devkitPro/msys2/usr/bin/bash.exe -lc "cd /c/path/to/ticodlplus && make"
+```
+
+Output is **`TicoDLplus.nro`**. Each `make` increments the patch version via
+`bump_version.sh` (which also generates `source/version.h`, kept out of git). To
+publish a release, run `make` then `sh release.sh` — it tags a GitHub release with
+the built version, attaches the `.nro`, and uses the matching `CHANGELOG.md`
+section as the notes.
+
+> Networking (metadata + downloads) only works on **real hardware** — the libnx
+> `ssl` backend isn't stubbed there. Emulators like Ryujinx will fail HTTPS.
+
+### Source layout
+
+| Path | Responsibility |
+|------|----------------|
+| `source/main.c` | text UI: menus, browsing, queue/installed views, settings |
+| `source/net.*` | libnx sockets + libcurl (downloads, HTTP GET, logging) |
+| `source/archive.c` / `iarchive.h` | archive.org metadata + download URLs |
+| `source/queue.*` | background download worker (resume, verify, extract, persist) |
+| `source/extract.*` | libarchive zip/7z/rar/tar extraction |
+| `source/config.*` | `dl_sources.json` / credentials / prefs load + save |
+| `source/fsutil.*` | mkdir-p, move, recursive delete, free-space |
+| `source/update.*` | GitHub release check + in-app self-update |
+| `source/md5.*` | MD5 for download verification |
+| `source/jsonutil.*`, `source/jsmn.*` | JSON parsing (vendored jsmn) |
 
 ---
 
