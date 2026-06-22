@@ -3,7 +3,8 @@
 A Nintendo Switch homebrew that browses and downloads game files from
 [archive.org](https://archive.org) and drops them straight into the folder
 layout used by **TICO**, decompressing archives along the way. Built for the
-devkitPro / libnx toolchain.
+devkitPro / libnx toolchain using Claude Code. **Yes, this is 100% AI created, 
+but it works.**
 
 > TicoDL+ ships **no ROMs, no collections, and no
 > credentials** — it's an empty downloader. **You provide your own** archive.org
@@ -281,46 +282,3 @@ request's result is logged to `debug.log`.
   [jsmn](https://github.com/zserge/jsmn) tokenizer (MIT).
 - Kudos to the creator of TICO https://ticoverse.com/
 - Inspired by TicoBro https://github.com/StonedModder/Ticobro concept
-
----
-
-## License
-
-TicoDL+ is free homebrew, released under the **MIT License**.
-
-```
-Copyright (c) 2026 digdat0
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-```
-
-### Third-party components
-
-TicoDL+ links or bundles open-source software under their own licenses:
-
-- **libnx** and the **devkitPro** toolchain — ISC
-- **libcurl** — curl license (MIT-style)
-- **libarchive** and its codecs (bzip2/xz/zstd/…) — BSD-2-Clause
-- **jsmn** JSON tokenizer — MIT
-- **MD5** implementation — public domain (Alexander Peslyak / Solar Designer)
-
-TicoDL+ is not affiliated with or endorsed by Nintendo, archive.org, or TICO,
-and bundles no game content. The MIT license covers the TicoDL+ application
-only; you remain responsible for complying with the laws that apply to your use
-of it and any content you choose to download.
