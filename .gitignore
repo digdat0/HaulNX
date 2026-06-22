@@ -1,0 +1,10 @@
+# build output
+/build/
+*.nro
+*.elf
+*.nacp
+*.lst
+*.map
+
+# generated each build by bump_version.sh
+/source/version.h
