@@ -44,14 +44,15 @@ but it works.**
 
 ## Screenshots
 
-_Coming soon._
 
-<!-- Drop images in docs/screenshots/ and reference them here, e.g.:
-![Main menu](docs/screenshots/main-menu.jpg)
-![Browsing a repo](docs/screenshots/browse.jpg)
-![Download queue](docs/screenshots/queue.jpg)
-![Settings](docs/screenshots/settings.jpg)
--->
+<img width="1280" height="720" alt="01-initial" src="https://github.com/user-attachments/assets/a9c85db5-1b25-49d3-a85c-c060f8183917" />
+<img width="1280" height="720" alt="02-repo names" src="https://github.com/user-attachments/assets/db44cbd9-f215-490a-bf64-f60e0a0bcda1" />
+<img width="1280" height="720" alt="03-repo game list" src="https://github.com/user-attachments/assets/a21c2b00-687d-4223-a528-1b8b0927eff7" />
+<img width="1280" height="720" alt="04-dl queue" src="https://github.com/user-attachments/assets/52a2fc88-bb44-4ac0-a4ab-f3e75146b627" />
+<img width="1280" height="720" alt="05-settings" src="https://github.com/user-attachments/assets/87650034-9616-4b82-ba59-de73cb84fc60" />
+<img width="1280" height="720" alt="06-installed dirs" src="https://github.com/user-attachments/assets/1d4ff48b-d139-41a1-ba54-1d9318d03259" />
+<img width="1280" height="720" alt="07-installed games" src="https://github.com/user-attachments/assets/e919b574-8061-4643-8fb8-dae9e613303f" />
+
 
 ---
 
