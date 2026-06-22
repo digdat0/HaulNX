@@ -81,11 +81,48 @@ editing `dl_sources.json` on your SD card.
 
 ## Quick start
 
-1. Open a console from the main list (**A**).
-2. Pick one of its repos to browse its file list.
-3. Highlight a game and press **A** to add it to the download queue.
-4. Keep browsing, or press **ZL** to watch the queue. Files extract/move into
-   `sdmc:/tico/roms/<console>/` automatically when done.
+TicoDL+ starts **empty** — you add your own collections before anything shows up.
+
+### 1. Add a collection
+
+A *collection* is an archive.org **item** that holds the game files for a system.
+Each item has an **item id** — the last part of its URL, e.g. for
+`https://archive.org/details/MyExampleItem` the id is `MyExampleItem`.
+
+1. On the main menu, press **Y** (add).
+2. Choose the **console** the files belong to — this is the
+   `sdmc:/tico/roms/<console>` folder TICO reads from. (The selectable list comes
+   from `tico_consoles`; you can't pick an unsupported folder.)
+3. Enter a **name** for the repo — any label, e.g. `My SNES set`.
+4. Enter the archive.org **item id** (the `<id>` from `archive.org/details/<id>`).
+
+The console now appears on the main menu. Open it with **A**, pick the repo, and
+you'll see its file list. Repeat **Y** to add more collections — a console can
+hold several. (You can also edit `dl_sources.json` directly — see
+[Configuration](#configuration).)
+
+### 2. Add your archive.org keys (optional)
+
+Public collections download anonymously and need **no keys**. You only need keys
+for **restricted** items that require an archive.org account.
+
+1. On a computer, sign in at [archive.org](https://archive.org) and open your S3
+   keys page: <https://archive.org/account/s3.php>. You'll get an **access key**
+   and a **secret key**.
+2. In TicoDL+, open **Settings** (**L**).
+3. Highlight **Archive.org access key**, press **A**, and type your access key.
+4. Highlight **Archive.org secret**, press **A**, and type your secret. It's
+   stored but shown only as `<set>` (never displayed again).
+
+Keys live only on your SD card (`sdmc:/switch/ticodlplus/credentials.json`) and
+are sent only to archive.org hosts.
+
+### 3. Download
+
+1. Open a console (**A**) and pick a repo to browse its files.
+2. Highlight a file and press **A** to add it to the download queue.
+3. Press **ZL** to watch the queue. Completed downloads extract/move into
+   `sdmc:/tico/roms/<console>/` automatically.
 
 ---
 
