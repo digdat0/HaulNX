@@ -4,6 +4,17 @@ Notes for each release. `release.sh` pulls the section matching the version in
 `VERSION` and attaches it to the GitHub release. Add a `## <version>` section
 here before running a release.
 
+## 2.0.2
+- The in-app updater now shows live **download progress** instead of looking
+  frozen while it fetches the new build.
+- New **dark theme**: near-black background with light text.
+- **Tabbed navigation**: a top bar with Browse / Installed / Queue / Settings,
+  cycled with the L/R shoulder buttons. (Switching repos inside a file list
+  moved to D-pad Left/Right.) Button hints now live in a bottom footer.
+- File and queue lists are now real **tables**: the file name and a right-
+  aligned size/info column, with sizes color-coded by KB / MB / GB and queue
+  rows colored by status.
+
 ## 2.0.1
 - Fixed a crash when exiting with **+** ("software was closed because an error
   occurred"). The app now shuts the background download worker thread and its
