@@ -36,7 +36,7 @@ static char g_files_id[256], g_files_base[512], g_files_target[64];
 static bool g_files_manual = false;
 
 #define FILES_SUBTITLE \
-    "A download  - all  Y filter  X refresh  L/R repo  B back"
+    "A get  - all  Y filter  X refresh  Dpad< >repo  L/R tabs  B back"
 
 struct DirEnt {
     std::string name;
@@ -57,6 +57,19 @@ static std::string human_size(uint64_t bytes) {
     char buf[32];
     snprintf(buf, sizeof(buf), "%.1f %s", v, u[i]);
     return std::string(buf);
+}
+
+// Color-code a row by file size magnitude (KB / MB / GB), restoring the size
+// color cues the text UI had. (Plutonium colors a whole row, not just the size
+// token, so the whole row takes the tier color.)
+static pu::ui::Color size_color(uint64_t b) {
+    if (b >= (1ull << 30)) {
+        return pu::ui::Color(245, 175, 95, 255); // >= 1 GB : orange
+    }
+    if (b >= (1ull << 20)) {
+        return pu::ui::Color(130, 225, 150, 255); // >= 1 MB : green
+    }
+    return pu::ui::Color(150, 205, 255, 255); // KB : light blue
 }
 
 static bool ci_contains(const char *hay, const char *needle) {
@@ -121,6 +134,20 @@ static const char *qstatus(QStatus s) {
     case Q_FAILED:      return "FAIL";
     case Q_CANCELLED:   return "cxl";
     default:            return "?";
+    }
+}
+
+static pu::ui::Color qstatus_color(QStatus s) {
+    switch (s) {
+    case Q_DOWNLOADING: return pu::ui::Color(120, 180, 255, 255); // blue
+    case Q_VERIFYING:
+    case Q_EXTRACTING:  return pu::ui::Color(210, 185, 120, 255); // amber
+    case Q_DONE:        return pu::ui::Color(130, 225, 150, 255); // green
+    case Q_SAVED:       return pu::ui::Color(190, 205, 130, 255); // olive
+    case Q_FAILED:      return pu::ui::Color(240, 110, 110, 255); // red
+    case Q_CANCELLED:   return pu::ui::Color(150, 150, 162, 255); // gray
+    case Q_QUEUED:
+    default:            return pu::ui::Color(205, 212, 225, 255); // light
     }
 }
 
@@ -200,10 +227,11 @@ static void rebuild_files(MainLayout *lay, const char *target) {
         ArchiveFile *f = &g_item.files[g_files[k]];
         bool inst = file_installed(target, f->name);
         g_marks.push_back(inst ? 1 : 0);
-        char row[220];
-        snprintf(row, sizeof(row), "%s %-68.68s %10s", inst ? "*" : " ", f->name,
-                 human_size(f->size).c_str());
-        lay->AddRow(row);
+        char name[540];
+        snprintf(name, sizeof(name), "%s%s", inst ? "* " : "", f->name);
+        // Name column white; size column right-aligned and tinted by magnitude.
+        lay->AddRow2(name, human_size(f->size),
+                     pu::ui::Color(232, 234, 240, 255), size_color(f->size));
     }
     if (g_files.empty()) {
         lay->AddRow("(no files match)");
@@ -293,31 +321,78 @@ static std::vector<DirEnt> list_dir(const std::string &path) {
 
 // ---- MainLayout -----------------------------------------------------------
 MainLayout::MainLayout() : Layout::Layout() {
-    this->SetBackgroundColor(pu::ui::Color(24, 26, 33, 255));
+    // Dark theme: near-black canvas with light text.
+    this->SetBackgroundColor(pu::ui::Color(12, 12, 14, 255));
     const s32 sw = (s32)pu::ui::render::ScreenWidth;
+    const s32 sh = (s32)pu::ui::render::ScreenHeight;
 
-    // Blue header bar across the top.
+    // Header: a darker blue title row sitting above a lighter blue tab strip,
+    // so the tabs read as a distinct band.
     this->header = pu::ui::elm::Rectangle::New(0, 0, sw, 150,
-                                               pu::ui::Color(36, 72, 140, 255));
+                                               pu::ui::Color(28, 54, 104, 255));
     this->Add(this->header);
 
-    this->title = pu::ui::elm::TextBlock::New(45, 34, "TicoDL+");
+    this->title = pu::ui::elm::TextBlock::New(45, 24, "TicoDL+");
     this->title->SetColor(pu::ui::Color(255, 255, 255, 255));
     this->Add(this->title);
 
-    this->status = pu::ui::elm::TextBlock::New(sw - 430, 42, "");
+    this->status = pu::ui::elm::TextBlock::New(sw - 430, 30, "");
     this->status->SetColor(pu::ui::Color(210, 222, 245, 255));
     this->Add(this->status);
 
-    this->subtitle = pu::ui::elm::TextBlock::New(45, 100, "");
-    this->subtitle->SetColor(pu::ui::Color(190, 205, 232, 255));
+    // Lighter-blue tab strip band.
+    const s32 strip_y = 80;
+    const s32 strip_h = 70;
+    this->tab_bar = pu::ui::elm::Rectangle::New(
+        0, strip_y, sw, strip_h, pu::ui::Color(58, 104, 178, 255));
+    this->Add(this->tab_bar);
+
+    // Tabs (L/R cycles): Browse | Installed | Queue | Settings, evenly spaced
+    // by centering each label within its quarter of the screen.
+    const char *labels[] = {"Browse", "Installed", "Queue", "Settings"};
+    const s32 tab_y = strip_y + 16;
+    const s32 seg = sw / 4;
+    for (int i = 0; i < 4; i++) {
+        auto tb = pu::ui::elm::TextBlock::New(0, tab_y, labels[i]);
+        tb->SetColor(pu::ui::Color(196, 212, 240, 255));
+        tb->SetX(seg * i + (seg - tb->GetWidth()) / 2);
+        this->Add(tb);
+        this->tabs.push_back(tb);
+    }
+    this->tab_underline = pu::ui::elm::Rectangle::New(
+        0, strip_y + strip_h - 5, 120, 5, pu::ui::Color(150, 205, 255, 255));
+    this->Add(this->tab_underline);
+
+    // List fills the middle; a footer bar at the bottom carries the controls.
+    const s32 footer_h = 64;
+    const s32 list_y = 158;
+    const s32 row_h = 84;
+    const s32 avail = sh - list_y - footer_h;
+    const s32 rows_visible = avail / row_h; // 10 on 1080, fewer if scaled
+    this->list = TableList::New(0, list_y, sw, row_h, rows_visible);
+    this->Add(this->list);
+
+    this->footer = pu::ui::elm::Rectangle::New(0, sh - footer_h, sw, footer_h,
+                                               pu::ui::Color(22, 42, 80, 255));
+    this->Add(this->footer);
+    this->subtitle = pu::ui::elm::TextBlock::New(45, sh - footer_h + 18, "");
+    this->subtitle->SetColor(pu::ui::Color(206, 216, 238, 255));
     this->Add(this->subtitle);
 
-    // Menu fills the rest of the 1080 canvas (scales to 720 in handheld).
-    this->menu = pu::ui::elm::Menu::New(
-        0, 156, sw, pu::ui::Color(236, 238, 244, 255),
-        pu::ui::Color(120, 170, 225, 255), 84, 11);
-    this->Add(this->menu);
+    this->SetActiveTab(0);
+}
+
+void MainLayout::SetActiveTab(int idx) {
+    if (idx < 0 || idx >= (int)this->tabs.size()) {
+        return;
+    }
+    for (int i = 0; i < (int)this->tabs.size(); i++) {
+        this->tabs[i]->SetColor(i == idx
+                                    ? pu::ui::Color(255, 255, 255, 255)
+                                    : pu::ui::Color(196, 212, 240, 255));
+    }
+    this->tab_underline->SetX(this->tabs[idx]->GetX());
+    this->tab_underline->SetWidth(this->tabs[idx]->GetWidth());
 }
 
 void MainLayout::SetTitle(const std::string &t) {
@@ -327,36 +402,25 @@ void MainLayout::SetTitle(const std::string &t) {
 }
 void MainLayout::SetStatus(const std::string &t) { this->status->SetText(t); }
 void MainLayout::SetSubtitle(const std::string &t) { this->subtitle->SetText(t); }
-void MainLayout::ClearMenu() { this->menu->ClearItems(); }
+void MainLayout::ClearMenu() { this->list->Clear(); }
 void MainLayout::AddRow(const std::string &name) {
-    auto it = pu::ui::elm::MenuItem::New(name);
-    this->menu->AddItem(it);
+    this->AddRow(name, pu::ui::Color(232, 234, 240, 255)); // default: white text
 }
-s32 MainLayout::Sel() { return this->menu->GetSelectedIndex(); }
-void MainLayout::SetSel(s32 i) {
-    if (i >= 0 && i < (s32)this->menu->GetItems().size()) {
-        this->menu->SetSelectedIndex((u32)i);
-    }
+void MainLayout::AddRow(const std::string &name, pu::ui::Color clr) {
+    this->list->AddRow(name, clr);
 }
-s32 MainLayout::RowCount() { return (s32)this->menu->GetItems().size(); }
-void MainLayout::MoveBy(s32 delta) {
-    s32 n = (s32)this->menu->GetItems().size();
-    if (n <= 0) {
-        return;
-    }
-    s32 i = this->menu->GetSelectedIndex() + delta;
-    if (i < 0) {
-        i = 0;
-    }
-    if (i >= n) {
-        i = n - 1;
-    }
-    this->menu->SetSelectedIndex((u32)i);
+void MainLayout::AddRow2(const std::string &left, const std::string &right,
+                         pu::ui::Color lclr, pu::ui::Color rclr) {
+    this->list->AddRow2(left, right, lclr, rclr);
 }
+s32 MainLayout::Sel() { return this->list->GetSelected(); }
+void MainLayout::SetSel(s32 i) { this->list->SetSelected(i); }
+s32 MainLayout::RowCount() { return this->list->Count(); }
+void MainLayout::MoveBy(s32 delta) { this->list->MoveBy(delta); }
 void MainLayout::MoveUp() { this->MoveBy(-1); }
 void MainLayout::MoveDown() { this->MoveBy(1); }
-void MainLayout::PageUp() { this->MoveBy(-this->menu->GetNumberOfItemsToShow()); }
-void MainLayout::PageDown() { this->MoveBy(this->menu->GetNumberOfItemsToShow()); }
+void MainLayout::PageUp() { this->MoveBy(-this->list->RowsVisible()); }
+void MainLayout::PageDown() { this->MoveBy(this->list->RowsVisible()); }
 
 // ---- app: feedback --------------------------------------------------------
 void MainApplication::Toast(const std::string &msg) {
@@ -396,7 +460,7 @@ void MainApplication::GotoHome() {
     if (g_prefs.group_consoles) {
         this->layout->SetTitle("Consoles");
         this->layout->SetSubtitle(
-            "A open  Y add  X del  L queue  R installed  RS settings  ZL/ZR page");
+            "A open  Y add  X del console  L/R tabs  ZL/ZR page");
         for (int i = 0; i < g_cfg.console_count; i++) {
             char row[96];
             snprintf(row, sizeof(row), "%s   (%d repos)",
@@ -409,7 +473,7 @@ void MainApplication::GotoHome() {
     } else {
         this->layout->SetTitle("Repos");
         this->layout->SetSubtitle(
-            "A browse  X edit  Y add  - delete  L queue  R installed  RS settings");
+            "A browse  X edit  Y add  - delete  L/R tabs  ZL/ZR page");
         for (int c = 0; c < g_cfg.console_count; c++) {
             for (int r = 0; r < g_cfg.consoles[c].repo_count; r++) {
                 Repo *rp = &g_cfg.consoles[c].repos[r];
@@ -431,7 +495,7 @@ void MainApplication::GotoRepos(int ci) {
     this->sel_ci = ci;
     ConsoleGroup *g = &g_cfg.consoles[ci];
     this->layout->SetTitle(std::string("Console: ") + g->console);
-    this->layout->SetSubtitle("A browse  X edit  Y add  - delete  L queue  B back");
+    this->layout->SetSubtitle("A browse  X edit  Y add  - delete  L/R tabs  B back");
     this->layout->ClearMenu();
     for (int i = 0; i < g->repo_count; i++) {
         char row[180];
@@ -456,17 +520,47 @@ void MainApplication::GotoFiles(int ci, int ri) {
     show_files(this->layout.get(), rp->id, rp->download_base, g->target, false);
 }
 
+// ---- tabs -----------------------------------------------------------------
+MainApplication::Tab MainApplication::CurrentTab() {
+    switch (this->screen) {
+    case Screen::Installed: return Tab::Installed;
+    case Screen::Queue:     return Tab::Queue;
+    case Screen::Settings:
+    case Screen::Log:       return Tab::Settings;
+    default:                return Tab::Browse; // Home/Repos/Files/RepoEdit/Picker
+    }
+}
+
+void MainApplication::SyncTab() {
+    this->layout->SetActiveTab((int)this->CurrentTab());
+}
+
+void MainApplication::GotoTab(Tab t) {
+    switch (t) {
+    case Tab::Browse:    this->GotoHome(); break;
+    case Tab::Installed: this->GotoInstalled(ROMS_ROOT); break;
+    case Tab::Queue:     this->GotoQueue(); break;
+    case Tab::Settings:  this->GotoSettings(); break;
+    }
+}
+
+void MainApplication::SwitchTab(int dir) {
+    const int n = 4;
+    int nx = (((int)this->CurrentTab() + dir) % n + n) % n;
+    this->GotoTab((Tab)nx);
+}
+
 void MainApplication::GotoQueue() {
     this->screen = Screen::Queue;
     this->layout->SetTitle("Download Queue");
-    this->layout->SetSubtitle("A cancel  X retry  Y clear  - log  ZL/ZR page  B back");
+    this->layout->SetSubtitle("A cancel  X retry  Y clear  - log  L/R tabs  ZL/ZR page");
     this->layout->ClearMenu();
 }
 
 void MainApplication::GotoSettings() {
     this->screen = Screen::Settings;
     this->layout->SetTitle(std::string("Settings   (v") + APP_VERSION_STR + ")");
-    this->layout->SetSubtitle("A toggle/edit  ZL/ZR page  B back");
+    this->layout->SetSubtitle("A toggle/edit  L/R tabs  ZL/ZR page");
     this->layout->ClearMenu();
     char r[96];
     snprintf(r, sizeof(r), "Metadata cache: %s", g_prefs.use_cache ? "ON" : "OFF");
@@ -499,7 +593,7 @@ void MainApplication::GotoInstalled(const std::string &path) {
         shown = "roms" + shown.substr(strlen(ROMS_ROOT));
     }
     this->layout->SetTitle(std::string("Installed: ") + shown);
-    this->layout->SetSubtitle("A open  X rename  - delete  B back/up");
+    this->layout->SetSubtitle("A open  X rename  - delete  L/R tabs  B back/up");
     this->layout->ClearMenu();
     for (int i = 0; i < (int)g_inst.size(); i++) {
         char row[220];
@@ -582,6 +676,18 @@ void MainApplication::GotoLog() {
 
 // ---- input ----------------------------------------------------------------
 void MainApplication::HandleInput(u64 down, u64 held) {
+    // A self-update download owns the UI while it runs: drive its progress /
+    // finish and swallow all other input until it completes.
+    if (this->upd_running) {
+        (void)down;
+        (void)held;
+        this->UpdTick();
+        return;
+    }
+
+    // Keep the tab bar highlight in sync with whatever screen we're on.
+    this->SyncTab();
+
     // Live-refresh the queue list while it's open.
     if (this->screen == Screen::Queue) {
         static QueueView qv[QUEUE_MAX];
@@ -604,10 +710,11 @@ void MainApplication::HandleInput(u64 down, u64 held) {
             } else if (it->total) {
                 snprintf(info, sizeof(info), "%s", human_size(it->total).c_str());
             }
-            char row[220];
-            snprintf(row, sizeof(row), "%-5s %-40.40s  %s", qstatus(it->status),
-                     it->name, info);
-            this->layout->AddRow(row);
+            char left[560];
+            snprintf(left, sizeof(left), "%-6s %s", qstatus(it->status),
+                     it->name);
+            pu::ui::Color c = qstatus_color(it->status);
+            this->layout->AddRow2(left, info, c, c);
         }
         if (n == 0) {
             this->layout->AddRow("(queue empty)");
@@ -636,7 +743,14 @@ void MainApplication::HandleInput(u64 down, u64 held) {
         }
     }
 
-    // Hold D-pad up/down to auto-repeat.
+    // List selection: single press moves once; holding auto-repeats after a
+    // short delay. (TableList is passive, so the app owns selection.)
+    if (down & HidNpadButton_Down) {
+        this->layout->MoveBy(1);
+    }
+    if (down & HidNpadButton_Up) {
+        this->layout->MoveBy(-1);
+    }
     {
         static int hold = 0;
         int dir = (held & HidNpadButton_Down)  ? 1
@@ -662,21 +776,14 @@ void MainApplication::HandleInput(u64 down, u64 held) {
         return;
     }
 
-    // Global tools (shoulders + right stick), available from list screens.
-    // In the Files view L/R are repurposed to switch repos (handled below),
-    // so the global queue/installed shortcuts skip that screen.
-    if ((down & HidNpadButton_L) && this->screen != Screen::Queue &&
-        this->screen != Screen::Files) {
-        this->GotoQueue();
+    // L/R cycle the top tabs (Browse | Installed | Queue | Settings). Inside a
+    // file list, the previous/next repo of a console is on D-pad Left/Right.
+    if (down & HidNpadButton_L) {
+        this->SwitchTab(-1);
         return;
     }
-    if ((down & HidNpadButton_R) && this->screen != Screen::Installed &&
-        this->screen != Screen::Files) {
-        this->GotoInstalled(ROMS_ROOT);
-        return;
-    }
-    if (down & HidNpadButton_StickR) {
-        this->GotoSettings();
+    if (down & HidNpadButton_R) {
+        this->SwitchTab(+1);
         return;
     }
 
@@ -823,12 +930,13 @@ void MainApplication::HandleInput(u64 down, u64 held) {
             show_files(this->layout.get(), g_files_id, g_files_base,
                        g_files_target, true);
             this->layout->SetSubtitle(FILES_SUBTITLE);
-        } else if ((down & (HidNpadButton_L | HidNpadButton_R)) &&
+        } else if ((down & (HidNpadButton_Left | HidNpadButton_Right)) &&
                    !g_files_manual) {
-            // Switch to the previous/next repo of the same console.
+            // Switch to the previous/next repo of the same console (L/R now
+            // cycle the top tabs, so repo switching lives on D-pad Left/Right).
             ConsoleGroup *g = &g_cfg.consoles[this->sel_ci];
             if (g->repo_count > 1) {
-                int dir = (down & HidNpadButton_R) ? 1 : -1;
+                int dir = (down & HidNpadButton_Right) ? 1 : -1;
                 int nr = (this->sel_ri + dir + g->repo_count) % g->repo_count;
                 this->GotoFiles(this->sel_ci, nr);
             }
@@ -920,34 +1028,10 @@ void MainApplication::HandleInput(u64 down, u64 held) {
                 char dl[1024];
                 snprintf(dl, sizeof(dl), "%s/downloads/update.nro", CONFIG_DIR);
                 fs_ensure_parent(dl);
-                long code = 0;
-                if (!http_download(url, dl, NULL, NULL, NULL, 0, &code)) {
-                    remove(dl);
-                    this->CreateShowDialog("Update", "Download failed.", {"OK"},
-                                           true);
-                    break;
-                }
-                romfsExit();
-                const char *self = DEFAULT_SELF_PATH;
-                char prev[1100];
-                snprintf(prev, sizeof(prev), "%s.previous", self);
-                install_over(self, prev); // best-effort backup
-                bool ok = install_over(dl, self);
-                romfsInit();
-                if (ok) {
-                    remove(dl);
-                    this->CreateShowDialog(
-                        "Update",
-                        std::string("Updated to ") + tag +
-                            ".\nClose and relaunch TicoDL+.",
-                        {"OK"}, true);
-                } else {
-                    this->CreateShowDialog(
-                        "Update",
-                        std::string("Install failed. New build kept at:\n") + dl,
-                        {"OK"}, true);
-                }
-                break;
+                // Download off the UI thread so the screen shows live progress
+                // instead of freezing. The install runs in UpdTick() once done.
+                this->UpdStart(url, dl, tag);
+                return;
             }
             case 6:
                 this->GotoLog();
@@ -971,12 +1055,12 @@ void MainApplication::HandleInput(u64 down, u64 held) {
             case 8:
                 this->CreateShowDialog(
                     "Controls",
+                    "Tabs: L / R  (Browse | Installed | Queue | Settings)\n"
                     "Navigate: D-pad (hold to repeat)   ZL/ZR: page\n"
-                    "L: queue   R: installed   R-stick: settings\n"
                     "+: exit   B: back\n"
-                    "Home: A open/browse  Y add  X edit/del  - delete\n"
-                    "Files: A download  Y filter  X refresh\n"
-                    "Queue: A cancel  X retry  Y clear",
+                    "Browse: A open  Y add  X edit/del  - delete\n"
+                    "Files: A get  - all  Y filter  X refresh  Dpad L/R: repo\n"
+                    "Queue: A cancel  X retry  Y clear  - log",
                     {"OK"}, true);
                 break;
             case 9:
@@ -1130,7 +1214,7 @@ void MainApplication::HandleInput(u64 down, u64 held) {
                              this->pending_id.c_str());
                     this->layout->SetTitle(std::string("URL > ") + cname);
                     this->layout->SetSubtitle(
-                        "A download  - all  Y filter  X refresh  B back");
+                        "A get  - all  Y filter  X refresh  L/R tabs  B back");
                     this->screen = Screen::Files;
                     show_files(this->layout.get(), this->pending_id.c_str(), base,
                                cname, false);
@@ -1192,9 +1276,104 @@ void MainApplication::OnLoad() {
 // down in reverse init order; queue_exit before net_exit since the worker uses
 // sockets/curl.
 void MainApplication::Shutdown() {
+    if (this->upd_running) {
+        threadWaitForExit(&this->upd_thread);
+        threadClose(&this->upd_thread);
+        this->upd_running = false;
+    }
     queue_exit();
     appletSetMediaPlaybackState(false);
     net_exit();
     psmExit();
     romfsExit();
+}
+
+// ---- app: in-app self-update download -------------------------------------
+int MainApplication::UpdProgress(void *ud, u64 now, u64 total) {
+    auto self = static_cast<MainApplication *>(ud);
+    self->upd_now = now;
+    self->upd_total = total;
+    return 0; // never abort from here
+}
+
+void MainApplication::UpdThread(void *arg) {
+    auto self = static_cast<MainApplication *>(arg);
+    long code = 0;
+    bool ok = http_download(self->upd_url.c_str(), self->upd_dl.c_str(), NULL,
+                            &MainApplication::UpdProgress, self, 0, &code);
+    self->upd_ok = ok;
+    self->upd_done = true;
+}
+
+void MainApplication::UpdStart(const std::string &url, const std::string &dl,
+                               const std::string &tag) {
+    this->upd_url = url;
+    this->upd_dl = dl;
+    this->upd_tag = tag;
+    this->upd_now = 0;
+    this->upd_total = 0;
+    this->upd_done = false;
+    this->upd_ok = false;
+    this->upd_running = true;
+
+    this->layout->SetTitle("Updating");
+    this->layout->SetSubtitle(std::string("Downloading ") + tag + "...");
+    this->layout->ClearMenu();
+    this->layout->AddRow("Downloading update - please wait");
+
+    Result rc = threadCreate(&this->upd_thread, &MainApplication::UpdThread, this,
+                             NULL, 0x40000, 0x2C, -2);
+    if (R_SUCCEEDED(rc) && R_SUCCEEDED(threadStart(&this->upd_thread))) {
+        return;
+    }
+    this->upd_running = false;
+    this->CreateShowDialog("Update", "Could not start the downloader.", {"OK"},
+                           true);
+    this->GotoSettings();
+}
+
+void MainApplication::UpdTick() {
+    if (!this->upd_done) {
+        // Still downloading: show live progress in the subtitle.
+        u64 now = this->upd_now, total = this->upd_total;
+        int pct = total ? (int)((now * 100) / total) : 0;
+        char s[160];
+        snprintf(s, sizeof(s), "Downloading %s: %d%%  (%s / %s)  -  please wait",
+                 this->upd_tag.c_str(), pct, human_size(now).c_str(),
+                 total ? human_size(total).c_str() : "?");
+        this->layout->SetSubtitle(s);
+        return;
+    }
+
+    // Download finished: join the worker and install on the main thread.
+    threadWaitForExit(&this->upd_thread);
+    threadClose(&this->upd_thread);
+    this->upd_running = false;
+
+    bool ok = this->upd_ok;
+    std::string tag = this->upd_tag, dl = this->upd_dl;
+    if (ok) {
+        romfsExit();
+        const char *self = DEFAULT_SELF_PATH;
+        char prev[1100];
+        snprintf(prev, sizeof(prev), "%s.previous", self);
+        install_over(self, prev); // best-effort backup
+        bool inst = install_over(dl.c_str(), self);
+        romfsInit();
+        if (inst) {
+            remove(dl.c_str());
+            this->CreateShowDialog("Update",
+                                   std::string("Updated to ") + tag +
+                                       ".\nClose and relaunch TicoDL+.",
+                                   {"OK"}, true);
+        } else {
+            this->CreateShowDialog(
+                "Update", std::string("Install failed. New build kept at:\n") + dl,
+                {"OK"}, true);
+        }
+    } else {
+        remove(dl.c_str());
+        this->CreateShowDialog("Update", "Download failed.", {"OK"}, true);
+    }
+    this->GotoSettings();
 }
