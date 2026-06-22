@@ -129,100 +129,44 @@ are sent only to archive.org hosts.
 
 ## Controls
 
-The header shows **free SD space** and **battery %**. The line above the footer
-shows the **active download**. Press **ZR** any time on the main menu for the
-in-app help.
+A graphical app (Plutonium UI). The header shows the screen, plus **free SD space
+and battery %** (top-right). Navigation is the same on every list.
 
-### Main menu
-
-There are two layouts, toggled by **Settings → Group consoles**:
-
-**Grouped (default)** — one row per console:
+**Everywhere**
 
 | Key | Action |
 |-----|--------|
-| Up/Down | move (hold to scroll) |
-| A | open the console (see its repos) |
-| Y | add a repo (pick a supported console, then enter label + archive id) |
-| X | delete the console and its repos (confirm) |
-| ZL | download queue |
-| R | installed games |
-| L | settings |
-| ZR | help |
-| − | manual archive.org URL / item id |
-| + | exit |
-
-**Flat** — one row per repo (`console - repo`):
-
-| Key | Action |
-|-----|--------|
-| A | browse this repo |
-| X | edit this repo |
-| Y | add a repo |
-| (ZL / R / L / ZR / − / + as above) | |
-
-### Console screen (grouped)
-
-| Key | Action |
-|-----|--------|
-| A | browse the selected repo |
-| X | edit the repo (label / archive id / URL / active) |
-| Y | add a repo to this console |
-| − | delete the selected repo (confirm) |
-| B | back |
-
-### Browsing a repo's files
-
-| Key | Action |
-|-----|--------|
-| Up/Down | move (hold to scroll) |
+| D-pad / stick | move (hold Up/Down to auto-repeat) |
 | ZL / ZR | page up / down |
-| L / R | previous / next repo |
-| A | add the file to the download queue |
-| Y | filter the list by name (blank = clear) |
-| X | refresh (re-fetch metadata, ignoring the cache) |
+| L | download queue |
+| R | installed games |
+| Right-stick click | settings |
+| + | exit |
 | B | back |
 
-A green `*` before a file means it already appears to be installed.
-
-### Download queue (ZL)
+**Home** (consoles, or repos in flat mode — toggle in Settings)
 
 | Key | Action |
 |-----|--------|
-| Up/Down | move |
-| A | cancel the selected item |
-| X | retry a failed/cancelled item (resumes from any partial file) |
-| Y | clear finished / failed / cancelled items |
-| B | back |
+| A | open console / browse repo |
+| Y | add a repo (pick a supported console, then name + archive id) |
+| X | grouped: delete console · flat: edit repo |
+| − | delete the selected repo |
 
-Statuses: `wait` · `dl` · `vrfy` (verifying) · `unzip` · `done` · `FAIL` · `cxl`.
+**Console screen / repos:** A browse · X edit repo · Y add repo · − delete · B back.
 
-### Installed games (R)
+**Browsing a repo's files:** A download · Y filter (blank = all) · X refresh ·
+B back. A green `*` marks files you already have installed.
 
-| Key | Action |
-|-----|--------|
-| Up/Down | move |
-| ZR | page down |
-| A | open folder / show file details |
-| X | delete the selected file or folder (confirm) |
-| ZL | jump to the download queue |
-| L / B | back |
+**Download queue (L):** A cancel · X retry · Y clear finished · B back. Rows show
+live status and progress.
 
-### Settings (L)
+**Installed games (R):** A open folder / details · − delete · B up a level.
 
-D-pad to move, **A** to toggle/open, **B** to exit. Changes save immediately.
-
-- **Metadata cache** — load cached metadata instantly vs. always re-fetch.
-- **Stay awake while downloading** — keep the console from sleeping while the
-  queue is active.
-- **Group consoles** — grouped vs. flat main menu.
-- **Archive.org access key / secret** — optional S3 credentials for restricted
-  items (the secret is shown as `<set>`, never echoed).
-- **Check for updates** — in-app self-update.
-- **View download log** — history of completed/failed downloads.
-- **Credits**.
-
----
+**Settings (right-stick click):** D-pad + A to toggle/open. Metadata cache,
+stay-awake, group consoles, archive.org access key / secret, check for updates
+(in-app self-update), view download log, download from URL, controls/help,
+credits.
 
 ## Console groups & supported consoles
 
@@ -327,39 +271,44 @@ request's result is logged to `debug.log`.
 
 ## Building from source
 
-TicoDL+ builds with the **devkitPro** toolchain (devkitA64 + libnx) plus a few
-portlibs. Source layout and build steps below.
+TicoDL+ 2.x is a **graphical app** built on the
+[Plutonium](https://github.com/XorTroll/Plutonium) UI library (SDL2), with the
+**devkitPro** toolchain (devkitA64 + libnx). Plutonium is included as a git
+submodule and built automatically.
 
 ### Prerequisites
 
 1. Install **devkitPro** and the `switch-dev` group — see the
-   [Getting Started guide](https://devkitpro.org/wiki/Getting_Started). Make sure
-   `DEVKITPRO` is set in your environment (the installer sets this; on Windows use
-   the **MSYS2** shell that ships with devkitPro).
-2. Install the portlibs the app links against (dependencies, e.g. the
-   bzip2/xz/zstd/lz4/expat codecs, are pulled in automatically):
+   [Getting Started guide](https://devkitpro.org/wiki/Getting_Started). Ensure
+   `DEVKITPRO` is set (on Windows use the **MSYS2** shell that ships with devkitPro).
+2. Install the portlibs the app links against (codec deps are pulled in
+   automatically):
    ```sh
-   dkp-pacman -S switch-curl switch-libarchive switch-zlib
+   dkp-pacman -S switch-curl switch-libarchive switch-zlib \
+                 switch-sdl2 switch-sdl2_ttf switch-sdl2_image \
+                 switch-sdl2_gfx switch-sdl2_mixer
    ```
 
 ### Build
 
 ```sh
-make            # builds TicoDLplus.nro (auto-bumps the patch version)
-make clean      # removes build output (does not bump the version)
+git clone --recursive https://github.com/digdat0/ticodlplus
+cd ticodlplus
+make            # builds the Plutonium lib (submodule), then TicoDLplus.nro
+make clean
 ```
 
-On Windows, run these inside the devkitPro MSYS2 shell, e.g.:
+If you cloned without `--recursive`, run `git submodule update --init` first.
+On Windows, build inside the devkitPro MSYS2 shell:
 
 ```sh
 /c/devkitPro/msys2/usr/bin/bash.exe -lc "cd /c/path/to/ticodlplus && make"
 ```
 
-Output is **`TicoDLplus.nro`**. Each `make` increments the patch version via
-`bump_version.sh` (which also generates `source/version.h`, kept out of git). To
-publish a release, run `make` then `sh release.sh` — it tags a GitHub release with
-the built version, attaches the `.nro`, and uses the matching `CHANGELOG.md`
-section as the notes.
+Output is **`TicoDLplus.nro`**. The version lives in `VERSION` /
+`include/version.h` (kept in sync). To publish a release: `sh release.sh` — it
+tags a GitHub release with that version, attaches the `.nro`, and uses the
+matching `CHANGELOG.md` section as the notes.
 
 > Networking (metadata + downloads) only works on **real hardware** — the libnx
 > `ssl` backend isn't stubbed there. Emulators like Ryujinx will fail HTTPS.
@@ -368,16 +317,21 @@ section as the notes.
 
 | Path | Responsibility |
 |------|----------------|
-| `source/main.c` | text UI: menus, browsing, queue/installed views, settings |
-| `source/net.*` | libnx sockets + libcurl (downloads, HTTP GET, logging) |
-| `source/archive.c` / `iarchive.h` | archive.org metadata + download URLs |
-| `source/queue.*` | background download worker (resume, verify, extract, persist) |
-| `source/extract.*` | libarchive zip/7z/rar/tar extraction |
-| `source/config.*` | `dl_sources.json` / credentials / prefs load + save |
-| `source/fsutil.*` | mkdir-p, move, recursive delete, free-space |
-| `source/update.*` | GitHub release check + in-app self-update |
-| `source/md5.*` | MD5 for download verification |
-| `source/jsonutil.*`, `source/jsmn.*` | JSON parsing (vendored jsmn) |
+| `source/Main.cpp`, `source/MainApplication.cpp` | Plutonium GUI (screens, navigation, input) |
+| `net.*` | libnx sockets + libcurl (downloads, HTTP GET, logging) |
+| `archive.c` / `iarchive.h` | archive.org metadata + download URLs |
+| `queue.*` | background download worker (resume, verify, extract, persist) |
+| `extract.*` | libarchive zip/7z/rar/tar extraction |
+| `config.*` | `dl_sources.json` / credentials / prefs load + save |
+| `fsutil.*` | mkdir-p, move, recursive delete, free-space |
+| `update.*` | GitHub release check + in-app self-update |
+| `md5.*` | MD5 for download verification |
+| `jsonutil.*`, `jsmn.*` | JSON parsing (vendored jsmn) |
+| `Plutonium/` | UI library (git submodule) |
+
+The backend (`net`/`archive`/`queue`/`extract`/`config`/`fsutil`/`md5`/`json`) is
+plain C — shared unchanged from the original text-console version; only the UI
+layer is Plutonium C++.
 
 ---
 

@@ -8,7 +8,7 @@
 # version are pulled from CHANGELOG.md and attached to the GitHub release.
 #
 # Requires the GitHub CLI (`gh auth login` once) and that the public repo in
-# source/config.h (UPDATE_REPO) exists on GitHub (e.g. created with
+# include/config.h (UPDATE_REPO) exists on GitHub (e.g. created with
 #   gh repo create <repo> --public --add-readme).
 set -e
 cd "$(dirname "$0")"
@@ -17,11 +17,11 @@ nro="TicoDLplus.nro"
 [ -f "$nro" ] || { echo "No $nro found - run 'make' first."; exit 1; }
 
 v="$(cat VERSION)"
-repo="$(grep -oE '#define[[:space:]]+UPDATE_REPO[[:space:]]+"[^"]+"' source/config.h \
+repo="$(grep -oE '#define[[:space:]]+UPDATE_REPO[[:space:]]+"[^"]+"' include/config.h \
         | sed -E 's/.*"([^"]+)".*/\1/')"
 
 if [ -z "$repo" ] || [ "$repo" = "YOURUSER/TicoDLplus" ]; then
-  echo "Set UPDATE_REPO in source/config.h to your real GitHub repo first."
+  echo "Set UPDATE_REPO in include/config.h to your real GitHub repo first."
   exit 1
 fi
 

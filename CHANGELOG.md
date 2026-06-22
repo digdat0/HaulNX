@@ -4,6 +4,17 @@ Notes for each release. `release.sh` pulls the section matching the version in
 `VERSION` and attaches it to the GitHub release. Add a `## <version>` section
 here before running a release.
 
+## 2.0.0
+- New **graphical UI** (Plutonium / SDL2) replacing the text console: full-screen
+  menus with on-screen highlight, dialogs, toasts, and the Switch's shared fonts.
+- Full parity with 1.x: console groups, add/edit/delete repos & consoles, browse +
+  download, background queue (cancel/retry/clear with live progress), installed
+  browser, file filter + installed markers, settings, manual-URL download, download
+  log, in-app self-update, SD/battery status, hold-repeat navigation + paging.
+- Same proven backend (downloads, resume, MD5 verification, extraction) as 1.x.
+- Controls: D-pad (hold to repeat) / ZL-ZR page; L queue, R installed, R-stick
+  settings, + exit, B back.
+
 ## 1.0.0
 - First stable release.
 - Ships with NO collections — only the supported console folder names are

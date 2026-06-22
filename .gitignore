@@ -5,6 +5,3 @@
 *.nacp
 *.lst
 *.map
-
-# generated each build by bump_version.sh
-/source/version.h
