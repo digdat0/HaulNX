@@ -4,6 +4,24 @@ Notes for each release. `release.sh` pulls the section matching the version in
 `VERSION` and attaches it to the GitHub release. Add a `## <version>` section
 here before running a release.
 
+## 2.0.3
+- Loading a repo's file list no longer freezes the screen: the metadata now
+  downloads in the background with an animated **"Loading metadata..."**
+  indicator.
+- **Installed** tab is now a table: files show a color-coded size column, and
+  folders show the number of files/apps inside in a right-hand column.
+- **Browse** tab now shows each console's repo count in its own right column.
+- **Download queue**: reorder items with **ZL/ZR** (an item can't move above the
+  one that's actively downloading).
+- Queue **retry** now resumes a cancelled/failed item in place instead of
+  sending it to the bottom of the list.
+- Queue polish: the selected-row highlight is now teal (distinct from the tab
+  bar), and the active download's text is white.
+- **Download log**: press **X** to clear it (asks for confirmation first).
+- **Settings**: editing the archive.org secret now pre-fills the current value
+  so it's easy to tweak.
+- Footer button hints are now spread evenly across the row.
+
 ## 2.0.2
 - The in-app updater now shows live **download progress** instead of looking
   frozen while it fetches the new build.

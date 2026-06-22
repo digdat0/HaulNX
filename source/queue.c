@@ -530,11 +530,64 @@ void queue_retry(int slot) {
         it->total = 0;
         it->speed = 0;
         it->http_code = 0;
-        it->seq = g_seq++; /* move to the back of the FIFO */
+        /* Keep the original seq so the item resumes in its current list
+         * position (and is picked promptly) instead of jumping to the bottom. */
         it->status = Q_QUEUED;
         save_locked();
     }
     mutexUnlock(&g_mtx);
+}
+
+static bool q_is_active(QStatus s) {
+    return s == Q_DOWNLOADING || s == Q_VERIFYING || s == Q_EXTRACTING;
+}
+
+bool queue_move(int slot, int dir) {
+    if (slot < 0 || slot >= QUEUE_MAX || (dir != -1 && dir != 1)) {
+        return false;
+    }
+    bool moved = false;
+    mutexLock(&g_mtx);
+    if (g_items[slot].status != Q_FREE) {
+        /* Build the on-screen order (non-FREE items sorted by seq). */
+        int order[QUEUE_MAX];
+        int cnt = 0;
+        for (int i = 0; i < QUEUE_MAX; i++) {
+            if (g_items[i].status != Q_FREE) {
+                order[cnt++] = i;
+            }
+        }
+        for (int a = 1; a < cnt; a++) {
+            int key = order[a];
+            uint32_t ks = g_items[key].seq;
+            int b = a - 1;
+            while (b >= 0 && g_items[order[b]].seq > ks) {
+                order[b + 1] = order[b];
+                b--;
+            }
+            order[b + 1] = key;
+        }
+        int pos = -1;
+        for (int a = 0; a < cnt; a++) {
+            if (order[a] == slot) {
+                pos = a;
+                break;
+            }
+        }
+        int j = pos + dir;
+        /* The active item can't be moved, and nothing may move above it. */
+        if (pos >= 0 && j >= 0 && j < cnt &&
+            !q_is_active(g_items[slot].status) &&
+            !q_is_active(g_items[order[j]].status)) {
+            uint32_t tmp = g_items[slot].seq;
+            g_items[slot].seq = g_items[order[j]].seq;
+            g_items[order[j]].seq = tmp;
+            save_locked();
+            moved = true;
+        }
+    }
+    mutexUnlock(&g_mtx);
+    return moved;
 }
 
 bool queue_active_info(char *name, size_t name_sz, QStatus *status,

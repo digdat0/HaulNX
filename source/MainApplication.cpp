@@ -72,6 +72,11 @@ static pu::ui::Color size_color(uint64_t b) {
     return pu::ui::Color(150, 205, 255, 255); // KB : light blue
 }
 
+// Soft accent for count columns (repo count, file/app count).
+static pu::ui::Color count_color() {
+    return pu::ui::Color(150, 200, 210, 255); // muted cyan
+}
+
 static bool ci_contains(const char *hay, const char *needle) {
     if (!needle[0]) {
         return true;
@@ -139,7 +144,7 @@ static const char *qstatus(QStatus s) {
 
 static pu::ui::Color qstatus_color(QStatus s) {
     switch (s) {
-    case Q_DOWNLOADING: return pu::ui::Color(120, 180, 255, 255); // blue
+    case Q_DOWNLOADING: return pu::ui::Color(245, 246, 250, 255); // white (active)
     case Q_VERIFYING:
     case Q_EXTRACTING:  return pu::ui::Color(210, 185, 120, 255); // amber
     case Q_DONE:        return pu::ui::Color(130, 225, 150, 255); // green
@@ -238,17 +243,49 @@ static void rebuild_files(MainLayout *lay, const char *target) {
     }
 }
 
-static void show_files(MainLayout *lay, const char *id, const char *base,
-                       const char *target, bool force) {
-    snprintf(g_files_id, sizeof(g_files_id), "%s", id ? id : "");
-    snprintf(g_files_base, sizeof(g_files_base), "%s", base ? base : "");
-    snprintf(g_files_target, sizeof(g_files_target), "%s", target ? target : "");
+// Background metadata load: ia_fetch runs on its own thread so the file
+// list shows an animated "Loading metadata..." indicator instead of freezing.
+void MainApplication::MetaThread(void *arg) {
+    auto self = static_cast<MainApplication *>(arg);
+    bool ok = false;
+    if (g_files_id[0]) {
+        ok = ia_fetch(g_files_id, &g_item, g_prefs.use_cache && !self->meta_force,
+                      CACHE_DIR);
+    }
+    self->meta_ok = ok;
+    self->meta_done = true;
+}
+
+void MainApplication::StartMetaLoad(const std::string &id,
+                                    const std::string &base,
+                                    const std::string &target, bool force,
+                                    const std::string &done_subtitle) {
+    snprintf(g_files_id, sizeof(g_files_id), "%s", id.c_str());
+    snprintf(g_files_base, sizeof(g_files_base), "%s", base.c_str());
+    snprintf(g_files_target, sizeof(g_files_target), "%s", target.c_str());
     if (g_have_item) {
         ia_free(&g_item);
         g_have_item = false;
     }
-    if (id && id[0] &&
-        ia_fetch(id, &g_item, g_prefs.use_cache && !force, CACHE_DIR)) {
+    this->meta_force = force;
+    this->meta_done_subtitle = done_subtitle;
+    this->meta_done = false;
+    this->meta_ok = false;
+    this->meta_running = true;
+
+    this->layout->SetSubtitle("Loading metadata - please wait");
+    this->layout->ClearMenu();
+    this->layout->AddRow("Loading metadata ...");
+
+    Result rc = threadCreate(&this->meta_thread, &MainApplication::MetaThread,
+                             this, NULL, 0x40000, 0x2C, -2);
+    if (R_SUCCEEDED(rc) && R_SUCCEEDED(threadStart(&this->meta_thread))) {
+        return;
+    }
+    // Couldn't spawn: fall back to a synchronous fetch so the list still loads.
+    this->meta_running = false;
+    if (g_files_id[0] &&
+        ia_fetch(g_files_id, &g_item, g_prefs.use_cache && !force, CACHE_DIR)) {
         if (g_files_base[0]) {
             snprintf(g_item.download_base, sizeof(g_item.download_base), "%s",
                      g_files_base);
@@ -256,7 +293,32 @@ static void show_files(MainLayout *lay, const char *id, const char *base,
         g_have_item = true;
     }
     g_filter.clear();
-    rebuild_files(lay, g_files_target);
+    rebuild_files(this->layout.get(), g_files_target);
+    this->layout->SetSubtitle(done_subtitle);
+}
+
+void MainApplication::MetaTick() {
+    if (!this->meta_done) {
+        // Animate the dots (~3/sec) so it's clearly working, not stuck.
+        int dots = (int)((armTicksToNs(armGetSystemTick()) / 350000000ULL) % 4);
+        this->layout->ClearMenu();
+        this->layout->AddRow(std::string("Loading metadata") +
+                             std::string(dots, '.'));
+        return;
+    }
+    threadWaitForExit(&this->meta_thread);
+    threadClose(&this->meta_thread);
+    this->meta_running = false;
+    if (this->meta_ok) {
+        if (g_files_base[0]) {
+            snprintf(g_item.download_base, sizeof(g_item.download_base), "%s",
+                     g_files_base);
+        }
+        g_have_item = true;
+    }
+    g_filter.clear();
+    rebuild_files(this->layout.get(), g_files_target);
+    this->layout->SetSubtitle(this->meta_done_subtitle);
 }
 
 // Copy src over dst in place (truncate-write) — used to replace our own .nro.
@@ -284,6 +346,24 @@ static bool install_over(const char *src, const char *dst) {
         ok = false;
     }
     return ok;
+}
+
+// Count immediate entries (files/folders) inside a directory.
+static int count_dir_entries(const std::string &path) {
+    DIR *d = opendir(path.c_str());
+    if (!d) {
+        return 0;
+    }
+    int n = 0;
+    struct dirent *e;
+    while ((e = readdir(d)) != NULL) {
+        if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..")) {
+            continue;
+        }
+        n++;
+    }
+    closedir(d);
+    return n;
 }
 
 static std::vector<DirEnt> list_dir(const std::string &path) {
@@ -375,9 +455,14 @@ MainLayout::MainLayout() : Layout::Layout() {
     this->footer = pu::ui::elm::Rectangle::New(0, sh - footer_h, sw, footer_h,
                                                pu::ui::Color(22, 42, 80, 255));
     this->Add(this->footer);
-    this->subtitle = pu::ui::elm::TextBlock::New(45, sh - footer_h + 18, "");
-    this->subtitle->SetColor(pu::ui::Color(206, 216, 238, 255));
-    this->Add(this->subtitle);
+    // Footer button hints, split into segments and spread evenly across the row
+    // by SetSubtitle. Pre-create a fixed pool of labels.
+    for (int i = 0; i < 8; i++) {
+        auto seg = pu::ui::elm::TextBlock::New(0, sh - footer_h + 14, "");
+        seg->SetColor(pu::ui::Color(206, 216, 238, 255));
+        this->Add(seg);
+        this->footer_segs.push_back(seg);
+    }
 
     this->SetActiveTab(0);
 }
@@ -401,7 +486,44 @@ void MainLayout::SetTitle(const std::string &t) {
                                    : std::string("TicoDL+     ") + t);
 }
 void MainLayout::SetStatus(const std::string &t) { this->status->SetText(t); }
-void MainLayout::SetSubtitle(const std::string &t) { this->subtitle->SetText(t); }
+void MainLayout::SetSubtitle(const std::string &t) {
+    // Split the hint on runs of 2+ spaces into segments, then center each
+    // segment within an equal share of the row so they spread evenly.
+    std::vector<std::string> segs;
+    size_t i = 0;
+    while (i < t.size()) {
+        while (i < t.size() && t[i] == ' ') {
+            i++;
+        }
+        if (i >= t.size()) {
+            break;
+        }
+        size_t end = t.size();
+        for (size_t j = i; j + 1 < t.size(); j++) {
+            if (t[j] == ' ' && t[j + 1] == ' ') {
+                end = j;
+                break;
+            }
+        }
+        segs.push_back(t.substr(i, end - i));
+        i = end;
+    }
+
+    const s32 sw = (s32)pu::ui::render::ScreenWidth;
+    const s32 margin = 30;
+    int n = (int)segs.size();
+    for (int k = 0; k < (int)this->footer_segs.size(); k++) {
+        if (k < n) {
+            this->footer_segs[k]->SetText(segs[k]);
+            s32 cell = (sw - 2 * margin) / (n > 0 ? n : 1);
+            s32 center = margin + cell * k + cell / 2;
+            this->footer_segs[k]->SetX(center -
+                                       this->footer_segs[k]->GetWidth() / 2);
+        } else {
+            this->footer_segs[k]->SetText("");
+        }
+    }
+}
 void MainLayout::ClearMenu() { this->list->Clear(); }
 void MainLayout::AddRow(const std::string &name) {
     this->AddRow(name, pu::ui::Color(232, 234, 240, 255)); // default: white text
@@ -462,10 +584,12 @@ void MainApplication::GotoHome() {
         this->layout->SetSubtitle(
             "A open  Y add  X del console  L/R tabs  ZL/ZR page");
         for (int i = 0; i < g_cfg.console_count; i++) {
-            char row[96];
-            snprintf(row, sizeof(row), "%s   (%d repos)",
-                     g_cfg.consoles[i].console, g_cfg.consoles[i].repo_count);
-            this->layout->AddRow(row);
+            int rc = g_cfg.consoles[i].repo_count;
+            char cnt[32];
+            snprintf(cnt, sizeof(cnt), "%d %s", rc, rc == 1 ? "repo" : "repos");
+            this->layout->AddRow2(g_cfg.consoles[i].console, cnt,
+                                  pu::ui::Color(232, 234, 240, 255),
+                                  count_color());
         }
         if (g_cfg.console_count == 0) {
             this->layout->AddRow("(no collections - press Y to add)");
@@ -515,9 +639,9 @@ void MainApplication::GotoFiles(int ci, int ri) {
     ConsoleGroup *g = &g_cfg.consoles[ci];
     Repo *rp = &g->repos[ri];
     this->layout->SetTitle(std::string(g->console) + " > " + rp->label);
-    this->layout->SetSubtitle(FILES_SUBTITLE);
     this->screen = Screen::Files;
-    show_files(this->layout.get(), rp->id, rp->download_base, g->target, false);
+    this->StartMetaLoad(rp->id, rp->download_base, g->target, false,
+                        FILES_SUBTITLE);
 }
 
 // ---- tabs -----------------------------------------------------------------
@@ -553,7 +677,7 @@ void MainApplication::SwitchTab(int dir) {
 void MainApplication::GotoQueue() {
     this->screen = Screen::Queue;
     this->layout->SetTitle("Download Queue");
-    this->layout->SetSubtitle("A cancel  X retry  Y clear  - log  L/R tabs  ZL/ZR page");
+    this->layout->SetSubtitle("A cancel  X retry  ZL/ZR move  Y clear  - log  B back");
     this->layout->ClearMenu();
 }
 
@@ -596,14 +720,21 @@ void MainApplication::GotoInstalled(const std::string &path) {
     this->layout->SetSubtitle("A open  X rename  - delete  L/R tabs  B back/up");
     this->layout->ClearMenu();
     for (int i = 0; i < (int)g_inst.size(); i++) {
-        char row[220];
-        if (g_inst[i].is_dir) {
-            snprintf(row, sizeof(row), "[DIR] %.200s", g_inst[i].name.c_str());
+        DirEnt &e = g_inst[i];
+        if (e.is_dir) {
+            // Folder: right column is the number of files/apps inside.
+            int n = count_dir_entries(path + "/" + e.name);
+            char cnt[32];
+            snprintf(cnt, sizeof(cnt), "%d %s", n, n == 1 ? "app" : "apps");
+            this->layout->AddRow2(std::string("[DIR] ") + e.name, cnt,
+                                  pu::ui::Color(170, 200, 250, 255),
+                                  count_color());
         } else {
-            snprintf(row, sizeof(row), "      %-46.46s  %s",
-                     g_inst[i].name.c_str(), human_size(g_inst[i].size).c_str());
+            // File: right column is the size, tinted by magnitude.
+            this->layout->AddRow2(e.name, human_size(e.size),
+                                  pu::ui::Color(232, 234, 240, 255),
+                                  size_color(e.size));
         }
-        this->layout->AddRow(row);
     }
     if (g_inst.empty()) {
         this->layout->AddRow("(empty)");
@@ -656,7 +787,7 @@ void MainApplication::GotoLog() {
     }
     this->screen = Screen::Log;
     this->layout->SetTitle("Download Log");
-    this->layout->SetSubtitle("B back");
+    this->layout->SetSubtitle("X clear log  B back");
     this->layout->ClearMenu();
     std::vector<std::string> lines;
     std::ifstream f(DLLOG_PATH);
@@ -682,6 +813,15 @@ void MainApplication::HandleInput(u64 down, u64 held) {
         (void)down;
         (void)held;
         this->UpdTick();
+        return;
+    }
+
+    // A repo's metadata is loading on a background thread: animate the indicator
+    // and swallow input until it's ready.
+    if (this->meta_running) {
+        (void)down;
+        (void)held;
+        this->MetaTick();
         return;
     }
 
@@ -765,10 +905,12 @@ void MainApplication::HandleInput(u64 down, u64 held) {
             }
         }
     }
-    if (down & HidNpadButton_ZL) {
+    // ZL/ZR page lists, except in the queue where they reorder the selected
+    // item (handled in the Queue case).
+    if ((down & HidNpadButton_ZL) && this->screen != Screen::Queue) {
         this->layout->PageUp();
     }
-    if (down & HidNpadButton_ZR) {
+    if ((down & HidNpadButton_ZR) && this->screen != Screen::Queue) {
         this->layout->PageDown();
     }
     if (down & HidNpadButton_Plus) {
@@ -926,10 +1068,8 @@ void MainApplication::HandleInput(u64 down, u64 held) {
                 rebuild_files(this->layout.get(), g_files_target);
             }
         } else if (down & HidNpadButton_X) {
-            this->layout->SetSubtitle("Refreshing...");
-            show_files(this->layout.get(), g_files_id, g_files_base,
-                       g_files_target, true);
-            this->layout->SetSubtitle(FILES_SUBTITLE);
+            this->StartMetaLoad(g_files_id, g_files_base, g_files_target, true,
+                                FILES_SUBTITLE);
         } else if ((down & (HidNpadButton_Left | HidNpadButton_Right)) &&
                    !g_files_manual) {
             // Switch to the previous/next repo of the same console (L/R now
@@ -964,6 +1104,14 @@ void MainApplication::HandleInput(u64 down, u64 held) {
                 } else if (down & HidNpadButton_X) {
                     queue_retry(qv[i].slot);
                     this->Toast("Retrying");
+                } else if (down & HidNpadButton_ZL) {
+                    if (queue_move(qv[i].slot, -1)) {
+                        this->layout->SetSel(i - 1); // follow the moved item
+                    }
+                } else if (down & HidNpadButton_ZR) {
+                    if (queue_move(qv[i].slot, 1)) {
+                        this->layout->SetSel(i + 1);
+                    }
                 }
             }
         }
@@ -998,7 +1146,9 @@ void MainApplication::HandleInput(u64 down, u64 held) {
                 }
                 break;
             case 4:
-                if (prompt("Secret Key", nullptr, v, sizeof(v))) {
+                // Pre-populate with the current secret so it's easy to edit
+                // (user accepted the shoulder-surfing trade-off).
+                if (prompt("Secret Key", g_creds.secret, v, sizeof(v))) {
                     snprintf(g_creds.secret, sizeof(g_creds.secret), "%s", v);
                     creds_save(&g_creds);
                     this->Toast("Saved");
@@ -1213,11 +1363,10 @@ void MainApplication::HandleInput(u64 down, u64 held) {
                              "https://archive.org/download/%s",
                              this->pending_id.c_str());
                     this->layout->SetTitle(std::string("URL > ") + cname);
-                    this->layout->SetSubtitle(
-                        "A get  - all  Y filter  X refresh  L/R tabs  B back");
                     this->screen = Screen::Files;
-                    show_files(this->layout.get(), this->pending_id.c_str(), base,
-                               cname, false);
+                    this->StartMetaLoad(
+                        this->pending_id, base, cname, false,
+                        "A get  - all  Y filter  X refresh  L/R tabs  B back");
                 }
             }
         }
@@ -1230,6 +1379,13 @@ void MainApplication::HandleInput(u64 down, u64 held) {
                 this->GotoQueue();
             } else {
                 this->GotoSettings();
+            }
+        } else if (down & HidNpadButton_X) {
+            if (this->Confirm("Clear log",
+                              "Clear all download history?")) {
+                remove(DLLOG_PATH);
+                this->Toast("Log cleared");
+                this->GotoLog(); // refresh (stays in the Log view)
             }
         }
         break;
@@ -1280,6 +1436,11 @@ void MainApplication::Shutdown() {
         threadWaitForExit(&this->upd_thread);
         threadClose(&this->upd_thread);
         this->upd_running = false;
+    }
+    if (this->meta_running) {
+        threadWaitForExit(&this->meta_thread);
+        threadClose(&this->meta_thread);
+        this->meta_running = false;
     }
     queue_exit();
     appletSetMediaPlaybackState(false);

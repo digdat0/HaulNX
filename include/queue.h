@@ -62,9 +62,14 @@ int queue_snapshot(QueueView *out, int max);
 /* Cancel a queued/active item by its slot index. */
 void queue_cancel(int slot);
 
-/* Re-queue a failed/cancelled item (by slot) to run again, resuming from any
- * .part already on disk. No-op for other states. */
+/* Re-queue a failed/cancelled item (by slot) to run again in its current list
+ * position, resuming from any .part already on disk. No-op for other states. */
 void queue_retry(int slot);
+
+/* Move an item one row up (dir=-1) or down (dir=+1) in the list. The active
+ * download can't be moved and nothing can move above it. Returns true if the
+ * order actually changed. */
+bool queue_move(int slot, int dir);
 
 /* If a download/verify/extract is currently in progress, fill the out params
  * with its summary and return true; otherwise return false. `index` gets the

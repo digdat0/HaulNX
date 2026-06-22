@@ -113,7 +113,8 @@ class TableList : public pu::ui::elm::Element {
               const s32 rows_visible)
         : x(x), y(y), w(w), row_h(row_h), rows_visible(rows_visible), sel(0),
           scroll_top(0), row_bg(22, 23, 27, 255), row_alt_bg(28, 30, 36, 255),
-          focus_bg(46, 92, 162, 255), scroll_clr(80, 86, 100, 255),
+          // Teal selection highlight, distinct from the blue header/tab bar.
+          focus_bg(28, 122, 116, 255), scroll_clr(80, 86, 100, 255),
           cache_top(-1), dirty(true) {
         this->font = pu::ui::GetDefaultFont(pu::ui::DefaultFontSize::MediumLarge);
     }

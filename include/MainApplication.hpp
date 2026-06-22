@@ -13,7 +13,7 @@ class MainLayout : public pu::ui::Layout {
     pu::ui::elm::Rectangle::Ref footer;
     pu::ui::elm::TextBlock::Ref title;
     pu::ui::elm::TextBlock::Ref status;
-    pu::ui::elm::TextBlock::Ref subtitle;
+    std::vector<pu::ui::elm::TextBlock::Ref> footer_segs;
     TableList::Ref list;
     std::vector<pu::ui::elm::TextBlock::Ref> tabs;
     pu::ui::elm::Rectangle::Ref tab_underline;
@@ -80,6 +80,15 @@ class MainApplication : public pu::ui::Application {
     std::string upd_dl;
     std::string upd_tag;
 
+    // Background metadata (ia_fetch) load, so the file list doesn't freeze the
+    // UI while a repo's metadata downloads. Shows an animated loading indicator.
+    Thread meta_thread;
+    volatile bool meta_running = false;
+    volatile bool meta_done = false;
+    volatile bool meta_ok = false;
+    bool meta_force = false;
+    std::string meta_done_subtitle;
+
   public:
     using Application::Application;
     PU_SMART_CTOR(MainApplication)
@@ -115,4 +124,11 @@ class MainApplication : public pu::ui::Application {
     void UpdTick(); // poll progress / finish; called each frame while running
     static void UpdThread(void *arg);
     static int UpdProgress(void *ud, u64 now, u64 total);
+
+    // Background metadata load helpers.
+    void StartMetaLoad(const std::string &id, const std::string &base,
+                       const std::string &target, bool force,
+                       const std::string &done_subtitle);
+    void MetaTick();
+    static void MetaThread(void *arg);
 };
