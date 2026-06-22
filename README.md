@@ -16,43 +16,48 @@ but it works.**
 
 ## Features
 
+- **Tabbed graphical UI.** A dark-themed Plutonium (SDL2) interface with four
+  top tabs — **Browse · Installed · Queue · Settings** — switched with the
+  **L/R** shoulder buttons. The header shows free SD space and battery %.
+- **Table-style lists.** Every list is a real table: a left name column and a
+  right-aligned size/count column, with file sizes **color-coded** by magnitude
+  (KB / MB / GB). The selected row is highlighted; the active download is white.
 - **Console groups with multiple repos.** Each console (snes, genesis, psx, …)
   can hold several archive.org collections, so if one set is missing games you
   can add another. Everything for a console installs into the same
-  `sdmc:/tico/roms/<console>/` folder.
+  `sdmc:/tico/roms/<console>/` folder. The Browse tab shows each console's repo
+  count.
 - **Background download queue.** Queue many files and keep browsing while they
-  download FIFO in the background. Progress, speed, cancel and retry are all in
-  the queue view, and the current download is always shown at the bottom of the
-  screen.
+  download FIFO in the background. The Queue tab shows live progress, size and
+  speed, and lets you **cancel**, **retry**, **reorder** (move items up/down
+  with ZL/ZR — never above the active download), and clear finished items.
+- **Download a whole list at once.** In a file list, **−** queues every file
+  matching the current filter (with a confirmation).
 - **Resume + persistence.** Interrupted downloads resume from where they
   stopped, and the queue survives closing the app — pending downloads pick back
-  up on next launch.
+  up on next launch. Retry resumes a cancelled/failed item in place.
+- **No frozen screens.** Loading a repo's metadata and the in-app self-update
+  both run in the background with an animated progress indicator.
 - **Automatic extraction.** `.zip` / `.7z` / `.rar` / `.tar.*` archives are
   unpacked into the console folder automatically; plain files are moved as-is.
 - **Integrity checks.** Downloads are verified by size and, when archive.org
   provides one, MD5 — corrupt files are rejected instead of installed.
-- **Find things fast.** On-screen name filter, a position scrollbar for huge
-  lists, and green `*` markers next to files you already have installed.
-- **At-a-glance status bar.** Free SD space and battery % in the header; the live
-  download (`DL 2/5: … 47% @ 3.4 MB/s`) above the footer.
+- **Find things fast.** On-screen name filter, ZL/ZR paging, a scrollbar for
+  huge lists, and `*` markers next to files you already have installed.
+- **Installed browser.** The Installed tab is a table of `sdmc:/tico/roms` —
+  folders show how many files/apps are inside, files show their size. Rename or
+  delete entries in place.
 - **In-app self-update** from GitHub releases — no manual `.nro` copying.
-- **Installed browser** to view and delete what's in `sdmc:/tico/roms`.
-- **Built-in help** (press **ZR** on the main menu for the full control list).
-
+- **Download log** you can view and clear from Settings.
+- **Built-in help** (Settings → Controls / Help for the full control list).
 
 ---
 
 ## Screenshots
 
+> _Screenshots coming soon._
 
-<img width="1280" height="720" alt="01-initial" src="https://github.com/user-attachments/assets/a9c85db5-1b25-49d3-a85c-c060f8183917" />
-<img width="1280" height="720" alt="02-repo names" src="https://github.com/user-attachments/assets/db44cbd9-f215-490a-bf64-f60e0a0bcda1" />
-<img width="1280" height="720" alt="03-repo game list" src="https://github.com/user-attachments/assets/a21c2b00-687d-4223-a528-1b8b0927eff7" />
-<img width="1280" height="720" alt="04-dl queue" src="https://github.com/user-attachments/assets/52a2fc88-bb44-4ac0-a4ab-f3e75146b627" />
-<img width="1280" height="720" alt="05-settings" src="https://github.com/user-attachments/assets/87650034-9616-4b82-ba59-de73cb84fc60" />
-<img width="1280" height="720" alt="06-installed dirs" src="https://github.com/user-attachments/assets/1d4ff48b-d139-41a1-ba54-1d9318d03259" />
-<img width="1280" height="720" alt="07-installed games" src="https://github.com/user-attachments/assets/e919b574-8061-4643-8fb8-dae9e613303f" />
-
+<!-- Add screenshots of the Browse, Installed, Queue, and Settings tabs here. -->
 
 ---
 
@@ -90,14 +95,14 @@ A *collection* is an archive.org **item** that holds the game files for a system
 Each item has an **item id** — the last part of its URL, e.g. for
 `https://archive.org/details/MyExampleItem` the id is `MyExampleItem`.
 
-1. On the main menu, press **Y** (add).
+1. On the **Browse** tab, press **Y** (add).
 2. Choose the **console** the files belong to — this is the
    `sdmc:/tico/roms/<console>` folder TICO reads from. (The selectable list comes
    from `tico_consoles`; you can't pick an unsupported folder.)
 3. Enter a **name** for the repo — any label, e.g. `My SNES set`.
 4. Enter the archive.org **item id** (the `<id>` from `archive.org/details/<id>`).
 
-The console now appears on the main menu. Open it with **A**, pick the repo, and
+The console now appears on the Browse tab. Open it with **A**, pick the repo, and
 you'll see its file list. Repeat **Y** to add more collections — a console can
 hold several. (You can also edit `dl_sources.json` directly — see
 [Configuration](#configuration).)
@@ -110,41 +115,43 @@ for **restricted** items that require an archive.org account.
 1. On a computer, sign in at [archive.org](https://archive.org) and open your S3
    keys page: <https://archive.org/account/s3.php>. You'll get an **access key**
    and a **secret key**.
-2. In TicoDL+, open **Settings** (**L**).
+2. In TicoDL+, switch to the **Settings** tab (**L/R**).
 3. Highlight **Archive.org access key**, press **A**, and type your access key.
-4. Highlight **Archive.org secret**, press **A**, and type your secret. It's
-   stored but shown only as `<set>` (never displayed again).
+4. Highlight **Archive.org secret**, press **A**, and type your secret. The edit
+   field is pre-filled with the current value so it's easy to change; the list
+   only ever shows it as `<set>`.
 
 Keys live only on your SD card (`sdmc:/switch/ticodlplus/credentials.json`) and
 are sent only to archive.org hosts.
 
 ### 3. Download
 
-1. Open a console (**A**) and pick a repo to browse its files.
-2. Highlight a file and press **A** to add it to the download queue.
-3. Press **ZL** to watch the queue. Completed downloads extract/move into
-   `sdmc:/tico/roms/<console>/` automatically.
+1. On **Browse**, open a console (**A**) and pick a repo to browse its files.
+   (Repo metadata loads in the background with a brief "Loading…" indicator.)
+2. Highlight a file and press **A** to add it to the download queue — or press
+   **−** to queue the whole (filtered) list at once.
+3. Switch to the **Queue** tab (**L/R**) to watch progress. Completed downloads
+   extract/move into `sdmc:/tico/roms/<console>/` automatically.
 
 ---
 
 ## Controls
 
-A graphical app (Plutonium UI). The header shows the screen, plus **free SD space
-and battery %** (top-right). Navigation is the same on every list.
+A graphical app (Plutonium UI) with four tabs. The header shows the current
+screen plus **free SD space and battery %** (top-right). The footer shows the
+buttons available on the current screen.
 
 **Everywhere**
 
 | Key | Action |
 |-----|--------|
 | D-pad / stick | move (hold Up/Down to auto-repeat) |
-| ZL / ZR | page up / down |
-| L | download queue |
-| R | installed games |
-| Right-stick click | settings |
+| L / R | switch tabs (Browse ↔ Installed ↔ Queue ↔ Settings) |
+| ZL / ZR | page up / down (in the Queue, move the selected item up / down) |
 | + | exit |
-| B | back |
+| B | back / up a level |
 
-**Home** (consoles, or repos in flat mode — toggle in Settings)
+**Browse tab** (consoles, or repos in flat mode — toggle in Settings)
 
 | Key | Action |
 |-----|--------|
@@ -153,20 +160,53 @@ and battery %** (top-right). Navigation is the same on every list.
 | X | grouped: delete console · flat: edit repo |
 | − | delete the selected repo |
 
-**Console screen / repos:** A browse · X edit repo · Y add repo · − delete · B back.
+Each console row shows its **repo count** in the right column. Inside a console:
+A browse · X edit repo · Y add repo · − delete · B back.
 
-**Browsing a repo's files:** A download · Y filter (blank = all) · X refresh ·
-B back. A green `*` marks files you already have installed.
+**Browsing a repo's files**
 
-**Download queue (L):** A cancel · X retry · Y clear finished · B back. Rows show
-live status and progress.
+| Key | Action |
+|-----|--------|
+| A | add the selected file to the queue |
+| − | queue **all** files matching the current filter |
+| Y | filter (blank = all) |
+| X | refresh metadata |
+| D-pad ← / → | previous / next repo of the same console |
+| B | back |
 
-**Installed games (R):** A open folder / details · − delete · B up a level.
+Names are left-aligned; sizes are a right-aligned, color-coded column. A `*`
+marks files you already have installed.
 
-**Settings (right-stick click):** D-pad + A to toggle/open. Metadata cache,
-stay-awake, group consoles, archive.org access key / secret, check for updates
-(in-app self-update), view download log, download from URL, controls/help,
-credits.
+**Queue tab**
+
+| Key | Action |
+|-----|--------|
+| A | cancel the selected item |
+| X | retry a cancelled/failed item (resumes in place) |
+| ZL / ZR | move the selected item up / down (not above the active download) |
+| Y | clear finished items |
+| − | open the download log |
+
+Rows show live status and progress (percent, size, speed); the active download
+is shown in white.
+
+**Installed tab**
+
+| Key | Action |
+|-----|--------|
+| A | open folder / file details |
+| X | rename |
+| − | delete |
+| B | up a level |
+
+Folders show the number of files/apps inside; files show a color-coded size.
+
+**Settings tab**
+
+D-pad + **A** to toggle/open: metadata cache, stay-awake while downloading,
+group consoles, archive.org access key / secret, check for updates (in-app
+self-update with download progress), view download log (**X** clears it),
+download from URL, controls / help, credits.
 
 ## Console groups & supported consoles
 
@@ -243,9 +283,10 @@ restricted items. Public collections download anonymously and need no keys.
 
 ## Updating (in-app)
 
-Open **Settings (L) → Check for updates**. TicoDL+ checks the GitHub releases for
-a newer version and, if found, downloads the new `.nro` and replaces itself
-(keeping a `.previous` backup). Close and relaunch to run the new build.
+Open **Settings → Check for updates**. TicoDL+ checks the GitHub releases for a
+newer version and, if found, downloads the new `.nro` (with a live progress
+indicator) and replaces itself (keeping a `.previous` backup). Close and relaunch
+to run the new build.
 
 ---
 
@@ -305,10 +346,10 @@ On Windows, build inside the devkitPro MSYS2 shell:
 /c/devkitPro/msys2/usr/bin/bash.exe -lc "cd /c/path/to/ticodlplus && make"
 ```
 
-Output is **`TicoDLplus.nro`**. The version lives in `VERSION` /
-`include/version.h` (kept in sync). To publish a release: `sh release.sh` — it
-tags a GitHub release with that version, attaches the `.nro`, and uses the
-matching `CHANGELOG.md` section as the notes.
+Output is **`TicoDLplus.nro`**. The version lives in `VERSION` (the single source
+of truth) and is baked into the build and `include/version.h` automatically. To
+publish a release: `sh release.sh` — it tags a GitHub release with that version,
+attaches the `.nro`, and uses the matching `CHANGELOG.md` section as the notes.
 
 > Networking (metadata + downloads) only works on **real hardware** — the libnx
 > `ssl` backend isn't stubbed there. Emulators like Ryujinx will fail HTTPS.
@@ -317,10 +358,11 @@ matching `CHANGELOG.md` section as the notes.
 
 | Path | Responsibility |
 |------|----------------|
-| `source/Main.cpp`, `source/MainApplication.cpp` | Plutonium GUI (screens, navigation, input) |
+| `source/Main.cpp`, `source/MainApplication.cpp` | Plutonium GUI (screens, tabs, navigation, input) |
+| `include/MainApplication.hpp`, `include/TableList.hpp` | UI layout + custom table-list element |
 | `net.*` | libnx sockets + libcurl (downloads, HTTP GET, logging) |
 | `archive.c` / `iarchive.h` | archive.org metadata + download URLs |
-| `queue.*` | background download worker (resume, verify, extract, persist) |
+| `queue.*` | background download worker (resume, verify, extract, persist, reorder) |
 | `extract.*` | libarchive zip/7z/rar/tar extraction |
 | `config.*` | `dl_sources.json` / credentials / prefs load + save |
 | `fsutil.*` | mkdir-p, move, recursive delete, free-space |
