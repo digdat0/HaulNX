@@ -5,7 +5,7 @@ A Nintendo Switch homebrew that browses and downloads game files from
 layout used by **TICO**, decompressing archives along the way. Built for the
 devkitPro / libnx toolchain.
 
-> Created by **digdat0**. TicoDL+ ships **no ROMs, no collections, and no
+> TicoDL+ ships **no ROMs, no collections, and no
 > credentials** — it's an empty downloader. **You provide your own** archive.org
 > item ids (and optionally your own archive.org keys for restricted items). No
 > links to any content are bundled. You are responsible for complying with the
@@ -37,6 +37,14 @@ devkitPro / libnx toolchain.
 - **In-app self-update** from GitHub releases — no manual `.nro` copying.
 - **Installed browser** to view and delete what's in `sdmc:/tico/roms`.
 - **Built-in help** (press **ZR** on the main menu for the full control list).
+
+
+---
+
+## pre-req
+
+1. Download TICO from https://ticoverse.com/
+
 
 ---
 
@@ -265,25 +273,54 @@ request's result is logged to `debug.log`.
 
 ---
 
-## Building from source
-
-Requires the devkitPro toolchain with libnx and the portlibs used by the app
-(libcurl, libarchive and its codecs, zlib):
-
-```sh
-dkp-pacman -S switch-dev switch-curl switch-libarchive switch-zlib
-make
-```
-
-Output is `TicoDLplus.nro`. `make` auto-increments the patch version on each
-build; `make clean` removes build artifacts.
-
----
-
 ## Credits
 
-- **digdat0** — creator.
 - Built with [devkitPro / libnx](https://devkitpro.org/),
   [libcurl](https://curl.se/libcurl/), and
   [libarchive](https://www.libarchive.org/). JSON parsing via the vendored
   [jsmn](https://github.com/zserge/jsmn) tokenizer (MIT).
+- Kudos to the creator of TICO https://ticoverse.com/
+- Inspired by TicoBro https://github.com/StonedModder/Ticobro concept
+
+---
+
+## License
+
+TicoDL+ is free homebrew, released under the **MIT License**.
+
+```
+Copyright (c) 2026 digdat0
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+### Third-party components
+
+TicoDL+ links or bundles open-source software under their own licenses:
+
+- **libnx** and the **devkitPro** toolchain — ISC
+- **libcurl** — curl license (MIT-style)
+- **libarchive** and its codecs (bzip2/xz/zstd/…) — BSD-2-Clause
+- **jsmn** JSON tokenizer — MIT
+- **MD5** implementation — public domain (Alexander Peslyak / Solar Designer)
+
+TicoDL+ is not affiliated with or endorsed by Nintendo, archive.org, or TICO,
+and bundles no game content. The MIT license covers the TicoDL+ application
+only; you remain responsible for complying with the laws that apply to your use
+of it and any content you choose to download.
