@@ -383,8 +383,10 @@ Released under the [MIT License](LICENSE) — free to use, modify and
 redistribute. The only condition is that the copyright notice and license stay
 included, so **please keep the credit**.
 
-Note: the MIT license covers TicoDL+'s own code. Bundled/linked third-party
-components keep their respective licenses (see [Credits](#credits)).
+TicoDL+'s own code and the [Plutonium](https://github.com/XorTroll/Plutonium) UI
+library it builds on are both MIT-licensed, so the project is cleanly permissive.
+Third-party license notices (Plutonium © XorTroll, jsmn, etc.) are collected in
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) and ship with any distribution.
 
 ---
 
