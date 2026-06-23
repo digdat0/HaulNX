@@ -4,6 +4,12 @@ Notes for each release. `release.sh` pulls the section matching the version in
 `VERSION` and attaches it to the GitHub release. Add a `## <version>` section
 here before running a release.
 
+## 2.0.12
+- In-app self-update now overwrites the .nro you actually launched (via
+  argv[0]), with a fallback that finds it whether it's at
+  `sdmc:/switch/TicoDLplus/TicoDLplus.nro` or `sdmc:/switch/TicoDLplus.nro`.
+  The update dialog shows the exact path it installed to.
+
 ## 2.0.11
 - Extractor now writes each data block at its declared offset (correct handling
   of sparse archive entries; no change for normal archives).

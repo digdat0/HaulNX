@@ -1,6 +1,10 @@
 #include <MainApplication.hpp>
 
-int main() {
+int main(int argc, char **argv) {
+    // hbloader passes the launched .nro path as argv[0]; the self-updater uses
+    // it so it overwrites the file you actually ran (wherever it lives).
+    MainApplication::SetLaunchPath((argc > 0 && argv[0]) ? argv[0] : "");
+
     auto opts = pu::ui::render::RendererInitOptions(
         SDL_INIT_EVERYTHING, pu::ui::render::RendererHardwareFlags);
     opts.UseImage(pu::ui::render::ImgAllFlags);

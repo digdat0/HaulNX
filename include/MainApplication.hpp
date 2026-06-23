@@ -105,6 +105,7 @@ class MainApplication : public pu::ui::Application {
 
     void OnLoad() override;
     void Shutdown();
+    static void SetLaunchPath(const std::string &p); // argv[0] from main()
 
     void Toast(const std::string &msg);
     void ToastErr(const std::string &msg);

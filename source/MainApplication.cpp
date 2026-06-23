@@ -46,6 +46,7 @@ struct DirEnt {
 static std::vector<DirEnt> g_inst;
 static std::vector<std::string> g_picker; // sorted supported consoles for the picker
 static std::vector<int> g_home_map; // grouped Browse: visible row -> console index
+static std::string g_launch_path;   // argv[0] from main(), for self-update
 
 // ---- helpers --------------------------------------------------------------
 static std::string human_size(uint64_t bytes) {
@@ -374,6 +375,29 @@ static bool install_over(const char *src, const char *dst) {
         ok = false;
     }
     return ok;
+}
+
+void MainApplication::SetLaunchPath(const std::string &p) { g_launch_path = p; }
+
+// Resolve which .nro the self-update should overwrite. Prefer the actual launch
+// path (argv[0]); otherwise probe the documented install locations; finally
+// fall back to the default. This handles both sdmc:/switch/TicoDLplus/...nro
+// and sdmc:/switch/TicoDLplus.nro.
+static std::string resolve_self_path() {
+    if (g_launch_path.size() >= 4 &&
+        strcasecmp(g_launch_path.c_str() + g_launch_path.size() - 4, ".nro") ==
+            0 &&
+        fs_exists(g_launch_path.c_str())) {
+        return g_launch_path;
+    }
+    const char *candidates[] = {"sdmc:/switch/TicoDLplus/TicoDLplus.nro",
+                                "sdmc:/switch/TicoDLplus.nro"};
+    for (const char *c : candidates) {
+        if (fs_exists(c)) {
+            return std::string(c);
+        }
+    }
+    return std::string(DEFAULT_SELF_PATH);
 }
 
 // Count immediate entries (files/folders) inside a directory.
@@ -1718,7 +1742,8 @@ void MainApplication::UpdTick() {
     std::string tag = this->upd_tag, dl = this->upd_dl;
     if (ok) {
         romfsExit();
-        const char *self = DEFAULT_SELF_PATH;
+        std::string selfp = resolve_self_path();
+        const char *self = selfp.c_str();
         char prev[1100];
         snprintf(prev, sizeof(prev), "%s.previous", self);
         install_over(self, prev); // best-effort backup
@@ -1728,7 +1753,8 @@ void MainApplication::UpdTick() {
             remove(dl.c_str());
             this->CreateShowDialog("Update",
                                    std::string("Updated to ") + tag +
-                                       ".\nClose and relaunch TicoDL+.",
+                                       ".\nInstalled to:\n" + selfp +
+                                       "\n\nClose and relaunch TicoDL+.",
                                    {"OK"}, true);
         } else {
             this->CreateShowDialog(
