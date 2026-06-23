@@ -80,6 +80,39 @@ static pu::ui::Color count_color() {
     return pu::ui::Color(150, 200, 210, 255); // muted cyan
 }
 
+// Full display name for a known console folder, or NULL if unknown (custom).
+static const char *console_full_name(const char *abbr) {
+    static const struct {
+        const char *key;
+        const char *name;
+    } map[] = {
+        {"nes", "Nintendo Entertainment System"},
+        {"snes", "Super Nintendo Entertainment System"},
+        {"n64", "Nintendo 64"},
+        {"gb", "Game Boy"},
+        {"gbc", "Game Boy Color"},
+        {"gba", "Game Boy Advance"},
+        {"gc", "Nintendo GameCube"},
+        {"wii", "Nintendo Wii"},
+        {"genesis", "Sega Genesis"},
+        {"master-system", "Sega Master System"},
+        {"game-gear", "Sega Game Gear"},
+        {"sega-cd", "Sega CD"},
+        {"saturn", "Sega Saturn"},
+        {"dc", "Sega Dreamcast"},
+        {"atomiswave", "Sammy Atomiswave"},
+        {"naomi", "Sega NAOMI"},
+        {"psx", "Sony PlayStation"},
+        {"psp", "Sony PlayStation Portable"},
+    };
+    for (size_t i = 0; i < sizeof(map) / sizeof(map[0]); i++) {
+        if (strcasecmp(abbr, map[i].key) == 0) {
+            return map[i].name;
+        }
+    }
+    return NULL;
+}
+
 // Compact "time remaining" string from a seconds count.
 static std::string human_eta(uint64_t secs) {
     char buf[24];
@@ -646,8 +679,25 @@ void MainApplication::GotoHome() {
             int rc = g_cfg.consoles[i].repo_count;
             char cnt[32];
             snprintf(cnt, sizeof(cnt), "%d %s", rc, rc == 1 ? "repo" : "repos");
-            this->layout->AddRow2(g_cfg.consoles[i].console, cnt,
-                                  pu::ui::Color(232, 234, 240, 255),
+            // Known consoles show their full name with the folder in parens
+            // (e.g. "Nintendo Entertainment System (NES)"); custom folders are
+            // shown unchanged.
+            const char *abbr = g_cfg.consoles[i].console;
+            const char *full = console_full_name(abbr);
+            char label[160];
+            if (full) {
+                char up[64];
+                size_t j = 0;
+                for (; abbr[j] && j < sizeof(up) - 1; j++) {
+                    char c = abbr[j];
+                    up[j] = (c >= 'a' && c <= 'z') ? (char)(c - 32) : c;
+                }
+                up[j] = '\0';
+                snprintf(label, sizeof(label), "%s (%s)", full, up);
+            } else {
+                snprintf(label, sizeof(label), "%s", abbr);
+            }
+            this->layout->AddRow2(label, cnt, pu::ui::Color(232, 234, 240, 255),
                                   count_color());
             g_home_map.push_back(i);
         }

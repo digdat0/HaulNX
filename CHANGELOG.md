@@ -4,6 +4,11 @@ Notes for each release. `release.sh` pulls the section matching the version in
 `VERSION` and attaches it to the GitHub release. Add a `## <version>` section
 here before running a release.
 
+## 2.0.13
+- Browse page now shows each console's full name with the folder in parentheses
+  (e.g. "Nintendo Entertainment System (NES)"). Custom folders are unchanged.
+  Display-only — no config/SD-card changes.
+
 ## 2.0.12
 - In-app self-update now overwrites the .nro you actually launched (via
   argv[0]), with a fallback that finds it whether it's at
