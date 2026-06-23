@@ -377,6 +377,17 @@ layer is Plutonium C++.
 
 ---
 
+## License
+
+Released under the [MIT License](LICENSE) — free to use, modify and
+redistribute. The only condition is that the copyright notice and license stay
+included, so **please keep the credit**.
+
+Note: the MIT license covers TicoDL+'s own code. Bundled/linked third-party
+components keep their respective licenses (see [Credits](#credits)).
+
+---
+
 ## Credits
 
 - Built with [devkitPro / libnx](https://devkitpro.org/),
