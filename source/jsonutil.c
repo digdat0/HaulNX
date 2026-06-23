@@ -32,21 +32,28 @@ bool json_tok_eq(const char *js, const jsmntok_t *t, const char *s) {
            strncmp(js + t->start, s, len) == 0;
 }
 
-int json_tok_skip(const jsmntok_t *t, int i) {
+static int tok_skip_d(const jsmntok_t *t, int i, int depth) {
+    /* Guard against pathologically nested JSON overflowing the stack. Real
+     * metadata/config is only a few levels deep. */
+    if (depth > 96) {
+        return i + 1;
+    }
     int n = t[i].size;
     int j = i + 1;
     if (t[i].type == JSMN_OBJECT) {
         for (int k = 0; k < n; k++) {
-            j++;                     /* key */
-            j = json_tok_skip(t, j); /* value */
+            j++;                            /* key */
+            j = tok_skip_d(t, j, depth + 1); /* value */
         }
     } else if (t[i].type == JSMN_ARRAY) {
         for (int k = 0; k < n; k++) {
-            j = json_tok_skip(t, j);
+            j = tok_skip_d(t, j, depth + 1);
         }
     }
     return j;
 }
+
+int json_tok_skip(const jsmntok_t *t, int i) { return tok_skip_d(t, i, 0); }
 
 int json_obj_get(const char *js, const jsmntok_t *t, int obj, const char *key) {
     if (t[obj].type != JSMN_OBJECT) {

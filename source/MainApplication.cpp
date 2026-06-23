@@ -930,42 +930,49 @@ void MainApplication::HandleInput(u64 down, u64 held) {
     }
 
     // Completion toasts: notice downloads reaching a terminal state on any
-    // screen, so you know they finished even from another tab.
+    // screen, so you know they finished even from another tab. Only do the
+    // (locking) snapshot while the queue is active, plus a couple of frames
+    // after it drains so the final done/failed transition is still caught.
     {
         static QStatus last[QUEUE_MAX];
         static bool init = false;
+        static int idle = 1000;
         static QueueView cqv[QUEUE_MAX];
-        int n = queue_snapshot(cqv, QUEUE_MAX);
-        QStatus cur[QUEUE_MAX];
-        for (int s = 0; s < QUEUE_MAX; s++) {
-            cur[s] = Q_FREE;
-        }
-        for (int k = 0; k < n; k++) {
-            cur[cqv[k].slot] = cqv[k].item.status;
-        }
-        if (init) {
+        idle = queue_active_count() > 0 ? 0 : (idle < 1000 ? idle + 1 : idle);
+        if (idle <= 2) {
+            int n = queue_snapshot(cqv, QUEUE_MAX);
+            QStatus cur[QUEUE_MAX];
+            for (int s = 0; s < QUEUE_MAX; s++) {
+                cur[s] = Q_FREE;
+            }
             for (int k = 0; k < n; k++) {
-                int slot = cqv[k].slot;
-                QStatus s = cqv[k].item.status;
-                QStatus prev = last[slot];
-                bool now_term = (s == Q_DONE || s == Q_SAVED || s == Q_FAILED);
-                bool was_term = (prev == Q_DONE || prev == Q_SAVED ||
-                                 prev == Q_FAILED || prev == Q_FREE);
-                if (now_term && !was_term) {
-                    char nm[48];
-                    snprintf(nm, sizeof(nm), "%.44s", cqv[k].item.name);
-                    if (s == Q_FAILED) {
-                        this->ToastErr(std::string("Failed: ") + nm);
-                    } else {
-                        this->Toast(std::string(s == Q_SAVED ? "Saved: "
-                                                             : "Done: ") +
-                                    nm);
+                cur[cqv[k].slot] = cqv[k].item.status;
+            }
+            if (init) {
+                for (int k = 0; k < n; k++) {
+                    int slot = cqv[k].slot;
+                    QStatus s = cqv[k].item.status;
+                    QStatus prev = last[slot];
+                    bool now_term =
+                        (s == Q_DONE || s == Q_SAVED || s == Q_FAILED);
+                    bool was_term = (prev == Q_DONE || prev == Q_SAVED ||
+                                     prev == Q_FAILED || prev == Q_FREE);
+                    if (now_term && !was_term) {
+                        char nm[48];
+                        snprintf(nm, sizeof(nm), "%.44s", cqv[k].item.name);
+                        if (s == Q_FAILED) {
+                            this->ToastErr(std::string("Failed: ") + nm);
+                        } else {
+                            this->Toast(std::string(s == Q_SAVED ? "Saved: "
+                                                                 : "Done: ") +
+                                        nm);
+                        }
                     }
                 }
             }
+            memcpy(last, cur, sizeof(last));
+            init = true;
         }
-        memcpy(last, cur, sizeof(last));
-        init = true;
     }
 
     // Live-refresh the queue list while it's open.

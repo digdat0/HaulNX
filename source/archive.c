@@ -112,6 +112,12 @@ static bool parse_metadata(const char *body, size_t len, ArchiveItem *item) {
         child = json_tok_skip(tok, child);
     }
     item->file_count = added;
+    if (added == 0) {
+        /* Parsed but no usable files: free the allocation so it doesn't leak
+         * (callers don't ia_free on a failed fetch). */
+        free(item->files);
+        item->files = NULL;
+    }
 
     free(tok);
     return added > 0;

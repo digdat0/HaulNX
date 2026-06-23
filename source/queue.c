@@ -235,10 +235,15 @@ static void queue_load(void) {
     free(body);
 }
 
-/* Mark an item failed with a short reason (shown in the UI and the log). */
+/* Mark an item failed with a short reason (shown in the UI and the log).
+ * Write the reason and status together under the mutex so a UI snapshot that
+ * sees Q_FAILED also sees the matching reason (no torn/stale read). Log outside
+ * the lock so disk I/O doesn't stall the UI thread. */
 static void set_fail(QueueItem *it, const char *reason) {
+    mutexLock(&g_mtx);
     snprintf(it->fail_reason, sizeof(it->fail_reason), "%s", reason);
     it->status = Q_FAILED;
+    mutexUnlock(&g_mtx);
     log_download(it, reason);
 }
 

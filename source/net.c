@@ -136,7 +136,8 @@ struct dl_ctx {
 
 static size_t file_write(void *ptr, size_t size, size_t nmemb, void *ud) {
     struct dl_ctx *d = (struct dl_ctx *)ud;
-    return fwrite(ptr, size, nmemb, d->fp);
+    /* curl expects the number of BYTES handled; fwrite returns item count. */
+    return fwrite(ptr, size, nmemb, d->fp) * size;
 }
 
 static int xfer_info(void *ud, curl_off_t dltotal, curl_off_t dlnow,

@@ -4,6 +4,15 @@ Notes for each release. `release.sh` pulls the section matching the version in
 `VERSION` and attaches it to the GitHub release. Add a `## <version>` section
 here before running a release.
 
+## 2.0.10
+- Fixed a memory leak when a repo's metadata fetched but contained no usable
+  files.
+- Hardened the download write path (return byte count, not item count) and the
+  JSON parser (guard against pathologically nested input).
+- Failed-download reason and status are now published together (no stale text on
+  a freshly failed item), and the completion-toast check no longer scans the
+  queue every frame while idle.
+
 ## 2.0.9
 - New app icon. (Applies on the next launch after updating.)
 
