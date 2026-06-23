@@ -235,12 +235,18 @@ static void queue_load(void) {
     free(body);
 }
 
+/* Mark an item failed with a short reason (shown in the UI and the log). */
+static void set_fail(QueueItem *it, const char *reason) {
+    snprintf(it->fail_reason, sizeof(it->fail_reason), "%s", reason);
+    it->status = Q_FAILED;
+    log_download(it, reason);
+}
+
 static void process_item(QueueItem *it) {
     /* Never trust the remote filename as a filesystem path. */
     char safe[600];
     if (!safe_rel(it->name, safe, sizeof(safe))) {
-        it->status = Q_FAILED;
-        log_download(it, "bad name");
+        set_fail(it, "bad name");
         return;
     }
 
@@ -272,8 +278,7 @@ static void process_item(QueueItem *it) {
     /* Bail out before writing if the SD card can't hold what's still to fetch. */
     uint64_t need = (it->size > have) ? (it->size - have) : 0;
     if (need > 0 && fs_free_bytes("sdmc:/") < need) {
-        it->status = Q_FAILED;
-        log_download(it, "no space");
+        set_fail(it, "no space");
         return;
     }
 
@@ -297,8 +302,13 @@ static void process_item(QueueItem *it) {
     }
     if (!ok) {
         /* Keep the .part so a retry or relaunch can resume from here. */
-        it->status = Q_FAILED;
-        log_download(it, "failed");
+        char rb[20];
+        if (it->http_code >= 400 && it->http_code <= 999) {
+            snprintf(rb, sizeof(rb), "HTTP %d", (int)it->http_code);
+        } else {
+            snprintf(rb, sizeof(rb), "network");
+        }
+        set_fail(it, rb);
         return;
     }
 
@@ -307,8 +317,7 @@ static void process_item(QueueItem *it) {
         struct stat ds;
         if (stat(tmp, &ds) != 0 || (uint64_t)ds.st_size != it->size) {
             remove(tmp); /* wrong size: corrupt, force a clean re-download */
-            it->status = Q_FAILED;
-            log_download(it, "bad size");
+            set_fail(it, "bad size");
             return;
         }
     }
@@ -321,15 +330,13 @@ static void process_item(QueueItem *it) {
                 it->status = Q_CANCELLED;
                 log_download(it, "cancelled");
             } else {
-                it->status = Q_FAILED;
-                log_download(it, "md5 error");
+                set_fail(it, "md5 error");
             }
             return;
         }
         if (strcasecmp(got, it->md5) != 0) {
             remove(tmp);
-            it->status = Q_FAILED;
-            log_download(it, "bad md5");
+            set_fail(it, "bad md5");
             return;
         }
     }
@@ -362,8 +369,7 @@ static void process_item(QueueItem *it) {
         it->status = saved_raw ? Q_SAVED : Q_DONE;
         log_download(it, saved_raw ? "saved-raw" : "done");
     } else {
-        it->status = Q_FAILED;
-        log_download(it, "failed");
+        set_fail(it, "write error");
     }
 }
 
@@ -530,6 +536,7 @@ void queue_retry(int slot) {
         it->total = 0;
         it->speed = 0;
         it->http_code = 0;
+        it->fail_reason[0] = '\0';
         /* Keep the original seq so the item resumes in its current list
          * position (and is picked promptly) instead of jumping to the bottom. */
         it->status = Q_QUEUED;

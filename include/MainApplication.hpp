@@ -30,11 +30,12 @@ class MainLayout : public pu::ui::Layout {
     void AddRow(const std::string &name);
     void AddRow(const std::string &name, pu::ui::Color clr);
     void AddRow2(const std::string &left, const std::string &right,
-                 pu::ui::Color lclr, pu::ui::Color rclr);
+                 pu::ui::Color lclr, pu::ui::Color rclr, float progress = -1.0f);
     s32 Sel();
     void SetSel(s32 i);
     s32 RowCount();
     void MoveBy(s32 delta);
+    void Step(s32 delta); // wrap-around single step
     void MoveUp();
     void MoveDown();
     void PageUp();
@@ -53,7 +54,8 @@ class MainApplication : public pu::ui::Application {
         RepoEdit,
         Picker,   // pick a supported console
         Log,
-        Manage    // show/hide consoles on the Browse page
+        Manage,   // show/hide consoles on the Browse page
+        Creds     // archive.org credentials editor
     };
     enum class Pending { None, AddRepo, Manual };
     enum class Tab { Browse = 0, Installed = 1, Queue = 2, Settings = 3 };
@@ -67,6 +69,13 @@ class MainApplication : public pu::ui::Application {
     std::string pending_id;  // archive id for a Manual-URL download
     std::string inst_path;   // current dir in the installed browser
     Screen log_origin;       // screen to return to from the log viewer
+
+    // Remembered list positions, so backing out and returning keeps your place.
+    int home_sel = 0;
+    int repos_sel = 0;
+    int repos_sel_ci = -1;
+    int files_sel = 0;
+    std::string files_sel_id;
 
     // In-app self-update download. Runs on its own thread so the UI keeps
     // rendering progress instead of looking hung; the install itself happens
@@ -111,6 +120,7 @@ class MainApplication : public pu::ui::Application {
     void GotoPicker(Pending what);
     void GotoLog();
     void GotoManage();
+    void GotoCreds();
 
     Tab CurrentTab();      // which tab the current screen belongs to
     void SwitchTab(int dir); // L/R: cycle to the prev/next tab

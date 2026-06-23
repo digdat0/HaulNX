@@ -79,6 +79,21 @@ static pu::ui::Color count_color() {
     return pu::ui::Color(150, 200, 210, 255); // muted cyan
 }
 
+// Compact "time remaining" string from a seconds count.
+static std::string human_eta(uint64_t secs) {
+    char buf[24];
+    if (secs >= 3600) {
+        snprintf(buf, sizeof(buf), "%lluh%llum", (unsigned long long)(secs / 3600),
+                 (unsigned long long)((secs % 3600) / 60));
+    } else if (secs >= 60) {
+        snprintf(buf, sizeof(buf), "%llum%llus", (unsigned long long)(secs / 60),
+                 (unsigned long long)(secs % 60));
+    } else {
+        snprintf(buf, sizeof(buf), "%llus", (unsigned long long)secs);
+    }
+    return std::string(buf);
+}
+
 static bool ci_contains(const char *hay, const char *needle) {
     if (!needle[0]) {
         return true;
@@ -328,6 +343,10 @@ void MainApplication::MetaTick() {
     g_filter.clear();
     rebuild_files(this->layout.get(), g_files_target);
     this->layout->SetSubtitle(this->meta_done_subtitle);
+    // Returning to the same repo we last viewed? Restore the scroll position.
+    if (g_files_id[0] && this->files_sel_id == g_files_id) {
+        this->layout->SetSel(this->files_sel);
+    }
 }
 
 // Copy src over dst in place (truncate-write) — used to replace our own .nro.
@@ -541,13 +560,14 @@ void MainLayout::AddRow(const std::string &name, pu::ui::Color clr) {
     this->list->AddRow(name, clr);
 }
 void MainLayout::AddRow2(const std::string &left, const std::string &right,
-                         pu::ui::Color lclr, pu::ui::Color rclr) {
-    this->list->AddRow2(left, right, lclr, rclr);
+                         pu::ui::Color lclr, pu::ui::Color rclr, float progress) {
+    this->list->AddRow2(left, right, lclr, rclr, progress);
 }
 s32 MainLayout::Sel() { return this->list->GetSelected(); }
 void MainLayout::SetSel(s32 i) { this->list->SetSelected(i); }
 s32 MainLayout::RowCount() { return this->list->Count(); }
 void MainLayout::MoveBy(s32 delta) { this->list->MoveBy(delta); }
+void MainLayout::Step(s32 delta) { this->list->Step(delta); }
 void MainLayout::MoveUp() { this->MoveBy(-1); }
 void MainLayout::MoveDown() { this->MoveBy(1); }
 void MainLayout::PageUp() { this->MoveBy(-this->list->RowsVisible()); }
@@ -628,6 +648,7 @@ void MainApplication::GotoHome() {
             this->layout->AddRow("(no repos - press Y to add)");
         }
     }
+    this->layout->SetSel(this->home_sel); // restore place
 }
 
 void MainApplication::GotoRepos(int ci) {
@@ -646,6 +667,7 @@ void MainApplication::GotoRepos(int ci) {
     if (g->repo_count == 0) {
         this->layout->AddRow("(no repos - press Y to add)");
     }
+    this->layout->SetSel(ci == this->repos_sel_ci ? this->repos_sel : 0);
 }
 
 void MainApplication::GotoFiles(int ci, int ri) {
@@ -667,7 +689,8 @@ MainApplication::Tab MainApplication::CurrentTab() {
     case Screen::Queue:     return Tab::Queue;
     case Screen::Settings:
     case Screen::Log:
-    case Screen::Manage:    return Tab::Settings;
+    case Screen::Manage:
+    case Screen::Creds:     return Tab::Settings;
     default:                return Tab::Browse; // Home/Repos/Files/RepoEdit/Picker
     }
 }
@@ -712,11 +735,8 @@ void MainApplication::GotoSettings() {
     snprintf(r, sizeof(r), "Group consoles: %s",
              g_prefs.group_consoles ? "ON" : "OFF");
     this->layout->AddRow(r);
-    snprintf(r, sizeof(r), "Archive.org access key: %.50s",
-             g_creds.access_key[0] ? g_creds.access_key : "<unset>");
-    this->layout->AddRow(r);
-    snprintf(r, sizeof(r), "Archive.org secret: %s",
-             g_creds.secret[0] ? "<set>" : "<unset>");
+    snprintf(r, sizeof(r), "Archive.org credentials: %s",
+             g_creds.access_key[0] ? "set" : "unset");
     this->layout->AddRow(r);
     this->layout->AddRow("Check for updates");
     this->layout->AddRow("View download log");
@@ -742,6 +762,20 @@ void MainApplication::GotoManage() {
     if (g_cfg.console_count == 0) {
         this->layout->AddRow("(no consoles configured)");
     }
+}
+
+void MainApplication::GotoCreds() {
+    this->screen = Screen::Creds;
+    this->layout->SetTitle("Archive.org credentials");
+    this->layout->SetSubtitle("A edit  B back");
+    this->layout->ClearMenu();
+    char r[200];
+    snprintf(r, sizeof(r), "Access key: %.50s",
+             g_creds.access_key[0] ? g_creds.access_key : "<unset>");
+    this->layout->AddRow(r);
+    snprintf(r, sizeof(r), "Secret: %s", g_creds.secret[0] ? "<set>" : "<unset>");
+    this->layout->AddRow(r);
+    this->layout->AddRow("Clear credentials");
 }
 
 void MainApplication::GotoInstalled(const std::string &path) {
@@ -877,6 +911,63 @@ void MainApplication::HandleInput(u64 down, u64 held) {
     // Keep the tab bar highlight in sync with whatever screen we're on.
     this->SyncTab();
 
+    // Remember the current selection per browseable list so backing out and
+    // returning keeps your place.
+    switch (this->screen) {
+    case Screen::Home:
+        this->home_sel = this->layout->Sel();
+        break;
+    case Screen::Repos:
+        this->repos_sel = this->layout->Sel();
+        this->repos_sel_ci = this->sel_ci;
+        break;
+    case Screen::Files:
+        this->files_sel = this->layout->Sel();
+        this->files_sel_id = g_files_id;
+        break;
+    default:
+        break;
+    }
+
+    // Completion toasts: notice downloads reaching a terminal state on any
+    // screen, so you know they finished even from another tab.
+    {
+        static QStatus last[QUEUE_MAX];
+        static bool init = false;
+        static QueueView cqv[QUEUE_MAX];
+        int n = queue_snapshot(cqv, QUEUE_MAX);
+        QStatus cur[QUEUE_MAX];
+        for (int s = 0; s < QUEUE_MAX; s++) {
+            cur[s] = Q_FREE;
+        }
+        for (int k = 0; k < n; k++) {
+            cur[cqv[k].slot] = cqv[k].item.status;
+        }
+        if (init) {
+            for (int k = 0; k < n; k++) {
+                int slot = cqv[k].slot;
+                QStatus s = cqv[k].item.status;
+                QStatus prev = last[slot];
+                bool now_term = (s == Q_DONE || s == Q_SAVED || s == Q_FAILED);
+                bool was_term = (prev == Q_DONE || prev == Q_SAVED ||
+                                 prev == Q_FAILED || prev == Q_FREE);
+                if (now_term && !was_term) {
+                    char nm[48];
+                    snprintf(nm, sizeof(nm), "%.44s", cqv[k].item.name);
+                    if (s == Q_FAILED) {
+                        this->ToastErr(std::string("Failed: ") + nm);
+                    } else {
+                        this->Toast(std::string(s == Q_SAVED ? "Saved: "
+                                                             : "Done: ") +
+                                    nm);
+                    }
+                }
+            }
+        }
+        memcpy(last, cur, sizeof(last));
+        init = true;
+    }
+
     // Live-refresh the queue list while it's open.
     if (this->screen == Screen::Queue) {
         static QueueView qv[QUEUE_MAX];
@@ -885,17 +976,25 @@ void MainApplication::HandleInput(u64 down, u64 held) {
         this->layout->ClearMenu();
         for (int i = 0; i < n; i++) {
             const QueueItem *it = &qv[i].item;
-            char info[64] = "";
+            char info[80] = "";
+            float prog = -1.0f; // no bar unless actively downloading
             if (it->status == Q_DOWNLOADING && it->total) {
-                int pct = (int)((it->now * 100) / it->total);
+                prog = (float)it->now / (float)it->total;
+                // The bar shows percent; the text gives size, speed and ETA.
                 if (it->speed) {
-                    snprintf(info, sizeof(info), "%d%% / %s @ %s/s", pct,
+                    uint64_t eta = (it->total > it->now)
+                                       ? (it->total - it->now) / it->speed
+                                       : 0;
+                    snprintf(info, sizeof(info), "%s @ %s/s  ~%s",
                              human_size(it->total).c_str(),
-                             human_size(it->speed).c_str());
+                             human_size(it->speed).c_str(),
+                             human_eta(eta).c_str());
                 } else {
-                    snprintf(info, sizeof(info), "%d%% / %s", pct,
+                    snprintf(info, sizeof(info), "%s",
                              human_size(it->total).c_str());
                 }
+            } else if (it->status == Q_FAILED && it->fail_reason[0]) {
+                snprintf(info, sizeof(info), "%s", it->fail_reason);
             } else if (it->total) {
                 snprintf(info, sizeof(info), "%s", human_size(it->total).c_str());
             }
@@ -903,7 +1002,7 @@ void MainApplication::HandleInput(u64 down, u64 held) {
             snprintf(left, sizeof(left), "%-6s %s", qstatus(it->status),
                      it->name);
             pu::ui::Color c = qstatus_color(it->status);
-            this->layout->AddRow2(left, info, c, c);
+            this->layout->AddRow2(left, info, c, c, prog);
         }
         if (n == 0) {
             this->layout->AddRow("(queue empty)");
@@ -933,12 +1032,13 @@ void MainApplication::HandleInput(u64 down, u64 held) {
     }
 
     // List selection: single press moves once; holding auto-repeats after a
-    // short delay. (TableList is passive, so the app owns selection.)
+    // short delay. Wraps around the ends (top<->bottom). (TableList is passive,
+    // so the app owns selection.)
     if (down & HidNpadButton_Down) {
-        this->layout->MoveBy(1);
+        this->layout->Step(1);
     }
     if (down & HidNpadButton_Up) {
-        this->layout->MoveBy(-1);
+        this->layout->Step(-1);
     }
     {
         static int hold = 0;
@@ -950,7 +1050,7 @@ void MainApplication::HandleInput(u64 down, u64 held) {
         } else {
             hold++;
             if (hold > 22 && ((hold - 22) % 3) == 0) {
-                this->layout->MoveBy(dir);
+                this->layout->Step(dir);
             }
         }
     }
@@ -1174,7 +1274,6 @@ void MainApplication::HandleInput(u64 down, u64 held) {
             this->GotoHome();
         } else if (down & HidNpadButton_A) {
             s32 i = this->layout->Sel();
-            char v[1024] = {0};
             switch (i) {
             case 0:
                 g_prefs.use_cache = !g_prefs.use_cache;
@@ -1189,23 +1288,9 @@ void MainApplication::HandleInput(u64 down, u64 held) {
                 prefs_save(&g_prefs);
                 break;
             case 3:
-                if (prompt("Access Key", g_creds.access_key, v, sizeof(v))) {
-                    snprintf(g_creds.access_key, sizeof(g_creds.access_key), "%s",
-                             v);
-                    creds_save(&g_creds);
-                    this->Toast("Saved");
-                }
-                break;
-            case 4:
-                // Pre-populate with the current secret so it's easy to edit
-                // (user accepted the shoulder-surfing trade-off).
-                if (prompt("Secret Key", g_creds.secret, v, sizeof(v))) {
-                    snprintf(g_creds.secret, sizeof(g_creds.secret), "%s", v);
-                    creds_save(&g_creds);
-                    this->Toast("Saved");
-                }
-                break;
-            case 5: {
+                this->GotoCreds();
+                return;
+            case 4: {
                 char tag[64], url[1024];
                 if (!update_fetch_latest(UPDATE_REPO, tag, sizeof(tag), url,
                                          sizeof(url))) {
@@ -1234,10 +1319,10 @@ void MainApplication::HandleInput(u64 down, u64 held) {
                 this->UpdStart(url, dl, tag);
                 return;
             }
-            case 6:
+            case 5:
                 this->GotoLog();
                 return;
-            case 7: {
+            case 6: {
                 char inp[1024] = {0};
                 if (prompt("archive.org URL or item id", nullptr, inp,
                            sizeof(inp))) {
@@ -1253,7 +1338,7 @@ void MainApplication::HandleInput(u64 down, u64 held) {
                 }
                 break;
             }
-            case 8:
+            case 7:
                 this->CreateShowDialog(
                     "Controls",
                     "Tabs: L / R  (Browse | Installed | Queue | Settings)\n"
@@ -1261,10 +1346,10 @@ void MainApplication::HandleInput(u64 down, u64 held) {
                     "+: exit   B: back\n"
                     "Browse: A open  Y add  X edit/del  - delete\n"
                     "Files: A get  - all  Y filter  X refresh  Dpad L/R: repo\n"
-                    "Queue: A cancel  X retry  Y clear  - log",
+                    "Queue: A cancel  X retry  ZL/ZR move  Y clear  - log",
                     {"OK"}, true);
                 break;
-            case 9:
+            case 8:
                 this->CreateShowDialog(
                     "Credits",
                     "TicoDL+\ncreated by digdat0\n\n"
@@ -1272,7 +1357,7 @@ void MainApplication::HandleInput(u64 down, u64 held) {
                     "TICO emulator - https://ticoverse.com/",
                     {"OK"}, true);
                 break;
-            case 10:
+            case 9:
                 this->GotoManage();
                 return;
             default:
@@ -1460,6 +1545,42 @@ void MainApplication::HandleInput(u64 down, u64 held) {
                 this->GotoManage(); // refresh the shown/hidden labels
                 this->layout->SetSel(i);
             }
+        }
+        break;
+    }
+
+    case Screen::Creds: {
+        if (down & HidNpadButton_B) {
+            this->GotoSettings();
+        } else if (down & HidNpadButton_A) {
+            s32 i = this->layout->Sel();
+            char v[1024] = {0};
+            if (i == 0) {
+                if (prompt("Access Key", g_creds.access_key, v, sizeof(v))) {
+                    snprintf(g_creds.access_key, sizeof(g_creds.access_key), "%s",
+                             v);
+                    creds_save(&g_creds);
+                    this->Toast("Saved");
+                }
+            } else if (i == 1) {
+                // Pre-filled with the current secret so it's easy to edit.
+                if (prompt("Secret Key", g_creds.secret, v, sizeof(v))) {
+                    snprintf(g_creds.secret, sizeof(g_creds.secret), "%s", v);
+                    creds_save(&g_creds);
+                    this->Toast("Saved");
+                }
+            } else if (i == 2) {
+                if (this->Confirm("Clear credentials",
+                                  "Remove the saved access key and secret?")) {
+                    g_creds.access_key[0] = '\0';
+                    g_creds.secret[0] = '\0';
+                    creds_save(&g_creds);
+                    this->Toast("Cleared");
+                }
+            }
+            s32 keep = this->layout->Sel();
+            this->GotoCreds();
+            this->layout->SetSel(keep);
         }
         break;
     }

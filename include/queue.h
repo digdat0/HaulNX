@@ -38,6 +38,7 @@ typedef struct {
     volatile uint64_t speed; /* bytes/sec, while downloading */
     volatile bool cancel;
     long http_code;
+    char fail_reason[24]; /* short reason shown on a failed item, e.g. "HTTP 404" */
 } QueueItem;
 
 /* A snapshot entry: a copy of the item plus its stable slot index. */

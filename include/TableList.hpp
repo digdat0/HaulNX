@@ -19,6 +19,7 @@ class TableList : public pu::ui::elm::Element {
         pu::ui::Color lclr;
         pu::ui::Color rclr;
         bool has_right;
+        float progress; // 0..1 draws a progress bar; <0 = none
     };
 
   private:
@@ -129,12 +130,13 @@ class TableList : public pu::ui::elm::Element {
         this->dirty = true;
     }
     void AddRow(const std::string &left, const pu::ui::Color lclr) {
-        this->rows.push_back(Row{left, "", lclr, lclr, false});
+        this->rows.push_back(Row{left, "", lclr, lclr, false, -1.0f});
         this->dirty = true;
     }
     void AddRow2(const std::string &left, const std::string &right,
-                 const pu::ui::Color lclr, const pu::ui::Color rclr) {
-        this->rows.push_back(Row{left, right, lclr, rclr, true});
+                 const pu::ui::Color lclr, const pu::ui::Color rclr,
+                 const float progress = -1.0f) {
+        this->rows.push_back(Row{left, right, lclr, rclr, true, progress});
         this->dirty = true;
     }
 
@@ -152,6 +154,20 @@ class TableList : public pu::ui::elm::Element {
         this->EnsureVisible();
     }
     void MoveBy(const s32 d) { this->SetSelected(this->sel + d); }
+    // Single-step move that wraps around the ends (top<->bottom).
+    void Step(const s32 d) {
+        s32 n = (s32)this->rows.size();
+        if (n <= 0) {
+            return;
+        }
+        s32 i = this->sel + d;
+        if (i < 0) {
+            i = n - 1;
+        } else if (i >= n) {
+            i = 0;
+        }
+        this->SetSelected(i);
+    }
 
     s32 GetX() override { return this->x; }
     s32 GetY() override { return this->y; }
@@ -174,6 +190,21 @@ class TableList : public pu::ui::elm::Element {
             drawer->RenderRectangleFill(bg, rx, rowy, this->w, this->row_h);
             if (!has) {
                 continue;
+            }
+            // Progress bar (e.g. active download): thin track along the bottom.
+            float prog = this->rows[ridx].progress;
+            if (prog >= 0.0f) {
+                if (prog > 1.0f) {
+                    prog = 1.0f;
+                }
+                s32 bh = 6;
+                s32 by = rowy + this->row_h - bh - 4;
+                s32 bx = rx + PadX;
+                s32 bw = this->w - 2 * PadX;
+                drawer->RenderRectangleFill(pu::ui::Color(0, 0, 0, 120), bx, by,
+                                            bw, bh);
+                drawer->RenderRectangleFill(pu::ui::Color(120, 225, 150, 255), bx,
+                                            by, (s32)(bw * prog), bh);
             }
             Cell &lc = this->cache_l[i];
             Cell &rc = this->cache_r[i];

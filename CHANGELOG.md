@@ -4,6 +4,20 @@ Notes for each release. `release.sh` pulls the section matching the version in
 `VERSION` and attaches it to the GitHub release. Add a `## <version>` section
 here before running a release.
 
+## 2.0.7
+- Download queue now draws a **progress bar** on the active download, and shows
+  size, speed and an **ETA** (e.g. `1.2 GB @ 3.4 MB/s  ~2m30s`).
+- Failed downloads now show a **real reason** (`HTTP 404`, `no space`, `bad md5`,
+  `network`, …) instead of a bare "FAIL".
+- **Completion toasts**: you get a Done / Saved / Failed notification when a
+  download finishes, even from another tab.
+- **Archive.org credentials** moved into their own Settings sub-menu (access key,
+  secret, and a Clear option).
+- Lists now **wrap around** — pressing Up on the first row jumps to the last,
+  and vice-versa.
+- Lists **remember your position** when you back out and return (file list per
+  repo, console/repo lists, including across tab switches).
+
 ## 2.0.6
 - New **Settings → Manage consoles (show/hide)** screen: toggle which consoles
   appear on the Browse page. Hidden consoles (and their repos in flat mode) are
