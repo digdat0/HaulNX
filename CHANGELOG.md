@@ -4,6 +4,11 @@ Notes for each release. `release.sh` pulls the section matching the version in
 `VERSION` and attaches it to the GitHub release. Add a `## <version>` section
 here before running a release.
 
+## 2.0.11
+- Extractor now writes each data block at its declared offset (correct handling
+  of sparse archive entries; no change for normal archives).
+- Repo housekeeping (ignore local scratch files).
+
 ## 2.0.10
 - Fixed a memory leak when a repo's metadata fetched but contained no usable
   files.

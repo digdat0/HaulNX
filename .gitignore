@@ -5,3 +5,8 @@
 *.nacp
 *.lst
 *.map
+
+# local scratch (icon work, backups)
+/icon_prev.jpg
+/icon_full_src.jpg
+/make_icon.py

@@ -139,9 +139,14 @@ int extract_archive(const char *src, const char *dest_dir, extract_cb cb,
                 write_ok = false;
                 break;
             }
-            if (size > 0 && fwrite(buff, 1, size, f) != size) {
-                write_ok = false;
-                break;
+            if (size > 0) {
+                /* Honor the block's offset so sparse entries land correctly
+                 * (a no-op for normal contiguous archives). */
+                fseeko(f, (off_t)offset, SEEK_SET);
+                if (fwrite(buff, 1, size, f) != size) {
+                    write_ok = false;
+                    break;
+                }
             }
         }
         fclose(f);
