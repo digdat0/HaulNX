@@ -89,6 +89,7 @@ ConsoleGroup *config_add_console(SourcesConfig *cfg, const char *name) {
     memset(g, 0, sizeof(*g));
     sset(g->console, sizeof(g->console), name);
     sset(g->target, sizeof(g->target), name);
+    g->shown = true;
     return g;
 }
 
@@ -176,6 +177,9 @@ static bool load_grouped(const char *js, jsmntok_t *tok, SourcesConfig *cfg) {
             if (!g->console[0]) {
                 sset(g->console, sizeof(g->console), g->target);
             }
+            /* Absent "shown" defaults to true so existing configs are unchanged. */
+            int shtok = json_obj_get(js, tok, child, "shown");
+            g->shown = (shtok < 0) ? true : json_bool(js, tok, shtok);
             int reps = json_obj_get(js, tok, child, "repos");
             if (reps >= 0 && tok[reps].type == JSMN_ARRAY) {
                 int rc = tok[reps].size;
@@ -305,6 +309,7 @@ bool config_save(const SourcesConfig *cfg) {
         json_write_escaped(f, g->console);
         fputs(",\n      \"target\": ", f);
         json_write_escaped(f, g->target);
+        fprintf(f, ",\n      \"shown\": %s", g->shown ? "true" : "false");
         fputs(",\n      \"repos\": [\n", f);
         for (int r = 0; r < g->repo_count; r++) {
             const Repo *rp = &g->repos[r];

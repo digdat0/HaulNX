@@ -52,7 +52,8 @@ class MainApplication : public pu::ui::Application {
         Installed,
         RepoEdit,
         Picker,   // pick a supported console
-        Log
+        Log,
+        Manage    // show/hide consoles on the Browse page
     };
     enum class Pending { None, AddRepo, Manual };
     enum class Tab { Browse = 0, Installed = 1, Queue = 2, Settings = 3 };
@@ -109,6 +110,7 @@ class MainApplication : public pu::ui::Application {
     void GotoRepoEdit(int ci, int ri);
     void GotoPicker(Pending what);
     void GotoLog();
+    void GotoManage();
 
     Tab CurrentTab();      // which tab the current screen belongs to
     void SwitchTab(int dir); // L/R: cycle to the prev/next tab

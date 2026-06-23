@@ -45,6 +45,7 @@ struct DirEnt {
 };
 static std::vector<DirEnt> g_inst;
 static std::vector<std::string> g_picker; // sorted supported consoles for the picker
+static std::vector<int> g_home_map; // grouped Browse: visible row -> console index
 
 // ---- helpers --------------------------------------------------------------
 static std::string human_size(uint64_t bytes) {
@@ -157,9 +158,14 @@ static pu::ui::Color qstatus_color(QStatus s) {
     }
 }
 
+// Flat-mode rows skip the repos of hidden consoles, so indexing matches the
+// primary page (which also hides them).
 static bool flat_ref(int flat, int *ci, int *ri) {
     int k = 0;
     for (int c = 0; c < g_cfg.console_count; c++) {
+        if (!g_cfg.consoles[c].shown) {
+            continue;
+        }
         for (int r = 0; r < g_cfg.consoles[c].repo_count; r++) {
             if (k == flat) {
                 *ci = c;
@@ -174,7 +180,9 @@ static bool flat_ref(int flat, int *ci, int *ri) {
 static int flat_count() {
     int k = 0;
     for (int c = 0; c < g_cfg.console_count; c++) {
-        k += g_cfg.consoles[c].repo_count;
+        if (g_cfg.consoles[c].shown) {
+            k += g_cfg.consoles[c].repo_count;
+        }
     }
     return k;
 }
@@ -584,15 +592,22 @@ void MainApplication::GotoHome() {
         this->layout->SetTitle("Consoles");
         this->layout->SetSubtitle(
             "A open  Y add  X del console  L/R tabs  ZL/ZR page");
+        // Only show consoles flagged shown; g_home_map maps each visible row
+        // back to its real console index (for open / delete).
+        g_home_map.clear();
         for (int i = 0; i < g_cfg.console_count; i++) {
+            if (!g_cfg.consoles[i].shown) {
+                continue;
+            }
             int rc = g_cfg.consoles[i].repo_count;
             char cnt[32];
             snprintf(cnt, sizeof(cnt), "%d %s", rc, rc == 1 ? "repo" : "repos");
             this->layout->AddRow2(g_cfg.consoles[i].console, cnt,
                                   pu::ui::Color(232, 234, 240, 255),
                                   count_color());
+            g_home_map.push_back(i);
         }
-        if (g_cfg.console_count == 0) {
+        if (g_home_map.empty()) {
             this->layout->AddRow("(no collections - press Y to add)");
         }
     } else {
@@ -651,7 +666,8 @@ MainApplication::Tab MainApplication::CurrentTab() {
     case Screen::Installed: return Tab::Installed;
     case Screen::Queue:     return Tab::Queue;
     case Screen::Settings:
-    case Screen::Log:       return Tab::Settings;
+    case Screen::Log:
+    case Screen::Manage:    return Tab::Settings;
     default:                return Tab::Browse; // Home/Repos/Files/RepoEdit/Picker
     }
 }
@@ -707,6 +723,25 @@ void MainApplication::GotoSettings() {
     this->layout->AddRow("Download from URL");
     this->layout->AddRow("Controls / Help");
     this->layout->AddRow("Credits");
+    this->layout->AddRow("Manage consoles (show/hide)");
+}
+
+void MainApplication::GotoManage() {
+    this->screen = Screen::Manage;
+    this->layout->SetTitle("Manage consoles");
+    this->layout->SetSubtitle("A show/hide  L/R tabs  B back");
+    this->layout->ClearMenu();
+    for (int i = 0; i < g_cfg.console_count; i++) {
+        bool sh = g_cfg.consoles[i].shown;
+        this->layout->AddRow2(
+            g_cfg.consoles[i].console, sh ? "shown" : "hidden",
+            pu::ui::Color(232, 234, 240, 255),
+            sh ? pu::ui::Color(130, 225, 150, 255)   // green = shown
+               : pu::ui::Color(150, 150, 162, 255)); // gray = hidden
+    }
+    if (g_cfg.console_count == 0) {
+        this->layout->AddRow("(no consoles configured)");
+    }
 }
 
 void MainApplication::GotoInstalled(const std::string &path) {
@@ -946,12 +981,14 @@ void MainApplication::HandleInput(u64 down, u64 held) {
     switch (this->screen) {
     case Screen::Home: {
         if (g_prefs.group_consoles) {
-            if ((down & HidNpadButton_A) && g_cfg.console_count > 0) {
-                this->GotoRepos(this->layout->Sel());
+            s32 sel = this->layout->Sel();
+            bool valid = sel >= 0 && sel < (s32)g_home_map.size();
+            if ((down & HidNpadButton_A) && valid) {
+                this->GotoRepos(g_home_map[sel]);
             } else if (down & HidNpadButton_Y) {
                 this->GotoPicker(Pending::AddRepo);
-            } else if ((down & HidNpadButton_X) && g_cfg.console_count > 0) {
-                int ci = this->layout->Sel();
+            } else if ((down & HidNpadButton_X) && valid) {
+                int ci = g_home_map[sel];
                 if (this->Confirm("Delete console",
                                   std::string("Delete '") +
                                       g_cfg.consoles[ci].console +
@@ -1235,6 +1272,9 @@ void MainApplication::HandleInput(u64 down, u64 held) {
                     "TICO emulator - https://ticoverse.com/",
                     {"OK"}, true);
                 break;
+            case 10:
+                this->GotoManage();
+                return;
             default:
                 break;
             }
@@ -1404,6 +1444,21 @@ void MainApplication::HandleInput(u64 down, u64 held) {
                 remove(DLLOG_PATH);
                 this->Toast("Log cleared");
                 this->GotoLog(); // refresh (stays in the Log view)
+            }
+        }
+        break;
+    }
+
+    case Screen::Manage: {
+        if (down & HidNpadButton_B) {
+            this->GotoSettings();
+        } else if (down & HidNpadButton_A) {
+            s32 i = this->layout->Sel();
+            if (i >= 0 && i < g_cfg.console_count) {
+                g_cfg.consoles[i].shown = !g_cfg.consoles[i].shown;
+                config_save(&g_cfg);
+                this->GotoManage(); // refresh the shown/hidden labels
+                this->layout->SetSel(i);
             }
         }
         break;

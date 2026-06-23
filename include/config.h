@@ -44,6 +44,7 @@ typedef struct {
     char target[64];  /* folder under tico/roms */
     Repo repos[MAX_REPOS];
     int repo_count;
+    bool shown; /* show on the primary Browse page (default true) */
 } ConsoleGroup;
 
 typedef struct {

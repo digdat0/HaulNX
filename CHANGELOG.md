@@ -4,6 +4,12 @@ Notes for each release. `release.sh` pulls the section matching the version in
 `VERSION` and attaches it to the GitHub release. Add a `## <version>` section
 here before running a release.
 
+## 2.0.6
+- New **Settings → Manage consoles (show/hide)** screen: toggle which consoles
+  appear on the Browse page. Hidden consoles (and their repos in flat mode) are
+  kept out of the primary list but stay easy to re-enable here. The visibility
+  is saved per console in `dl_sources.json` (`"shown"`), defaulting to shown.
+
 ## 2.0.5
 - The add-console picker is now a sorted (A-Z) table showing each console's
   repo count in its own column.
