@@ -1214,8 +1214,11 @@ void MainApplication::HandleInput(u64 down, u64 held) {
                     {"OK"}, true);
                 break;
             case 9:
-                this->CreateShowDialog("Credits", "TicoDL+\ncreated by digdat0",
-                                       {"OK"}, true);
+                this->CreateShowDialog(
+                    "Credits",
+                    "TicoDL+\ncreated by digdat0\n\n"
+                    "Plutonium UI library provided by XorTroll",
+                    {"OK"}, true);
                 break;
             default:
                 break;

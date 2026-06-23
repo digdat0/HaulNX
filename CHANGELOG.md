@@ -4,6 +4,11 @@ Notes for each release. `release.sh` pulls the section matching the version in
 `VERSION` and attaches it to the GitHub release. Add a `## <version>` section
 here before running a release.
 
+## 2.0.4
+- Credits screen now also credits the Plutonium UI library by XorTroll.
+- Project is now MIT-licensed, with third-party license notices included
+  (Plutonium and jsmn, both MIT).
+
 ## 2.0.3
 - Loading a repo's file list no longer freezes the screen: the metadata now
   downloads in the background with an animated **"Loading metadata..."**
