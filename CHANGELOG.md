@@ -4,6 +4,10 @@ Notes for each release. `release.sh` pulls the section matching the version in
 `VERSION` and attaches it to the GitHub release. Add a `## <version>` section
 here before running a release.
 
+## 2.0.8
+- The **left analog stick** now navigates lists (up/down), in addition to the
+  D-pad.
+
 ## 2.0.7
 - Download queue now draws a **progress bar** on the active download, and shows
   size, speed and an **ETA** (e.g. `1.2 GB @ 3.4 MB/s  ~2m30s`).

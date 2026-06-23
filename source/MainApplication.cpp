@@ -1032,19 +1032,21 @@ void MainApplication::HandleInput(u64 down, u64 held) {
     }
 
     // List selection: single press moves once; holding auto-repeats after a
-    // short delay. Wraps around the ends (top<->bottom). (TableList is passive,
-    // so the app owns selection.)
-    if (down & HidNpadButton_Down) {
+    // short delay. Wraps around the ends (top<->bottom). Both the D-pad and the
+    // left analog stick navigate. (TableList is passive, so the app owns it.)
+    const u64 NAV_UP = HidNpadButton_Up | HidNpadButton_StickLUp;
+    const u64 NAV_DOWN = HidNpadButton_Down | HidNpadButton_StickLDown;
+    if (down & NAV_DOWN) {
         this->layout->Step(1);
     }
-    if (down & HidNpadButton_Up) {
+    if (down & NAV_UP) {
         this->layout->Step(-1);
     }
     {
         static int hold = 0;
-        int dir = (held & HidNpadButton_Down)  ? 1
-                  : (held & HidNpadButton_Up)  ? -1
-                                               : 0;
+        int dir = (held & NAV_DOWN)  ? 1
+                  : (held & NAV_UP)  ? -1
+                                     : 0;
         if (dir == 0) {
             hold = 0;
         } else {
