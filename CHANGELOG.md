@@ -4,6 +4,9 @@ Notes for each release. `release.sh` pulls the section matching the version in
 `VERSION` and attaches it to the GitHub release. Add a `## <version>` section
 here before running a release.
 
+## 2.0.9
+- New app icon. (Applies on the next launch after updating.)
+
 ## 2.0.8
 - The **left analog stick** now navigates lists (up/down), in addition to the
   D-pad.
