@@ -26,11 +26,17 @@ but it works.**
   can hold several archive.org collections, so if one set is missing games you
   can add another. Everything for a console installs into the same
   `sdmc:/tico/roms/<console>/` folder. The Browse tab shows each console's repo
-  count.
+  count, and you can **show/hide consoles** on the Browse page from
+  **Settings → Manage consoles**.
 - **Background download queue.** Queue many files and keep browsing while they
-  download FIFO in the background. The Queue tab shows live progress, size and
-  speed, and lets you **cancel**, **retry**, **reorder** (move items up/down
-  with ZL/ZR — never above the active download), and clear finished items.
+  download FIFO in the background. The Queue tab shows a **progress bar** plus
+  size, speed and **ETA** on the active download, and lets you **cancel**,
+  **retry** (resumes in place), **reorder** (move items up/down with ZL/ZR —
+  never above the active download), and clear finished items. Failed items show
+  the **reason** (`HTTP 404`, `no space`, `bad md5`, …).
+- **Completion alerts.** A toast pops up when a download finishes — **Done**,
+  **Saved** (kept raw because it couldn't be unpacked) or **Failed** — even when
+  you're on another tab.
 - **Download a whole list at once.** In a file list, **−** queues every file
   matching the current filter (with a confirmation).
 - **Resume + persistence.** Interrupted downloads resume from where they
@@ -44,6 +50,9 @@ but it works.**
   provides one, MD5 — corrupt files are rejected instead of installed.
 - **Find things fast.** On-screen name filter, ZL/ZR paging, a scrollbar for
   huge lists, and `*` markers next to files you already have installed.
+- **Easy navigation.** D-pad **or left analog stick**, hold to auto-repeat,
+  lists **wrap around** at the ends, and each list **remembers your position**
+  when you back out and return.
 - **Installed browser.** The Installed tab is a table of `sdmc:/tico/roms` —
   folders show how many files/apps are inside, files show their size. Rename or
   delete entries in place.
@@ -145,7 +154,7 @@ buttons available on the current screen.
 
 | Key | Action |
 |-----|--------|
-| D-pad / stick | move (hold Up/Down to auto-repeat) |
+| D-pad / left stick | move (hold to auto-repeat; wraps at the ends) |
 | L / R | switch tabs (Browse ↔ Installed ↔ Queue ↔ Settings) |
 | ZL / ZR | page up / down (in the Queue, move the selected item up / down) |
 | + | exit |
@@ -187,8 +196,8 @@ marks files you already have installed.
 | Y | clear finished items |
 | − | open the download log |
 
-Rows show live status and progress (percent, size, speed); the active download
-is shown in white.
+The active download shows a **progress bar** plus size, speed and **ETA**;
+failed items show the reason (`HTTP 404`, `no space`, …).
 
 **Installed tab**
 
@@ -203,10 +212,16 @@ Folders show the number of files/apps inside; files show a color-coded size.
 
 **Settings tab**
 
-D-pad + **A** to toggle/open: metadata cache, stay-awake while downloading,
-group consoles, archive.org access key / secret, check for updates (in-app
-self-update with download progress), view download log (**X** clears it),
-download from URL, controls / help, credits.
+Highlight an item and press **A** to toggle/open:
+
+- **Metadata cache**, **Stay awake while downloading**, **Group consoles** — toggles.
+- **Archive.org credentials** — opens a sub-menu to edit the access key / secret
+  (pre-filled for easy editing) or clear them.
+- **Check for updates** — in-app self-update, with download progress.
+- **View download log** — press **X** in the log to clear it.
+- **Download from URL** — paste an archive.org URL / item id for a one-off grab.
+- **Controls / Help**, **Credits**.
+- **Manage consoles** — show/hide which consoles appear on the Browse page.
 
 ## Console groups & supported consoles
 
