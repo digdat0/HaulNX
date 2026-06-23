@@ -113,6 +113,24 @@ static const char *console_full_name(const char *abbr) {
     return NULL;
 }
 
+// Browse display label for a console folder, e.g.
+// "Nintendo Entertainment System (NES)", or just the folder for custom ones.
+static void console_label(const char *abbr, char *out, size_t out_sz) {
+    const char *full = console_full_name(abbr);
+    if (!full) {
+        snprintf(out, out_sz, "%s", abbr);
+        return;
+    }
+    char up[64];
+    size_t j = 0;
+    for (; abbr[j] && j < sizeof(up) - 1; j++) {
+        char c = abbr[j];
+        up[j] = (c >= 'a' && c <= 'z') ? (char)(c - 32) : c;
+    }
+    up[j] = '\0';
+    snprintf(out, out_sz, "%s (%s)", full, up);
+}
+
 // Compact "time remaining" string from a seconds count.
 static std::string human_eta(uint64_t secs) {
     char buf[24];
@@ -669,37 +687,35 @@ void MainApplication::GotoHome() {
         this->layout->SetTitle("Consoles");
         this->layout->SetSubtitle(
             "A open  Y add  X del console  L/R tabs  ZL/ZR page");
-        // Only show consoles flagged shown; g_home_map maps each visible row
-        // back to its real console index (for open / delete).
-        g_home_map.clear();
+        // Build the shown consoles, sorted A-Z by their displayed label (the
+        // full name), since the stored order is by folder key. g_home_map maps
+        // each visible row back to its real console index (for open / delete).
+        struct HomeRow {
+            std::string label;
+            int idx;
+        };
+        std::vector<HomeRow> rows;
         for (int i = 0; i < g_cfg.console_count; i++) {
             if (!g_cfg.consoles[i].shown) {
                 continue;
             }
-            int rc = g_cfg.consoles[i].repo_count;
+            char label[160];
+            console_label(g_cfg.consoles[i].console, label, sizeof(label));
+            rows.push_back({label, i});
+        }
+        std::sort(rows.begin(), rows.end(),
+                  [](const HomeRow &a, const HomeRow &b) {
+                      return strcasecmp(a.label.c_str(), b.label.c_str()) < 0;
+                  });
+        g_home_map.clear();
+        for (const auto &row : rows) {
+            int rc = g_cfg.consoles[row.idx].repo_count;
             char cnt[32];
             snprintf(cnt, sizeof(cnt), "%d %s", rc, rc == 1 ? "repo" : "repos");
-            // Known consoles show their full name with the folder in parens
-            // (e.g. "Nintendo Entertainment System (NES)"); custom folders are
-            // shown unchanged.
-            const char *abbr = g_cfg.consoles[i].console;
-            const char *full = console_full_name(abbr);
-            char label[160];
-            if (full) {
-                char up[64];
-                size_t j = 0;
-                for (; abbr[j] && j < sizeof(up) - 1; j++) {
-                    char c = abbr[j];
-                    up[j] = (c >= 'a' && c <= 'z') ? (char)(c - 32) : c;
-                }
-                up[j] = '\0';
-                snprintf(label, sizeof(label), "%s (%s)", full, up);
-            } else {
-                snprintf(label, sizeof(label), "%s", abbr);
-            }
-            this->layout->AddRow2(label, cnt, pu::ui::Color(232, 234, 240, 255),
+            this->layout->AddRow2(row.label, cnt,
+                                  pu::ui::Color(232, 234, 240, 255),
                                   count_color());
-            g_home_map.push_back(i);
+            g_home_map.push_back(row.idx);
         }
         if (g_home_map.empty()) {
             this->layout->AddRow("(no collections - press Y to add)");

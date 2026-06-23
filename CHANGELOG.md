@@ -4,6 +4,10 @@ Notes for each release. `release.sh` pulls the section matching the version in
 `VERSION` and attaches it to the GitHub release. Add a `## <version>` section
 here before running a release.
 
+## 2.0.14
+- Browse console list is now sorted A-Z by the displayed full name (it was
+  ordered by the underlying folder key, which no longer matched the names).
+
 ## 2.0.13
 - Browse page now shows each console's full name with the folder in parentheses
   (e.g. "Nintendo Entertainment System (NES)"). Custom folders are unchanged.
