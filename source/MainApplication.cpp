@@ -44,6 +44,7 @@ struct DirEnt {
     uint64_t size;
 };
 static std::vector<DirEnt> g_inst;
+static std::vector<std::string> g_picker; // sorted supported consoles for the picker
 
 // ---- helpers --------------------------------------------------------------
 static std::string human_size(uint64_t bytes) {
@@ -768,14 +769,27 @@ void MainApplication::GotoPicker(Pending what) {
     this->layout->SetTitle("Select console");
     this->layout->SetSubtitle("A select  B cancel");
     this->layout->ClearMenu();
+
+    // Build a sorted (A-Z) copy of the supported list so the picker is ordered;
+    // the input handler reads back from g_picker by index.
+    g_picker.clear();
     for (int i = 0; i < g_cfg.supported_count; i++) {
-        ConsoleGroup *g = config_find_console(&g_cfg, g_cfg.supported[i]);
-        char row[96];
-        snprintf(row, sizeof(row), "%-16.16s  (%d repos)", g_cfg.supported[i],
-                 g ? g->repo_count : 0);
-        this->layout->AddRow(row);
+        g_picker.push_back(g_cfg.supported[i]);
     }
-    if (g_cfg.supported_count == 0) {
+    std::sort(g_picker.begin(), g_picker.end(),
+              [](const std::string &a, const std::string &b) {
+                  return strcasecmp(a.c_str(), b.c_str()) < 0;
+              });
+
+    for (const auto &name : g_picker) {
+        ConsoleGroup *g = config_find_console(&g_cfg, name.c_str());
+        int rc = g ? g->repo_count : 0;
+        char cnt[32];
+        snprintf(cnt, sizeof(cnt), "%d %s", rc, rc == 1 ? "repo" : "repos");
+        this->layout->AddRow2(name, cnt, pu::ui::Color(232, 234, 240, 255),
+                              count_color());
+    }
+    if (g_picker.empty()) {
         this->layout->AddRow("(no supported consoles)");
     }
 }
@@ -1217,7 +1231,8 @@ void MainApplication::HandleInput(u64 down, u64 held) {
                 this->CreateShowDialog(
                     "Credits",
                     "TicoDL+\ncreated by digdat0\n\n"
-                    "Plutonium UI library provided by XorTroll",
+                    "Plutonium UI library provided by XorTroll\n\n"
+                    "TICO emulator - https://ticoverse.com/",
                     {"OK"}, true);
                 break;
             default:
@@ -1345,8 +1360,8 @@ void MainApplication::HandleInput(u64 down, u64 held) {
             this->GotoHome();
         } else if (down & HidNpadButton_A) {
             s32 i = this->layout->Sel();
-            if (i >= 0 && i < g_cfg.supported_count) {
-                const char *cname = g_cfg.supported[i];
+            if (i >= 0 && i < (s32)g_picker.size()) {
+                const char *cname = g_picker[i].c_str();
                 if (this->pending == Pending::AddRepo) {
                     char nm[64] = {0}, id[256] = {0};
                     if (prompt("Repo name", nullptr, nm, sizeof(nm)) &&

@@ -4,6 +4,11 @@ Notes for each release. `release.sh` pulls the section matching the version in
 `VERSION` and attaches it to the GitHub release. Add a `## <version>` section
 here before running a release.
 
+## 2.0.5
+- The add-console picker is now a sorted (A-Z) table showing each console's
+  repo count in its own column.
+- Credits screen now also credits the TICO emulator (https://ticoverse.com/).
+
 ## 2.0.4
 - Credits screen now also credits the Plutonium UI library by XorTroll.
 - Project is now MIT-licensed, with third-party license notices included
