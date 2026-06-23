@@ -383,5 +383,8 @@ layer is Plutonium C++.
   [libcurl](https://curl.se/libcurl/), and
   [libarchive](https://www.libarchive.org/). JSON parsing via the vendored
   [jsmn](https://github.com/zserge/jsmn) tokenizer (MIT).
+- Graphical UI powered by [Plutonium](https://github.com/XorTroll/Plutonium) by
+  [XorTroll](https://github.com/XorTroll).
 - Kudos to the creator of TICO https://ticoverse.com/
-- Inspired by TicoBro https://github.com/StonedModder/Ticobro concept
+- Inspired by [TicoBro](https://github.com/StonedModder/Ticobro) — I wanted a
+  simple downloader whose only job was to download, with some enhancements.
