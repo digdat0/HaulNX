@@ -1092,6 +1092,26 @@ void MainApplication::HandleInput(u64 down, u64 held) {
                 }
             } else if (it->status == Q_FAILED && it->fail_reason[0]) {
                 snprintf(info, sizeof(info), "%s", it->fail_reason);
+            } else if (it->status == Q_DONE || it->status == Q_SAVED) {
+                // Visual outcome: U+21BA (anticlockwise arrow) = replaced an
+                // existing file (with a count for multi-file archives); "+" = a
+                // brand-new file. The cell colour reinforces it (see below).
+                const char *SYM_REPLACED = "\xe2\x86\xba"; // ↺
+                char sz[24];
+                if (it->total) {
+                    snprintf(sz, sizeof(sz), "%s  ",
+                             human_size(it->total).c_str());
+                } else {
+                    sz[0] = '\0';
+                }
+                if (it->overwrote > 1) {
+                    snprintf(info, sizeof(info), "%s%s%d", sz, SYM_REPLACED,
+                             it->overwrote);
+                } else if (it->overwrote == 1) {
+                    snprintf(info, sizeof(info), "%s%s", sz, SYM_REPLACED);
+                } else {
+                    snprintf(info, sizeof(info), "%s+", sz);
+                }
             } else if (it->total) {
                 snprintf(info, sizeof(info), "%s", human_size(it->total).c_str());
             }
@@ -1099,7 +1119,13 @@ void MainApplication::HandleInput(u64 down, u64 held) {
             snprintf(left, sizeof(left), "%-6s %s", qstatus(it->status),
                      it->name);
             pu::ui::Color c = qstatus_color(it->status);
-            this->layout->AddRow2(left, info, c, c, prog);
+            pu::ui::Color rc = c;
+            // Colour the result column by outcome: orange = replaced, green = new.
+            if (it->status == Q_DONE || it->status == Q_SAVED) {
+                rc = it->overwrote > 0 ? pu::ui::Color(245, 170, 90, 255)
+                                       : pu::ui::Color(130, 225, 150, 255);
+            }
+            this->layout->AddRow2(left, info, c, rc, prog);
         }
         if (n == 0) {
             this->layout->AddRow("(queue empty)");

@@ -4,6 +4,21 @@ Notes for each release. `release.sh` pulls the section matching the version in
 `VERSION` and attaches it to the GitHub release. Add a `## <version>` section
 here before running a release.
 
+## 2.0.15
+- **How overwrites work (unchanged behaviour, now made visible):** when a
+  download lands on a file of the **same name** in `sdmc:/tico/roms/<console>/`,
+  it **overwrites that file in place** — there is no prompt and no separate
+  backup. Re-downloading replaces the existing file; for archives, each
+  extracted file replaces any same-name file already there. The `*` installed
+  marker is informational and does not block re-downloading.
+- This is now **logged** for audit: the download history (Settings -> View
+  download log) records when an install `(overwrote existing)` or
+  `(overwrote N files)`.
+- And **shown in the queue**: a finished item's result column marks it with a
+  symbol — orange **↺** if it replaced an existing file (with a count, e.g.
+  `↺12`, for multi-file archives), or green **+** for a brand-new file.
+- README now documents the overwrite behaviour.
+
 ## 2.0.14
 - Browse console list is now sorted A-Z by the displayed full name (it was
   ordered by the underlying folder key, which no longer matched the names).

@@ -315,6 +315,31 @@ you'll need to extract it on a PC. If a specific archive won't unpack, check
 
 ---
 
+## Overwrite behaviour
+
+When a downloaded file lands in `sdmc:/tico/roms/<console>/` and a file of the
+**same name already exists there, it is overwritten in place.** This is intended
+— it's how you re-download or refresh a file. There is **no prompt and no
+separate backup**: the previous file is replaced (a single file via a move, or,
+for archives, each extracted file as it's written). The `*` "installed" marker
+in a file list is informational only — it does **not** block re-downloading.
+
+It is never hidden, though:
+
+- **Logged for audit.** Every completed download is recorded in the download
+  history (`downloads.log`, viewable in Settings → View download log), and the
+  entry notes when it **`(overwrote existing)`** or `(overwrote N files)` for an
+  archive.
+- **Shown in the queue.** A finished item's result column uses a compact symbol:
+  **↺ in orange** = an existing file was replaced (with a count, e.g. `↺12`, for
+  multi-file archives); **+ in green** = a brand-new file. No prompt; it never
+  interrupts the queue.
+
+If you want to keep an old copy, move or rename it before downloading the new
+one.
+
+---
+
 ## Networking
 
 devkitPro's libcurl uses the libnx **`ssl` system-service** backend, verifying

@@ -1,4 +1,4 @@
 #ifndef VERSION_H
 #define VERSION_H
-#define APP_VERSION_STR "2.0.14"
+#define APP_VERSION_STR "2.0.15"
 #endif

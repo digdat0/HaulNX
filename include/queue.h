@@ -39,6 +39,7 @@ typedef struct {
     volatile bool cancel;
     long http_code;
     char fail_reason[24]; /* short reason shown on a failed item, e.g. "HTTP 404" */
+    int overwrote;        /* # existing files this install replaced (0 = all new) */
 } QueueItem;
 
 /* A snapshot entry: a copy of the item plus its stable slot index. */

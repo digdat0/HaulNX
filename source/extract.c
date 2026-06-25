@@ -72,7 +72,10 @@ static bool sanitize_rel(const char *in, char *out, size_t out_sz) {
 }
 
 int extract_archive(const char *src, const char *dest_dir, extract_cb cb,
-                    void *userdata) {
+                    void *userdata, int *out_overwrites) {
+    if (out_overwrites) {
+        *out_overwrites = 0;
+    }
     struct archive *a = archive_read_new();
     if (!a) {
         return -1;
@@ -91,6 +94,7 @@ int extract_archive(const char *src, const char *dest_dir, extract_cb cb,
     }
 
     int count = 0;
+    int overwrites = 0;
     struct archive_entry *entry;
     for (;;) {
         int rc = archive_read_next_header(a, &entry);
@@ -117,6 +121,7 @@ int extract_archive(const char *src, const char *dest_dir, extract_cb cb,
         }
         char out[1280];
         snprintf(out, sizeof(out), "%s/%s", dest_dir, rel);
+        bool existed = fs_exists(out);
         fs_ensure_parent(out);
 
         FILE *f = fopen(out, "wb");
@@ -155,12 +160,19 @@ int extract_archive(const char *src, const char *dest_dir, extract_cb cb,
             continue;
         }
         count++;
+        if (existed) {
+            overwrites++;
+        }
         if (cb && !cb(userdata, rel, count)) {
             break; /* user cancelled */
         }
     }
 
-    ex_log("extract: %s -> %d file(s) into %s", src, count, dest_dir);
+    if (out_overwrites) {
+        *out_overwrites = overwrites;
+    }
+    ex_log("extract: %s -> %d file(s) (%d overwritten) into %s", src, count,
+           overwrites, dest_dir);
     archive_read_free(a);
     return count;
 }

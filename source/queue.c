@@ -63,7 +63,14 @@ static void log_download(const QueueItem *it, const char *status) {
     if (tm) {
         strftime(ts, sizeof(ts), "%Y-%m-%d %H:%M", tm);
     }
-    fprintf(f, "%s  %-9s  [%s]  %s\n", ts, status, it->target, it->name);
+    fprintf(f, "%s  %-9s  [%s]  %s", ts, status, it->target, it->name);
+    /* Note overwrites so the history is a clear audit of replaced files. */
+    if (it->overwrote == 1) {
+        fputs("  (overwrote existing)", f);
+    } else if (it->overwrote > 1) {
+        fprintf(f, "  (overwrote %d files)", it->overwrote);
+    }
+    fputc('\n', f);
     fclose(f);
 }
 
@@ -350,7 +357,8 @@ static void process_item(QueueItem *it) {
     if (it->is_archive) {
         it->status = Q_EXTRACTING;
         fs_mkdir_p(destdir);
-        int n = extract_archive(tmp, destdir, ex_progress, it);
+        int ow = 0;
+        int n = extract_archive(tmp, destdir, ex_progress, it, &ow);
         if (it->cancel) {
             remove(tmp);
             it->status = Q_CANCELLED;
@@ -359,6 +367,7 @@ static void process_item(QueueItem *it) {
         }
         if (n > 0) {
             remove(tmp);
+            it->overwrote = ow; /* set before status so a snapshot is consistent */
             it->status = Q_DONE;
             log_download(it, "done");
             return;
@@ -370,7 +379,9 @@ static void process_item(QueueItem *it) {
 
     char dest[2048];
     snprintf(dest, sizeof(dest), "%s/%s", destdir, safe);
+    bool existed = fs_exists(dest);
     if (fs_move(tmp, dest)) {
+        it->overwrote = existed ? 1 : 0; /* set before status (snapshot reads it) */
         it->status = saved_raw ? Q_SAVED : Q_DONE;
         log_download(it, saved_raw ? "saved-raw" : "done");
     } else {

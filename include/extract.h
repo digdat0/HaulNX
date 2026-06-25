@@ -16,9 +16,10 @@ typedef bool (*extract_cb)(void *userdata, const char *entry_name, int done);
 
 /* Extract every regular file in `src` into `dest_dir`, preserving the archive's
  * internal directory structure. Returns the number of files extracted, or -1 if
- * `src` could not be opened as a supported archive. */
+ * `src` could not be opened as a supported archive. If `out_overwrites` is
+ * non-NULL it receives how many extracted files replaced an existing file. */
 int extract_archive(const char *src, const char *dest_dir, extract_cb cb,
-                    void *userdata);
+                    void *userdata, int *out_overwrites);
 
 #ifdef __cplusplus
 }
