@@ -4,6 +4,12 @@ Notes for each release. `release.sh` pulls the section matching the version in
 `VERSION` and attaches it to the GitHub release. Add a `## <version>` section
 here before running a release.
 
+## 2.0.16
+- The queue's overwrite indicator is now a readable colour-coded tag instead of
+  a symbol the Switch font couldn't render: orange **(repl)** when a download
+  replaced an existing file (with a count, e.g. `(repl 12)`, for multi-file
+  archives), green **(new)** for a brand-new file.
+
 ## 2.0.15
 - **How overwrites work (unchanged behaviour, now made visible):** when a
   download lands on a file of the **same name** in `sdmc:/tico/roms/<console>/`,

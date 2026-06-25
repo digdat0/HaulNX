@@ -330,10 +330,10 @@ It is never hidden, though:
   history (`downloads.log`, viewable in Settings → View download log), and the
   entry notes when it **`(overwrote existing)`** or `(overwrote N files)` for an
   archive.
-- **Shown in the queue.** A finished item's result column uses a compact symbol:
-  **↺ in orange** = an existing file was replaced (with a count, e.g. `↺12`, for
-  multi-file archives); **+ in green** = a brand-new file. No prompt; it never
-  interrupts the queue.
+- **Shown in the queue.** A finished item's result column shows a colour-coded
+  tag: **`(repl)` in orange** = an existing file was replaced (with a count, e.g.
+  `(repl 12)`, for multi-file archives); **`(new)` in green** = a brand-new file.
+  No prompt; it never interrupts the queue.
 
 If you want to keep an old copy, move or rename it before downloading the new
 one.

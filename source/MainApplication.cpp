@@ -1093,10 +1093,9 @@ void MainApplication::HandleInput(u64 down, u64 held) {
             } else if (it->status == Q_FAILED && it->fail_reason[0]) {
                 snprintf(info, sizeof(info), "%s", it->fail_reason);
             } else if (it->status == Q_DONE || it->status == Q_SAVED) {
-                // Visual outcome: U+21BA (anticlockwise arrow) = replaced an
-                // existing file (with a count for multi-file archives); "+" = a
-                // brand-new file. The cell colour reinforces it (see below).
-                const char *SYM_REPLACED = "\xe2\x86\xba"; // ↺
+                // Result tag: (repl) = replaced an existing file (with a count
+                // for multi-file archives), (new) = a brand-new file. The cell
+                // colour reinforces it (orange/green, set below).
                 char sz[24];
                 if (it->total) {
                     snprintf(sz, sizeof(sz), "%s  ",
@@ -1105,12 +1104,12 @@ void MainApplication::HandleInput(u64 down, u64 held) {
                     sz[0] = '\0';
                 }
                 if (it->overwrote > 1) {
-                    snprintf(info, sizeof(info), "%s%s%d", sz, SYM_REPLACED,
+                    snprintf(info, sizeof(info), "%s(repl %d)", sz,
                              it->overwrote);
                 } else if (it->overwrote == 1) {
-                    snprintf(info, sizeof(info), "%s%s", sz, SYM_REPLACED);
+                    snprintf(info, sizeof(info), "%s(repl)", sz);
                 } else {
-                    snprintf(info, sizeof(info), "%s+", sz);
+                    snprintf(info, sizeof(info), "%s(new)", sz);
                 }
             } else if (it->total) {
                 snprintf(info, sizeof(info), "%s", human_size(it->total).c_str());
