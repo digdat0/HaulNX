@@ -12,6 +12,10 @@ extern "C" {
  * Returns UINT64_MAX if it can't be determined (so callers don't false-block). */
 uint64_t fs_free_bytes(const char *path);
 
+/* Total size in bytes of the filesystem containing `path`.
+ * Returns UINT64_MAX if it can't be determined. */
+uint64_t fs_total_bytes(const char *path);
+
 /* mkdir -p for an sdmc path (the final component is treated as a directory). */
 bool fs_mkdir_p(const char *path);
 

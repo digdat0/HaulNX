@@ -674,11 +674,14 @@ bool MainApplication::Confirm(const std::string &title, const std::string &msg) 
 
 void MainApplication::RefreshStatus() {
     uint64_t fb = fs_free_bytes("sdmc:/");
+    uint64_t tb = fs_total_bytes("sdmc:/");
     u32 bat = 0;
     psmGetBatteryChargePercentage(&bat);
-    std::string sd = (fb == UINT64_MAX) ? std::string("?") : human_size(fb);
-    char s[80];
-    snprintf(s, sizeof(s), "SD %s   %u%%", sd.c_str(), (unsigned)bat);
+    std::string sf = (fb == UINT64_MAX) ? std::string("?") : human_size(fb);
+    std::string st = (tb == UINT64_MAX) ? std::string("?") : human_size(tb);
+    char s[120];
+    snprintf(s, sizeof(s), "SD %s / %s   BAT %u%%", sf.c_str(), st.c_str(),
+             (unsigned)bat);
     this->layout->SetStatus(s);
 }
 
@@ -783,7 +786,8 @@ MainApplication::Tab MainApplication::CurrentTab() {
     case Screen::Settings:
     case Screen::Log:
     case Screen::Manage:
-    case Screen::Creds:     return Tab::Settings;
+    case Screen::Creds:
+    case Screen::Advanced:  return Tab::Settings;
     default:                return Tab::Browse; // Home/Repos/Files/RepoEdit/Picker
     }
 }
@@ -817,29 +821,37 @@ void MainApplication::GotoQueue() {
 void MainApplication::GotoSettings() {
     this->screen = Screen::Settings;
     this->layout->SetTitle(std::string("Settings   (v") + APP_VERSION_STR + ")");
-    this->layout->SetSubtitle("A toggle/edit  L/R tabs  ZL/ZR page");
+    this->layout->SetSubtitle("A select  L/R tabs  ZL/ZR page");
+    this->layout->ClearMenu();
+    char r[600];
+    snprintf(r, sizeof(r), "ROM folder: %s", roms_root(&g_tico));
+    this->layout->AddRow(r);                      // 0
+    this->layout->AddRow("Check for updates");    // 1
+    snprintf(r, sizeof(r), "Metadata cache: %s", g_prefs.use_cache ? "ON" : "OFF");
+    this->layout->AddRow(r);                      // 2
+    this->layout->AddRow("View download log");    // 3
+    this->layout->AddRow("Download from URL");    // 4
+    this->layout->AddRow("Manage consoles (show/hide)"); // 5
+    this->layout->AddRow("Advanced");             // 6
+    this->layout->AddRow("Controls / Help");      // 7
+    this->layout->AddRow("Credits");              // 8
+}
+
+void MainApplication::GotoAdvanced() {
+    this->screen = Screen::Advanced;
+    this->layout->SetTitle("Advanced");
+    this->layout->SetSubtitle("A toggle/edit  B back");
     this->layout->ClearMenu();
     char r[96];
-    snprintf(r, sizeof(r), "Metadata cache: %s", g_prefs.use_cache ? "ON" : "OFF");
-    this->layout->AddRow(r);
     snprintf(r, sizeof(r), "Stay awake while downloading: %s",
              g_prefs.prevent_sleep ? "ON" : "OFF");
-    this->layout->AddRow(r);
+    this->layout->AddRow(r);                      // 0
     snprintf(r, sizeof(r), "Group consoles: %s",
              g_prefs.group_consoles ? "ON" : "OFF");
-    this->layout->AddRow(r);
+    this->layout->AddRow(r);                      // 1
     snprintf(r, sizeof(r), "Archive.org credentials: %s",
              g_creds.access_key[0] ? "set" : "unset");
-    this->layout->AddRow(r);
-    this->layout->AddRow("Check for updates");
-    this->layout->AddRow("View download log");
-    this->layout->AddRow("Download from URL");
-    this->layout->AddRow("Controls / Help");
-    this->layout->AddRow("Credits");
-    this->layout->AddRow("Manage consoles (show/hide)");
-    char rp[600];
-    snprintf(rp, sizeof(rp), "ROM folder: %s", roms_root(&g_tico));
-    this->layout->AddRow(rp);
+    this->layout->AddRow(r);                      // 2
 }
 
 void MainApplication::GotoManage() {
@@ -888,11 +900,22 @@ void MainApplication::GotoInstalled(const std::string &path) {
     for (int i = 0; i < (int)g_inst.size(); i++) {
         DirEnt &e = g_inst[i];
         if (e.is_dir) {
-            // Folder: right column is the number of files/apps inside.
             int n = count_dir_entries(path + "/" + e.name);
             char cnt[32];
             snprintf(cnt, sizeof(cnt), "%d %s", n, n == 1 ? "app" : "apps");
-            this->layout->AddRow2(std::string("[DIR] ") + e.name, cnt,
+            std::string label = "[DIR] ";
+            const char *full = (path == roms_root(&g_tico))
+                                   ? console_full_name(e.name.c_str())
+                                   : nullptr;
+            if (full) {
+                label += full;
+                label += " (";
+                label += e.name;
+                label += ")";
+            } else {
+                label += e.name;
+            }
+            this->layout->AddRow2(label, cnt,
                                   pu::ui::Color(170, 200, 250, 255),
                                   count_color());
         } else {
@@ -1405,22 +1428,16 @@ void MainApplication::HandleInput(u64 down, u64 held) {
         } else if (down & HidNpadButton_A) {
             s32 i = this->layout->Sel();
             switch (i) {
-            case 0:
-                g_prefs.use_cache = !g_prefs.use_cache;
-                prefs_save(&g_prefs);
+            case 0: // ROM folder (read-only)
+                this->CreateShowDialog(
+                    "ROM folder",
+                    std::string("Current: ") + roms_root(&g_tico) +
+                        "\n\nThis is read from TICO's config.\n"
+                        "To change it, open TICO and set the\n"
+                        "ROMs path in its Settings.",
+                    {"OK"}, true);
                 break;
-            case 1:
-                g_prefs.prevent_sleep = !g_prefs.prevent_sleep;
-                prefs_save(&g_prefs);
-                break;
-            case 2:
-                g_prefs.group_consoles = !g_prefs.group_consoles;
-                prefs_save(&g_prefs);
-                break;
-            case 3:
-                this->GotoCreds();
-                return;
-            case 4: {
+            case 1: { // Check for updates
                 char tag[64], url[1024];
                 if (!update_fetch_latest(UPDATE_REPO, tag, sizeof(tag), url,
                                          sizeof(url))) {
@@ -1444,15 +1461,17 @@ void MainApplication::HandleInput(u64 down, u64 held) {
                 char dl[1024];
                 snprintf(dl, sizeof(dl), "%s/downloads/update.nro", CONFIG_DIR);
                 fs_ensure_parent(dl);
-                // Download off the UI thread so the screen shows live progress
-                // instead of freezing. The install runs in UpdTick() once done.
                 this->UpdStart(url, dl, tag);
                 return;
             }
-            case 5:
+            case 2: // Metadata cache
+                g_prefs.use_cache = !g_prefs.use_cache;
+                prefs_save(&g_prefs);
+                break;
+            case 3: // View download log
                 this->GotoLog();
                 return;
-            case 6: {
+            case 4: { // Download from URL
                 char inp[1024] = {0};
                 if (prompt("archive.org URL or item id", nullptr, inp,
                            sizeof(inp))) {
@@ -1468,7 +1487,13 @@ void MainApplication::HandleInput(u64 down, u64 held) {
                 }
                 break;
             }
-            case 7:
+            case 5: // Manage consoles
+                this->GotoManage();
+                return;
+            case 6: // Advanced
+                this->GotoAdvanced();
+                return;
+            case 7: // Controls / Help
                 this->CreateShowDialog(
                     "Controls",
                     "Tabs: L / R  (Browse | Installed | Queue | Settings)\n"
@@ -1479,7 +1504,7 @@ void MainApplication::HandleInput(u64 down, u64 held) {
                     "Queue: A cancel  X retry  ZL/ZR move  Y clear  - log",
                     {"OK"}, true);
                 break;
-            case 8:
+            case 8: // Credits
                 this->CreateShowDialog(
                     "Credits",
                     "TicoDL+\ncreated by digdat0\n\n"
@@ -1487,23 +1512,38 @@ void MainApplication::HandleInput(u64 down, u64 held) {
                     "TICO emulator - https://ticoverse.com/",
                     {"OK"}, true);
                 break;
-            case 9:
-                this->GotoManage();
-                return;
-            case 10:
-                this->CreateShowDialog(
-                    "ROM folder",
-                    std::string("Current: ") + roms_root(&g_tico) +
-                        "\n\nThis is read from TICO's config.\n"
-                        "To change it, open TICO and set the\n"
-                        "ROMs path in its Settings.",
-                    {"OK"}, true);
-                break;
             default:
                 break;
             }
             if (this->screen == Screen::Settings) {
                 this->GotoSettings();
+            }
+        }
+        break;
+    }
+
+    case Screen::Advanced: {
+        if (down & HidNpadButton_B) {
+            this->GotoSettings();
+        } else if (down & HidNpadButton_A) {
+            s32 i = this->layout->Sel();
+            switch (i) {
+            case 0:
+                g_prefs.prevent_sleep = !g_prefs.prevent_sleep;
+                prefs_save(&g_prefs);
+                break;
+            case 1:
+                g_prefs.group_consoles = !g_prefs.group_consoles;
+                prefs_save(&g_prefs);
+                break;
+            case 2:
+                this->GotoCreds();
+                return;
+            default:
+                break;
+            }
+            if (this->screen == Screen::Advanced) {
+                this->GotoAdvanced();
             }
         }
         break;
@@ -1690,7 +1730,7 @@ void MainApplication::HandleInput(u64 down, u64 held) {
 
     case Screen::Creds: {
         if (down & HidNpadButton_B) {
-            this->GotoSettings();
+            this->GotoAdvanced();
         } else if (down & HidNpadButton_A) {
             s32 i = this->layout->Sel();
             char v[1024] = {0};

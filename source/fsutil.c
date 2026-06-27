@@ -42,6 +42,15 @@ uint64_t fs_free_bytes(const char *path) {
     return bs * (uint64_t)st.f_bavail;
 }
 
+uint64_t fs_total_bytes(const char *path) {
+    struct statvfs st;
+    if (statvfs(path, &st) != 0) {
+        return UINT64_MAX;
+    }
+    uint64_t bs = st.f_frsize ? st.f_frsize : st.f_bsize;
+    return bs * (uint64_t)st.f_blocks;
+}
+
 bool fs_exists(const char *path) {
     struct stat st;
     return stat(path, &st) == 0;

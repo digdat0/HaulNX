@@ -55,7 +55,8 @@ class MainApplication : public pu::ui::Application {
         Picker,   // pick a supported console
         Log,
         Manage,   // show/hide consoles on the Browse page
-        Creds     // archive.org credentials editor
+        Creds,    // archive.org credentials editor
+        Advanced  // advanced settings sub-menu
     };
     enum class Pending { None, AddRepo, Manual };
     enum class Tab { Browse = 0, Installed = 1, Queue = 2, Settings = 3 };
@@ -122,6 +123,7 @@ class MainApplication : public pu::ui::Application {
     void GotoLog();
     void GotoManage();
     void GotoCreds();
+    void GotoAdvanced();
 
     Tab CurrentTab();      // which tab the current screen belongs to
     void SwitchTab(int dir); // L/R: cycle to the prev/next tab
