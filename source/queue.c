@@ -526,6 +526,11 @@ void queue_exit(void) {
     threadClose(&g_dl_thread);
     threadWaitForExit(&g_ex_thread);
     threadClose(&g_ex_thread);
+    /* Persist after both threads have stopped so interrupted downloads and
+     * pending extractions survive a restart/update and resume next launch. */
+    mutexLock(&g_mtx);
+    save_locked();
+    mutexUnlock(&g_mtx);
 }
 
 bool queue_add(const char *url, const char *name, const char *target,
