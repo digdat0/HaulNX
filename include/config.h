@@ -27,7 +27,8 @@ extern "C" {
 #define DLLOG_PATH    "sdmc:/switch/ticodlplus/downloads.log"
 #define DL_TMP_DIR    "sdmc:/switch/ticodlplus/downloads"
 #define QUEUE_STATE_PATH "sdmc:/switch/ticodlplus/queue.json"
-#define ROMS_ROOT     "sdmc:/tico/roms"
+#define TICO_DEFAULT_ROMS  "sdmc:/tico/roms"
+#define TICO_CONFIG_PATH   "sdmc:/tico/config/general.jsonc"
 
 /* One download source (an archive.org item) within a console group. */
 typedef struct {
@@ -107,6 +108,21 @@ bool prefs_save(const Prefs *p);
 /* Build an archive.org S3 auth header into out, or empty string if no key.
  * Form: "authorization: LOW <access>:<secret>". */
 void creds_auth_header(const Credentials *c, char *out, size_t out_sz);
+
+/* Tico emulator detection + ROM path resolution.
+ * tico_detect() checks for the emulator in known locations.
+ * tico_load_roms_path() reads general.jsonc for a custom roms_path.
+ * roms_root() returns the resolved path (valid after tico_init). */
+typedef struct {
+    bool installed;         /* true if tico.nro or sdmc:/tico/ was found */
+    char roms_path[512];    /* resolved ROM folder path */
+} TicoState;
+
+/* Run once at startup: detects Tico + reads its config. */
+void tico_init(TicoState *ts);
+
+/* Returns the current roms root (pointer into ts->roms_path). */
+const char *roms_root(const TicoState *ts);
 
 #ifdef __cplusplus
 }

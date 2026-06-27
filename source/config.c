@@ -428,3 +428,89 @@ void creds_auth_header(const Credentials *c, char *out, size_t out_sz) {
         out[0] = '\0';
     }
 }
+
+/* ---- tico detection --------------------------------------------------- */
+
+/* Strip // line comments and block comments from JSONC so jsmn can parse it. */
+static char *strip_jsonc_comments(const char *src, size_t len) {
+    char *out = (char *)malloc(len + 1);
+    if (!out) return NULL;
+    size_t j = 0;
+    bool in_string = false;
+    for (size_t i = 0; i < len; i++) {
+        if (in_string) {
+            out[j++] = src[i];
+            if (src[i] == '\\' && i + 1 < len) {
+                out[j++] = src[++i];
+            } else if (src[i] == '"') {
+                in_string = false;
+            }
+            continue;
+        }
+        if (src[i] == '"') {
+            in_string = true;
+            out[j++] = src[i];
+        } else if (src[i] == '/' && i + 1 < len && src[i + 1] == '/') {
+            while (i < len && src[i] != '\n') i++;
+        } else if (src[i] == '/' && i + 1 < len && src[i + 1] == '*') {
+            i += 2;
+            while (i + 1 < len && !(src[i] == '*' && src[i + 1] == '/')) i++;
+            if (i + 1 < len) i++;
+        } else {
+            out[j++] = src[i];
+        }
+    }
+    out[j] = '\0';
+    return out;
+}
+
+static bool tico_is_installed(void) {
+    if (fs_exists("sdmc:/switch/tico.nro")) return true;
+    if (fs_exists("sdmc:/switch/tico/tico.nro")) return true;
+    if (fs_exists("sdmc:/tico")) return true;
+    return false;
+}
+
+/* Remove trailing slash(es) from a path. */
+static void trim_trailing_slash(char *p) {
+    size_t n = strlen(p);
+    while (n > 0 && (p[n - 1] == '/' || p[n - 1] == '\\')) {
+        p[--n] = '\0';
+    }
+}
+
+void tico_init(TicoState *ts) {
+    memset(ts, 0, sizeof(*ts));
+    ts->installed = tico_is_installed();
+    sset(ts->roms_path, sizeof(ts->roms_path), TICO_DEFAULT_ROMS);
+
+    /* Try to read Tico's config for a custom roms_path. */
+    size_t len = 0;
+    char *raw = json_read_file(TICO_CONFIG_PATH, &len);
+    if (!raw) return;
+
+    char *js = strip_jsonc_comments(raw, len);
+    free(raw);
+    if (!js) return;
+
+    int ntok = 0;
+    jsmntok_t *tok = json_parse_alloc(js, strlen(js), &ntok);
+    if (tok && tok[0].type == JSMN_OBJECT) {
+        int ri = json_obj_get(js, tok, 0, "roms_path");
+        if (ri >= 0 && tok[ri].type == JSMN_STRING &&
+            tok[ri].end > tok[ri].start) {
+            char tmp[512];
+            json_copy(js, tok, ri, tmp, sizeof(tmp));
+            if (tmp[0]) {
+                sset(ts->roms_path, sizeof(ts->roms_path), tmp);
+                trim_trailing_slash(ts->roms_path);
+            }
+        }
+    }
+    free(tok);
+    free(js);
+}
+
+const char *roms_root(const TicoState *ts) {
+    return ts->roms_path;
+}

@@ -19,6 +19,7 @@ static uint32_t g_seq = 1;
 static Mutex g_mtx;
 static Thread g_thread;
 static volatile bool g_run = false;
+static const char *g_roms_root = "sdmc:/tico/roms";
 
 /* ---- worker-side processing ----------------------------------------- */
 
@@ -267,7 +268,7 @@ static void process_item(QueueItem *it) {
     fs_ensure_parent(tmp);
 
     char destdir[1200];
-    snprintf(destdir, sizeof(destdir), "%s/%s", ROMS_ROOT, it->target);
+    snprintf(destdir, sizeof(destdir), "%s/%s", g_roms_root, it->target);
 
     /* Resume from whatever's already on disk from a prior attempt/session. */
     uint64_t have = 0;
@@ -420,7 +421,8 @@ static void worker(void *arg) {
 
 /* ---- public API ------------------------------------------------------ */
 
-void queue_init(void) {
+void queue_init(const char *roms_root) {
+    if (roms_root && roms_root[0]) g_roms_root = roms_root;
     memset(g_items, 0, sizeof(g_items));
     mutexInit(&g_mtx);
     queue_load(); /* restore any downloads pending from a previous session */

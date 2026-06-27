@@ -48,8 +48,10 @@ typedef struct {
     int slot;
 } QueueView;
 
-/* Start/stop the background worker thread. Call after net_init / before net_exit. */
-void queue_init(void);
+/* Start/stop the background worker thread. Call after net_init / before net_exit.
+ * roms_root is the base ROM directory (e.g. "sdmc:/tico/roms"); the pointer must
+ * remain valid for the lifetime of the queue. */
+void queue_init(const char *roms_root);
 void queue_exit(void);
 
 /* Enqueue a download. Returns false if the queue is full. md5 may be "" or NULL

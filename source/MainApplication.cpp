@@ -26,6 +26,7 @@ extern "C" {
 static SourcesConfig g_cfg;
 static Credentials g_creds;
 static Prefs g_prefs;
+static TicoState g_tico;
 static ArchiveItem g_item;
 static bool g_have_item = false;
 
@@ -256,7 +257,7 @@ static int flat_count() {
 
 static bool file_installed(const char *target, const char *fname) {
     char p[1200];
-    snprintf(p, sizeof(p), "%s/%s/%s", ROMS_ROOT, target, fname);
+    snprintf(p, sizeof(p), "%s/%s/%s", roms_root(&g_tico), target, fname);
     if (fs_exists(p)) {
         return true;
     }
@@ -274,7 +275,7 @@ static bool file_installed(const char *target, const char *fname) {
         return false;
     }
     char dir[1200];
-    snprintf(dir, sizeof(dir), "%s/%s", ROMS_ROOT, target);
+    snprintf(dir, sizeof(dir), "%s/%s", roms_root(&g_tico), target);
     DIR *d = opendir(dir);
     bool found = false;
     if (d) {
@@ -792,7 +793,7 @@ void MainApplication::SyncTab() {
 void MainApplication::GotoTab(Tab t) {
     switch (t) {
     case Tab::Browse:    this->GotoHome(); break;
-    case Tab::Installed: this->GotoInstalled(ROMS_ROOT); break;
+    case Tab::Installed: this->GotoInstalled(roms_root(&g_tico)); break;
     case Tab::Queue:     this->GotoQueue(); break;
     case Tab::Settings:  this->GotoSettings(); break;
     }
@@ -834,6 +835,9 @@ void MainApplication::GotoSettings() {
     this->layout->AddRow("Controls / Help");
     this->layout->AddRow("Credits");
     this->layout->AddRow("Manage consoles (show/hide)");
+    char rp[600];
+    snprintf(rp, sizeof(rp), "ROM folder: %s", roms_root(&g_tico));
+    this->layout->AddRow(rp);
 }
 
 void MainApplication::GotoManage() {
@@ -873,8 +877,8 @@ void MainApplication::GotoInstalled(const std::string &path) {
     this->inst_path = path;
     g_inst = list_dir(path);
     std::string shown = path;
-    if (shown.rfind(ROMS_ROOT, 0) == 0) {
-        shown = "roms" + shown.substr(strlen(ROMS_ROOT));
+    if (shown.rfind(roms_root(&g_tico), 0) == 0) {
+        shown = "roms" + shown.substr(strlen(roms_root(&g_tico)));
     }
     this->layout->SetTitle(std::string("Installed: ") + shown);
     this->layout->SetSubtitle("A open  X rename  - delete  L/R tabs  B back/up");
@@ -1484,6 +1488,15 @@ void MainApplication::HandleInput(u64 down, u64 held) {
             case 9:
                 this->GotoManage();
                 return;
+            case 10:
+                this->CreateShowDialog(
+                    "ROM folder",
+                    std::string("Current: ") + roms_root(&g_tico) +
+                        "\n\nThis is read from TICO's config.\n"
+                        "To change it, open TICO and set the\n"
+                        "ROMs path in its Settings.",
+                    {"OK"}, true);
+                break;
             default:
                 break;
             }
@@ -1496,12 +1509,12 @@ void MainApplication::HandleInput(u64 down, u64 held) {
 
     case Screen::Installed: {
         if (down & HidNpadButton_B) {
-            if (this->inst_path == ROMS_ROOT) {
+            if (this->inst_path == roms_root(&g_tico)) {
                 this->GotoHome();
             } else {
                 auto p = this->inst_path.find_last_of('/');
                 this->GotoInstalled(p == std::string::npos
-                                        ? std::string(ROMS_ROOT)
+                                        ? std::string(roms_root(&g_tico))
                                         : this->inst_path.substr(0, p));
             }
         } else if (down & HidNpadButton_A) {
@@ -1718,21 +1731,37 @@ void MainApplication::OnLoad() {
     romfsInit();
     psmInitialize();
     net_init();
+    tico_init(&g_tico);
     config_load(&g_cfg);
     config_sort(&g_cfg);
     creds_load(&g_creds);
     prefs_load(&g_prefs);
-    queue_init();
+    queue_init(roms_root(&g_tico));
 
     this->screen = Screen::Home;
     this->sel_ci = 0;
     this->sel_ri = 0;
     this->pending = Pending::None;
-    this->inst_path = ROMS_ROOT;
+    this->inst_path = roms_root(&g_tico);
     this->log_origin = Screen::Settings;
 
     this->layout = MainLayout::New();
     this->LoadLayout(this->layout);
+
+    if (!g_tico.installed) {
+        int opt = this->CreateShowDialog(
+            "TICO not detected",
+            "The TICO emulator was not found on this console.\n"
+            "Downloads will go to the default folder:\n" +
+                std::string(roms_root(&g_tico)) +
+                "\n\nContinue without TICO?",
+            {"Continue", "Exit"}, true);
+        if (opt != 0) {
+            this->Close();
+            return;
+        }
+    }
+
     this->GotoHome();
     this->RefreshStatus();
 
