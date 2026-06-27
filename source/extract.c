@@ -87,7 +87,9 @@ int extract_archive(const char *src, const char *dest_dir, extract_cb cb,
     archive_read_support_format_rar5(a);
     archive_read_support_format_tar(a);
 
-    if (archive_read_open_filename(a, src, 64 * 1024) != ARCHIVE_OK) {
+    /* 512KB read buffer: SD card access has high per-call overhead on Switch,
+     * so fewer, larger reads are significantly faster than many 64KB ones. */
+    if (archive_read_open_filename(a, src, 512 * 1024) != ARCHIVE_OK) {
         ex_log("extract: cannot open %s: %s", src, archive_error_string(a));
         archive_read_free(a);
         return -1; /* not a (supported) archive */
@@ -95,14 +97,13 @@ int extract_archive(const char *src, const char *dest_dir, extract_cb cb,
 
     int count = 0;
     int overwrites = 0;
+    char last_dir[1280] = {0}; /* cache: skip mkdir_p when dir repeats */
     struct archive_entry *entry;
     for (;;) {
         int rc = archive_read_next_header(a, &entry);
         if (rc == ARCHIVE_EOF) {
             break;
         }
-        /* ARCHIVE_WARN is recoverable (libarchive often warns but the data is
-         * still readable) - keep going. Only FAILED/FATAL stop us. */
         if (rc != ARCHIVE_OK && rc != ARCHIVE_WARN) {
             ex_log("extract: header rc=%d in %s: %s", rc, src,
                    archive_error_string(a));
@@ -122,16 +123,34 @@ int extract_archive(const char *src, const char *dest_dir, extract_cb cb,
         char out[1280];
         snprintf(out, sizeof(out), "%s/%s", dest_dir, rel);
         bool existed = fs_exists(out);
-        fs_ensure_parent(out);
+
+        /* Only call mkdir_p when the directory actually changes. */
+        char dir[1280];
+        snprintf(dir, sizeof(dir), "%s", out);
+        char *sl = strrchr(dir, '/');
+        if (sl) {
+            *sl = '\0';
+            if (strcmp(dir, last_dir) != 0) {
+                fs_mkdir_p(dir);
+                snprintf(last_dir, sizeof(last_dir), "%s", dir);
+            }
+        }
 
         FILE *f = fopen(out, "wb");
         if (!f) {
             ex_log("extract: cannot write %s", out);
             continue;
         }
+        /* 128KB write buffer: batches small fwrite calls into fewer SD card
+         * writes, which is the single biggest extraction bottleneck. */
+        char *wbuf = (char *)malloc(128 * 1024);
+        if (wbuf) {
+            setvbuf(f, wbuf, _IOFBF, 128 * 1024);
+        }
         const void *buff;
         size_t size;
         la_int64_t offset;
+        la_int64_t pos = 0;
         bool write_ok = true;
         for (;;) {
             int r = archive_read_data_block(a, &buff, &size, &offset);
@@ -145,18 +164,20 @@ int extract_archive(const char *src, const char *dest_dir, extract_cb cb,
                 break;
             }
             if (size > 0) {
-                /* Honor the block's offset so sparse entries land correctly
-                 * (a no-op for normal contiguous archives). */
-                fseeko(f, (off_t)offset, SEEK_SET);
+                if (offset != pos) {
+                    fseeko(f, (off_t)offset, SEEK_SET);
+                }
                 if (fwrite(buff, 1, size, f) != size) {
                     write_ok = false;
                     break;
                 }
+                pos = offset + (la_int64_t)size;
             }
         }
         fclose(f);
+        free(wbuf);
         if (!write_ok) {
-            remove(out); /* drop a partially written / undecodable file */
+            remove(out);
             continue;
         }
         count++;
@@ -164,7 +185,7 @@ int extract_archive(const char *src, const char *dest_dir, extract_cb cb,
             overwrites++;
         }
         if (cb && !cb(userdata, rel, count)) {
-            break; /* user cancelled */
+            break;
         }
     }
 
