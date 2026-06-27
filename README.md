@@ -18,7 +18,7 @@ but it works.**
 
 - **Tabbed graphical UI.** A dark-themed Plutonium (SDL2) interface with four
   top tabs — **Browse · Installed · Queue · Settings** — switched with the
-  **L/R** shoulder buttons. The header shows free SD space and battery %.
+  **L/R** shoulder buttons. The header shows SD space (free / total) and battery %.
 - **Table-style lists.** Every list is a real table: a left name column and a
   right-aligned size/count column, with file sizes **color-coded** by magnitude
   (KB / MB / GB). The selected row is highlighted; the active download is white.
@@ -29,11 +29,13 @@ but it works.**
   count, and you can **show/hide consoles** on the Browse page from
   **Settings → Manage consoles**.
 - **Background download queue.** Queue many files and keep browsing while they
-  download FIFO in the background. The Queue tab shows a **progress bar** plus
-  size, speed and **ETA** on the active download, and lets you **cancel**,
-  **retry** (resumes in place), **reorder** (move items up/down with ZL/ZR —
-  never above the active download), and clear finished items. Failed items show
-  the **reason** (`HTTP 404`, `no space`, `bad md5`, …).
+  download FIFO in the background. **Downloads and extraction are pipelined** —
+  the next download starts immediately while the previous archive is still
+  extracting, so multi-file queues finish faster. The Queue tab shows a
+  **progress bar** plus size, speed and **ETA** on the active download, and lets
+  you **cancel**, **retry** (resumes in place), **reorder** (move items up/down
+  with ZL/ZR — never above the active download), and clear finished items. Failed
+  items show the **reason** (`HTTP 404`, `no space`, `bad md5`, …).
 - **Completion alerts.** A toast pops up when a download finishes — **Done**,
   **Saved** (kept raw because it couldn't be unpacked) or **Failed** — even when
   you're on another tab.
@@ -46,6 +48,11 @@ but it works.**
   both run in the background with an animated progress indicator.
 - **Automatic extraction.** `.zip` / `.7z` / `.rar` / `.tar.*` archives are
   unpacked into the console folder automatically; plain files are moved as-is.
+  Extraction is optimized for SD card I/O with large read/write buffers.
+- **TICO detection.** On launch, TicoDL+ checks whether the TICO emulator is
+  installed and reads its config for the ROM folder path. If TICO set a custom
+  `roms_path` in its settings, TicoDL+ uses it automatically. If TICO isn't
+  found, you're warned and can continue with the default path.
 - **Integrity checks.** Downloads are verified by size and, when archive.org
   provides one, MD5 — corrupt files are rejected instead of installed.
 - **Find things fast.** On-screen name filter, ZL/ZR paging, a scrollbar for
@@ -53,9 +60,10 @@ but it works.**
 - **Easy navigation.** D-pad **or left analog stick**, hold to auto-repeat,
   lists **wrap around** at the ends, and each list **remembers your position**
   when you back out and return.
-- **Installed browser.** The Installed tab is a table of `sdmc:/tico/roms` —
-  folders show how many files/apps are inside, files show their size. Rename or
-  delete entries in place.
+- **Installed browser.** The Installed tab is a table of the ROM folder —
+  console folders show their **full name** (e.g. "Nintendo Entertainment System
+  (nes)") and how many files are inside, files show their size. Rename or delete
+  entries in place.
 - **In-app self-update** from GitHub releases — no manual `.nro` copying.
 - **Download log** you can view and clear from Settings.
 - **Built-in help** (Settings → Controls / Help for the full control list).
@@ -125,10 +133,9 @@ for **restricted** items that require an archive.org account.
    keys page: <https://archive.org/account/s3.php>. You'll get an **access key**
    and a **secret key**.
 2. In TicoDL+, switch to the **Settings** tab (**L/R**).
-3. Highlight **Archive.org access key**, press **A**, and type your access key.
-4. Highlight **Archive.org secret**, press **A**, and type your secret. The edit
-   field is pre-filled with the current value so it's easy to change; the list
-   only ever shows it as `<set>`.
+3. Open **Advanced → Archive.org credentials**.
+4. Edit the **Access key** and **Secret** — the edit field is pre-filled with the
+   current value so it's easy to change.
 
 Keys live only on your SD card (`sdmc:/switch/ticodlplus/credentials.json`) and
 are sent only to archive.org hosts.
@@ -147,8 +154,9 @@ are sent only to archive.org hosts.
 ## Controls
 
 A graphical app (Plutonium UI) with four tabs. The header shows the current
-screen plus **free SD space and battery %** (top-right). The footer shows the
-buttons available on the current screen.
+screen plus **SD free / total and battery %** (top-right, e.g.
+`SD 30.2 GB / 400.0 GB  BAT 55%`). The footer shows the buttons available on
+the current screen.
 
 **Everywhere**
 
@@ -212,16 +220,21 @@ Folders show the number of files/apps inside; files show a color-coded size.
 
 **Settings tab**
 
-Highlight an item and press **A** to toggle/open:
+Highlight an item and press **A** to open/toggle:
 
-- **Metadata cache**, **Stay awake while downloading**, **Group consoles** — toggles.
-- **Archive.org credentials** — opens a sub-menu to edit the access key / secret
-  (pre-filled for easy editing) or clear them.
+- **ROM folder** — shows the current download destination (read-only; set it in
+  TICO's own settings).
 - **Check for updates** — in-app self-update, with download progress.
+- **Metadata cache** — toggle.
 - **View download log** — press **X** in the log to clear it.
 - **Download from URL** — paste an archive.org URL / item id for a one-off grab.
-- **Controls / Help**, **Credits**.
 - **Manage consoles** — show/hide which consoles appear on the Browse page.
+- **Advanced** — sub-menu with:
+  - **Stay awake while downloading** — toggle.
+  - **Group consoles** — toggle.
+  - **Archive.org credentials** — sub-menu to edit access key / secret
+    (pre-filled for easy editing) or clear them.
+- **Controls / Help**, **Credits**.
 
 ## Console groups & supported consoles
 
@@ -292,7 +305,7 @@ restricted items. Public collections download anonymously and need no keys.
 | `sdmc:/switch/ticodlplus/downloads/` | temporary `.part` files |
 | `sdmc:/switch/ticodlplus/downloads.log` | download history |
 | `sdmc:/switch/ticodlplus/debug.log` | network/extraction diagnostics |
-| `sdmc:/tico/roms/<console>/` | final destination |
+| `sdmc:/tico/roms/<console>/` | default ROM destination (or custom path from TICO's config) |
 
 ---
 
@@ -402,7 +415,7 @@ attaches the `.nro`, and uses the matching `CHANGELOG.md` section as the notes.
 | `include/MainApplication.hpp`, `include/TableList.hpp` | UI layout + custom table-list element |
 | `net.*` | libnx sockets + libcurl (downloads, HTTP GET, logging) |
 | `archive.c` / `iarchive.h` | archive.org metadata + download URLs |
-| `queue.*` | background download worker (resume, verify, extract, persist, reorder) |
+| `queue.*` | pipelined download + extract workers (resume, verify, persist, reorder) |
 | `extract.*` | libarchive zip/7z/rar/tar extraction |
 | `config.*` | `dl_sources.json` / credentials / prefs load + save |
 | `fsutil.*` | mkdir-p, move, recursive delete, free-space |
