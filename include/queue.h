@@ -12,15 +12,16 @@ extern "C" {
 #define QUEUE_MAX 64
 
 typedef enum {
-    Q_FREE = 0,    /* empty slot */
-    Q_QUEUED,      /* waiting to start */
-    Q_DOWNLOADING, /* transferring */
-    Q_VERIFYING,   /* checking md5 */
-    Q_EXTRACTING,  /* unpacking archive */
-    Q_DONE,        /* finished OK */
-    Q_SAVED,       /* downloaded but couldn't extract; raw archive kept */
-    Q_FAILED,      /* error */
-    Q_CANCELLED    /* user cancelled */
+    Q_FREE = 0,       /* empty slot */
+    Q_QUEUED,         /* waiting to start */
+    Q_DOWNLOADING,    /* transferring */
+    Q_VERIFYING,      /* checking md5 */
+    Q_AWAIT_EXTRACT,  /* downloaded + verified, waiting for extract thread */
+    Q_EXTRACTING,     /* unpacking archive */
+    Q_DONE,           /* finished OK */
+    Q_SAVED,          /* downloaded but couldn't extract; raw archive kept */
+    Q_FAILED,         /* error */
+    Q_CANCELLED       /* user cancelled */
 } QStatus;
 
 typedef struct {

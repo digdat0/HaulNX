@@ -17,7 +17,8 @@
 static QueueItem g_items[QUEUE_MAX];
 static uint32_t g_seq = 1;
 static Mutex g_mtx;
-static Thread g_thread;
+static Thread g_dl_thread;
+static Thread g_ex_thread;
 static volatile bool g_run = false;
 static const char *g_roms_root = "sdmc:/tico/roms";
 
@@ -46,7 +47,7 @@ static bool ex_progress(void *ud, const char *entry, int done) {
     QueueItem *it = (QueueItem *)ud;
     (void)entry;
     (void)done;
-    return !it->cancel;
+    return !it->cancel && g_run;
 }
 
 /* Append a download outcome to the history log shown in Settings. */
@@ -146,7 +147,7 @@ static void save_locked(void) {
     for (int i = 0; i < QUEUE_MAX; i++) {
         QStatus s = g_items[i].status;
         if (s != Q_QUEUED && s != Q_DOWNLOADING && s != Q_VERIFYING &&
-            s != Q_EXTRACTING) {
+            s != Q_AWAIT_EXTRACT && s != Q_EXTRACTING) {
             continue; /* only persist outstanding work */
         }
         QueueItem *it = &g_items[i];
@@ -354,43 +355,71 @@ static void process_item(QueueItem *it) {
         }
     }
 
-    bool saved_raw = false;
     if (it->is_archive) {
-        it->status = Q_EXTRACTING;
-        fs_mkdir_p(destdir);
-        int ow = 0;
-        int n = extract_archive(tmp, destdir, ex_progress, it, &ow);
-        if (it->cancel) {
-            remove(tmp);
-            it->status = Q_CANCELLED;
-            log_download(it, "cancelled");
-            return;
-        }
-        if (n > 0) {
-            remove(tmp);
-            it->overwrote = ow; /* set before status so a snapshot is consistent */
-            it->status = Q_DONE;
-            log_download(it, "done");
-            return;
-        }
-        /* couldn't extract: keep the raw archive, but flag it as saved (not
-         * "done") so it's clear it wasn't unpacked. */
-        saved_raw = true;
+        /* Hand off to the extract thread so the download thread can start
+         * the next queued item immediately. */
+        mutexLock(&g_mtx);
+        it->status = Q_AWAIT_EXTRACT;
+        mutexUnlock(&g_mtx);
+        return;
     }
 
     char dest[2048];
     snprintf(dest, sizeof(dest), "%s/%s", destdir, safe);
     bool existed = fs_exists(dest);
     if (fs_move(tmp, dest)) {
-        it->overwrote = existed ? 1 : 0; /* set before status (snapshot reads it) */
-        it->status = saved_raw ? Q_SAVED : Q_DONE;
-        log_download(it, saved_raw ? "saved-raw" : "done");
+        it->overwrote = existed ? 1 : 0;
+        it->status = Q_DONE;
+        log_download(it, "done");
     } else {
         set_fail(it, "write error");
     }
 }
 
-static void worker(void *arg) {
+/* Called by the extract thread for items that finished downloading. */
+static void install_item(QueueItem *it) {
+    char safe[600];
+    if (!safe_rel(it->name, safe, sizeof(safe))) {
+        set_fail(it, "bad name");
+        return;
+    }
+    char tmp[1200];
+    snprintf(tmp, sizeof(tmp), "%s/%s.part", DL_TMP_DIR, safe);
+    char destdir[1200];
+    snprintf(destdir, sizeof(destdir), "%s/%s", g_roms_root, it->target);
+
+    fs_mkdir_p(destdir);
+    int ow = 0;
+    int n = extract_archive(tmp, destdir, ex_progress, it, &ow);
+    if (it->cancel || !g_run) {
+        remove(tmp);
+        if (it->cancel) {
+            it->status = Q_CANCELLED;
+            log_download(it, "cancelled");
+        }
+        return;
+    }
+    if (n > 0) {
+        remove(tmp);
+        it->overwrote = ow;
+        it->status = Q_DONE;
+        log_download(it, "done");
+        return;
+    }
+    /* Couldn't extract: keep the raw archive as a plain file. */
+    char dest[2048];
+    snprintf(dest, sizeof(dest), "%s/%s", destdir, safe);
+    bool existed = fs_exists(dest);
+    if (fs_move(tmp, dest)) {
+        it->overwrote = existed ? 1 : 0;
+        it->status = Q_SAVED;
+        log_download(it, "saved-raw");
+    } else {
+        set_fail(it, "write error");
+    }
+}
+
+static void dl_worker(void *arg) {
     (void)arg;
     while (g_run) {
         int pick = -1;
@@ -412,7 +441,34 @@ static void worker(void *arg) {
             continue;
         }
         process_item(&g_items[pick]);
-        /* Persist so a finished item drops out of the saved queue. */
+        mutexLock(&g_mtx);
+        save_locked();
+        mutexUnlock(&g_mtx);
+    }
+}
+
+static void ex_worker(void *arg) {
+    (void)arg;
+    while (g_run) {
+        int pick = -1;
+        uint32_t best = 0xFFFFFFFFu;
+        mutexLock(&g_mtx);
+        for (int i = 0; i < QUEUE_MAX; i++) {
+            if (g_items[i].status == Q_AWAIT_EXTRACT && g_items[i].seq < best) {
+                best = g_items[i].seq;
+                pick = i;
+            }
+        }
+        if (pick >= 0) {
+            g_items[pick].status = Q_EXTRACTING;
+        }
+        mutexUnlock(&g_mtx);
+
+        if (pick < 0) {
+            svcSleepThread(150000000ULL);
+            continue;
+        }
+        install_item(&g_items[pick]);
         mutexLock(&g_mtx);
         save_locked();
         mutexUnlock(&g_mtx);
@@ -428,25 +484,31 @@ void queue_init(const char *roms_root) {
     queue_load(); /* restore any downloads pending from a previous session */
     g_run = true;
     /* cpuid -2 = default core (–1 is invalid for svcCreateThread). */
-    Result rc = threadCreate(&g_thread, worker, NULL, NULL, 0x40000, 0x2C, -2);
-    bool started = false;
+    bool dl_ok = false, ex_ok = false;
+    Result rc = threadCreate(&g_dl_thread, dl_worker, NULL, NULL, 0x40000, 0x2C, -2);
     if (R_SUCCEEDED(rc)) {
-        Result sc = threadStart(&g_thread);
-        if (R_SUCCEEDED(sc)) {
-            started = true;
+        if (R_SUCCEEDED(threadStart(&g_dl_thread))) {
+            dl_ok = true;
         } else {
-            threadClose(&g_thread);
-            rc = sc;
+            threadClose(&g_dl_thread);
         }
     }
-    if (!started) {
+    Result rc2 = threadCreate(&g_ex_thread, ex_worker, NULL, NULL, 0x40000, 0x2C, -2);
+    if (R_SUCCEEDED(rc2)) {
+        if (R_SUCCEEDED(threadStart(&g_ex_thread))) {
+            ex_ok = true;
+        } else {
+            threadClose(&g_ex_thread);
+        }
+    }
+    if (!dl_ok && !ex_ok) {
         g_run = false;
     }
     fs_mkdir_p(CONFIG_DIR);
     FILE *f = fopen(LOG_PATH, "a");
     if (f) {
-        fprintf(f, "queue: worker %s (rc=0x%x)\n",
-                started ? "started" : "FAILED", (unsigned)rc);
+        fprintf(f, "queue: dl_worker %s, ex_worker %s\n",
+                dl_ok ? "started" : "FAILED", ex_ok ? "started" : "FAILED");
         fclose(f);
     }
 }
@@ -455,13 +517,15 @@ void queue_exit(void) {
     if (!g_run) {
         return;
     }
-    /* Clearing g_run makes the download progress callback abort the in-flight
-     * transfer, so the worker returns promptly. A download interrupted this way
-     * keeps its .part and stays pending (see process_item) so it resumes next
-     * launch — unlike a user cancel, which discards it. */
+    /* Clearing g_run aborts both the in-flight download (via dl_progress) and
+     * any in-flight extraction (via ex_progress). Both threads exit promptly.
+     * Downloads interrupted this way keep their .part and stay pending so they
+     * resume next launch. */
     g_run = false;
-    threadWaitForExit(&g_thread);
-    threadClose(&g_thread);
+    threadWaitForExit(&g_dl_thread);
+    threadClose(&g_dl_thread);
+    threadWaitForExit(&g_ex_thread);
+    threadClose(&g_ex_thread);
 }
 
 bool queue_add(const char *url, const char *name, const char *target,
@@ -534,6 +598,8 @@ void queue_cancel(int slot) {
         save_locked(); /* drop it from the persisted pending set */
     } else if (s == Q_DOWNLOADING || s == Q_VERIFYING || s == Q_EXTRACTING) {
         g_items[slot].cancel = true; /* worker marks + logs it CANCELLED */
+    } else if (s == Q_AWAIT_EXTRACT) {
+        g_items[slot].cancel = true; /* extract thread will see it */
     }
     mutexUnlock(&g_mtx);
     if (log_cxl) {
@@ -564,7 +630,8 @@ void queue_retry(int slot) {
 }
 
 static bool q_is_active(QStatus s) {
-    return s == Q_DOWNLOADING || s == Q_VERIFYING || s == Q_EXTRACTING;
+    return s == Q_DOWNLOADING || s == Q_VERIFYING ||
+           s == Q_AWAIT_EXTRACT || s == Q_EXTRACTING;
 }
 
 bool queue_move(int slot, int dir) {
@@ -686,7 +753,7 @@ int queue_active_count(void) {
     for (int i = 0; i < QUEUE_MAX; i++) {
         QStatus s = g_items[i].status;
         if (s == Q_QUEUED || s == Q_DOWNLOADING || s == Q_VERIFYING ||
-            s == Q_EXTRACTING) {
+            s == Q_AWAIT_EXTRACT || s == Q_EXTRACTING) {
             c++;
         }
     }

@@ -202,9 +202,10 @@ static const char *qstatus(QStatus s) {
     switch (s) {
     case Q_QUEUED:      return "wait";
     case Q_DOWNLOADING: return "dl";
-    case Q_VERIFYING:   return "vrfy";
-    case Q_EXTRACTING:  return "unzip";
-    case Q_DONE:        return "done";
+    case Q_VERIFYING:      return "vrfy";
+    case Q_AWAIT_EXTRACT:  return "wait-unz";
+    case Q_EXTRACTING:     return "unzip";
+    case Q_DONE:           return "done";
     case Q_SAVED:       return "saved";
     case Q_FAILED:      return "FAIL";
     case Q_CANCELLED:   return "cxl";
@@ -216,6 +217,7 @@ static pu::ui::Color qstatus_color(QStatus s) {
     switch (s) {
     case Q_DOWNLOADING: return pu::ui::Color(245, 246, 250, 255); // white (active)
     case Q_VERIFYING:
+    case Q_AWAIT_EXTRACT:
     case Q_EXTRACTING:  return pu::ui::Color(210, 185, 120, 255); // amber
     case Q_DONE:        return pu::ui::Color(130, 225, 150, 255); // green
     case Q_SAVED:       return pu::ui::Color(190, 205, 130, 255); // olive
