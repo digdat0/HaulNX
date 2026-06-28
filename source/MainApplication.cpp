@@ -906,6 +906,10 @@ void MainApplication::GotoInstalled(const std::string &path) {
     this->screen = Screen::Installed;
     this->inst_path = path;
     g_inst = list_dir(path);
+    std::sort(g_inst.begin(), g_inst.end(), [](const DirEnt &a, const DirEnt &b) {
+        if (a.is_dir != b.is_dir) return a.is_dir > b.is_dir;
+        return strcasecmp(a.name.c_str(), b.name.c_str()) < 0;
+    });
     std::string shown = path;
     if (shown.rfind(roms_root(&g_tico), 0) == 0) {
         shown = "roms" + shown.substr(strlen(roms_root(&g_tico)));
