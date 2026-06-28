@@ -842,11 +842,10 @@ void MainApplication::GotoSettings() {
     this->layout->AddRow(r);                      // 0
     this->layout->AddRow("Check for updates");    // 1
     this->layout->AddRow("View download log");    // 2
-    this->layout->AddRow("Download from URL");    // 3
-    this->layout->AddRow("Manage consoles (show/hide)"); // 4
-    this->layout->AddRow("Advanced");             // 5
-    this->layout->AddRow("Controls / Help");      // 6
-    this->layout->AddRow("Credits");              // 7
+    this->layout->AddRow("Manage consoles (show/hide)"); // 3
+    this->layout->AddRow("Advanced");             // 4
+    this->layout->AddRow("Controls / Help");      // 5
+    this->layout->AddRow("Credits");              // 6
 }
 
 void MainApplication::GotoAdvanced() {
@@ -1167,8 +1166,8 @@ void MainApplication::HandleInput(u64 down, u64 held) {
                 snprintf(info, sizeof(info), "%s", human_size(it->total).c_str());
             }
             char left[560];
-            snprintf(left, sizeof(left), "%-6s %s", qstatus(it->status),
-                     it->name);
+            snprintf(left, sizeof(left), "%-6s [%s] %s", qstatus(it->status),
+                     it->target, it->name);
             pu::ui::Color c = qstatus_color(it->status);
             pu::ui::Color rc = c;
             // Colour the result column by outcome: orange = replaced, green = new.
@@ -1507,29 +1506,13 @@ void MainApplication::HandleInput(u64 down, u64 held) {
             case 2: // View download log
                 this->GotoLog();
                 return;
-            case 3: { // Download from URL
-                char inp[1024] = {0};
-                if (prompt("archive.org URL or item id", nullptr, inp,
-                           sizeof(inp))) {
-                    char id[256];
-                    if (ia_extract_id(inp, id, sizeof(id))) {
-                        this->pending_id = id;
-                        this->GotoPicker(Pending::Manual);
-                        return;
-                    }
-                    this->CreateShowDialog("Manual",
-                                           "Could not parse an item id.",
-                                           {"OK"}, true);
-                }
-                break;
-            }
-            case 4: // Manage consoles
+            case 3: // Manage consoles
                 this->GotoManage();
                 return;
-            case 5: // Advanced
+            case 4: // Advanced
                 this->GotoAdvanced();
                 return;
-            case 6: // Controls / Help
+            case 5: // Controls / Help
                 this->CreateShowDialog(
                     "Controls",
                     "Tabs: L / R  (Browse | Installed | Queue | Settings)\n"
@@ -1540,10 +1523,10 @@ void MainApplication::HandleInput(u64 down, u64 held) {
                     "Queue: A cancel  X retry  ZL/ZR move  Y clear  - log",
                     {"OK"}, true);
                 break;
-            case 7: // Credits
+            case 6: // Credits
                 this->CreateShowDialog(
                     "Credits",
-                    "TicoDL+\ncreated by digdat0\n\n"
+                    "TicoDL+ by digdat0\n\n"
                     "Plutonium UI library provided by XorTroll\n\n"
                     "TICO emulator - https://ticoverse.com/",
                     {"OK"}, true);
