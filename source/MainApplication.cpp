@@ -522,7 +522,7 @@ MainLayout::MainLayout() : Layout::Layout() {
     this->title->SetColor(pu::ui::Color(255, 255, 255, 255));
     this->Add(this->title);
 
-    this->status = pu::ui::elm::TextBlock::New(sw - 580, 30, "");
+    this->status = pu::ui::elm::TextBlock::New(sw - 400, 30, "");
     this->status->SetColor(pu::ui::Color(210, 222, 245, 255));
     this->Add(this->status);
 
@@ -591,7 +591,12 @@ void MainLayout::SetTitle(const std::string &t) {
     this->title->SetText(t.empty() ? std::string("TicoDL+")
                                    : std::string("TicoDL+     ") + t);
 }
-void MainLayout::SetStatus(const std::string &t) { this->status->SetText(t); }
+void MainLayout::SetStatus(const std::string &t) {
+    this->status->SetText(t);
+    s32 w = this->status->GetWidth();
+    s32 margin = 30;
+    this->status->SetX((s32)pu::ui::render::ScreenWidth - w - margin);
+}
 void MainLayout::SetSubtitle(const std::string &t) {
     // Split the hint on runs of 2+ spaces into segments, then center each
     // segment within an equal share of the row so they spread evenly.
@@ -681,16 +686,22 @@ void MainApplication::RefreshStatus() {
     psmGetChargerType(&charger);
     std::string sf = (fb == UINT64_MAX) ? std::string("?") : human_size(fb);
     std::string st = (tb == UINT64_MAX) ? std::string("?") : human_size(tb);
+    // Strip unit from free size when both share the same unit (e.g. "29.8 GB" → "29.8")
+    if (sf.size() > 3 && st.size() > 3) {
+        std::string fu = sf.substr(sf.rfind(' '));
+        std::string tu = st.substr(st.rfind(' '));
+        if (fu == tu) sf = sf.substr(0, sf.rfind(' '));
+    }
     const char *plug = (charger != PsmChargerType_Unconnected) ? "+" : "";
     char s[160];
     uint64_t speed = 0;
     queue_active_info(NULL, 0, NULL, NULL, NULL, &speed, NULL, NULL);
     if (speed > 0) {
         std::string sp = human_size(speed);
-        snprintf(s, sizeof(s), "SD %s/%s  DL %s/s  BAT %u%%%s",
+        snprintf(s, sizeof(s), "%s/%s  %s/s  %u%%%s",
                  sf.c_str(), st.c_str(), sp.c_str(), (unsigned)bat, plug);
     } else {
-        snprintf(s, sizeof(s), "SD %s/%s  BAT %u%%%s",
+        snprintf(s, sizeof(s), "%s/%s  %u%%%s",
                  sf.c_str(), st.c_str(), (unsigned)bat, plug);
     }
     this->layout->SetStatus(s);
@@ -1025,8 +1036,9 @@ void MainApplication::HandleInput(u64 down, u64 held) {
     // A self-update download owns the UI while it runs: drive its progress /
     // finish and swallow all other input until it completes.
     if (this->upd_running) {
-        (void)down;
-        (void)held;
+        if (down & HidNpadButton_B) {
+            this->upd_cancel = true;
+        }
         this->UpdTick();
         return;
     }
@@ -1903,7 +1915,7 @@ int MainApplication::UpdProgress(void *ud, u64 now, u64 total) {
     auto self = static_cast<MainApplication *>(ud);
     self->upd_now = now;
     self->upd_total = total;
-    return 0; // never abort from here
+    return self->upd_cancel ? 1 : 0;
 }
 
 void MainApplication::UpdThread(void *arg) {
@@ -1924,12 +1936,13 @@ void MainApplication::UpdStart(const std::string &url, const std::string &dl,
     this->upd_total = 0;
     this->upd_done = false;
     this->upd_ok = false;
+    this->upd_cancel = false;
     this->upd_running = true;
 
     this->layout->SetTitle("Updating");
-    this->layout->SetSubtitle(std::string("Downloading ") + tag + "...");
+    this->layout->SetSubtitle(std::string("Downloading ") + tag + "...  (B to cancel)");
     this->layout->ClearMenu();
-    this->layout->AddRow("Downloading update - please wait");
+    this->layout->AddRow("Downloading update - press B to cancel");
 
     Result rc = threadCreate(&this->upd_thread, &MainApplication::UpdThread, this,
                              NULL, 0x40000, 0x2C, -2);
@@ -1959,6 +1972,12 @@ void MainApplication::UpdTick() {
     threadWaitForExit(&this->upd_thread);
     threadClose(&this->upd_thread);
     this->upd_running = false;
+
+    if (this->upd_cancel) {
+        remove(this->upd_dl.c_str());
+        this->GotoSettings();
+        return;
+    }
 
     bool ok = this->upd_ok;
     std::string tag = this->upd_tag, dl = this->upd_dl;

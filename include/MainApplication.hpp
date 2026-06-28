@@ -85,6 +85,7 @@ class MainApplication : public pu::ui::Application {
     volatile bool upd_running = false;
     volatile bool upd_done = false;
     volatile bool upd_ok = false;
+    volatile bool upd_cancel = false;
     volatile u64 upd_now = 0;
     volatile u64 upd_total = 0;
     std::string upd_url;
