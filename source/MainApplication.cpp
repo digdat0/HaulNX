@@ -677,11 +677,22 @@ void MainApplication::RefreshStatus() {
     uint64_t tb = fs_total_bytes("sdmc:/");
     u32 bat = 0;
     psmGetBatteryChargePercentage(&bat);
+    PsmChargerType charger = PsmChargerType_Unconnected;
+    psmGetChargerType(&charger);
     std::string sf = (fb == UINT64_MAX) ? std::string("?") : human_size(fb);
     std::string st = (tb == UINT64_MAX) ? std::string("?") : human_size(tb);
-    char s[120];
-    snprintf(s, sizeof(s), "SD %s / %s   BAT %u%%", sf.c_str(), st.c_str(),
-             (unsigned)bat);
+    const char *plug = (charger != PsmChargerType_Unconnected) ? "+" : "";
+    char s[160];
+    uint64_t speed = 0;
+    queue_active_info(NULL, 0, NULL, NULL, NULL, &speed, NULL, NULL);
+    if (speed > 0) {
+        std::string sp = human_size(speed);
+        snprintf(s, sizeof(s), "SD %s / %s   %s/s   BAT %u%%%s",
+                 sf.c_str(), st.c_str(), sp.c_str(), (unsigned)bat, plug);
+    } else {
+        snprintf(s, sizeof(s), "SD %s / %s   BAT %u%%%s",
+                 sf.c_str(), st.c_str(), (unsigned)bat, plug);
+    }
     this->layout->SetStatus(s);
 }
 
@@ -827,14 +838,12 @@ void MainApplication::GotoSettings() {
     snprintf(r, sizeof(r), "ROM folder: %s", roms_root(&g_tico));
     this->layout->AddRow(r);                      // 0
     this->layout->AddRow("Check for updates");    // 1
-    snprintf(r, sizeof(r), "Metadata cache: %s", g_prefs.use_cache ? "ON" : "OFF");
-    this->layout->AddRow(r);                      // 2
-    this->layout->AddRow("View download log");    // 3
-    this->layout->AddRow("Download from URL");    // 4
-    this->layout->AddRow("Manage consoles (show/hide)"); // 5
-    this->layout->AddRow("Advanced");             // 6
-    this->layout->AddRow("Controls / Help");      // 7
-    this->layout->AddRow("Credits");              // 8
+    this->layout->AddRow("View download log");    // 2
+    this->layout->AddRow("Download from URL");    // 3
+    this->layout->AddRow("Manage consoles (show/hide)"); // 4
+    this->layout->AddRow("Advanced");             // 5
+    this->layout->AddRow("Controls / Help");      // 6
+    this->layout->AddRow("Credits");              // 7
 }
 
 void MainApplication::GotoAdvanced() {
@@ -852,6 +861,8 @@ void MainApplication::GotoAdvanced() {
     snprintf(r, sizeof(r), "Archive.org credentials: %s",
              g_creds.access_key[0] ? "set" : "unset");
     this->layout->AddRow(r);                      // 2
+    snprintf(r, sizeof(r), "Metadata cache: %s", g_prefs.use_cache ? "ON" : "OFF");
+    this->layout->AddRow(r);                      // 3
 }
 
 void MainApplication::GotoManage() {
@@ -1216,6 +1227,15 @@ void MainApplication::HandleInput(u64 down, u64 held) {
         this->layout->PageDown();
     }
     if (down & HidNpadButton_Plus) {
+        int active = queue_active_count();
+        if (active > 0) {
+            char msg[80];
+            snprintf(msg, sizeof(msg),
+                     "%d download(s) still in progress.\nExit anyway?", active);
+            if (!this->Confirm("Exit", msg)) {
+                return;
+            }
+        }
         this->Close();
         return;
     }
@@ -1333,9 +1353,28 @@ void MainApplication::HandleInput(u64 down, u64 held) {
         } else if (down & HidNpadButton_Minus) {
             // Download all: queue every file matching the current filter.
             if (g_have_item && !g_files.empty()) {
-                char msg[80];
-                snprintf(msg, sizeof(msg), "Queue all %d file(s)?",
-                         (int)g_files.size());
+                uint64_t total_sz = 0;
+                for (int k = 0; k < (int)g_files.size(); k++) {
+                    total_sz += g_item.files[g_files[k]].size;
+                }
+                uint64_t avail = fs_free_bytes("sdmc:/");
+                char msg[200];
+                if (avail != UINT64_MAX && total_sz > avail) {
+                    snprintf(msg, sizeof(msg),
+                             "Queue all %d file(s)?\n\n"
+                             "Total: %s   Free: %s\n"
+                             "WARNING: not enough free space!",
+                             (int)g_files.size(),
+                             human_size(total_sz).c_str(),
+                             human_size(avail).c_str());
+                } else {
+                    snprintf(msg, sizeof(msg),
+                             "Queue all %d file(s)?\n\nTotal: %s   Free: %s",
+                             (int)g_files.size(),
+                             human_size(total_sz).c_str(),
+                             avail != UINT64_MAX
+                                 ? human_size(avail).c_str() : "?");
+                }
                 if (this->Confirm("Download all", msg)) {
                     char auth[320];
                     creds_auth_header(&g_creds, auth, sizeof(auth));
@@ -1464,14 +1503,10 @@ void MainApplication::HandleInput(u64 down, u64 held) {
                 this->UpdStart(url, dl, tag);
                 return;
             }
-            case 2: // Metadata cache
-                g_prefs.use_cache = !g_prefs.use_cache;
-                prefs_save(&g_prefs);
-                break;
-            case 3: // View download log
+            case 2: // View download log
                 this->GotoLog();
                 return;
-            case 4: { // Download from URL
+            case 3: { // Download from URL
                 char inp[1024] = {0};
                 if (prompt("archive.org URL or item id", nullptr, inp,
                            sizeof(inp))) {
@@ -1487,13 +1522,13 @@ void MainApplication::HandleInput(u64 down, u64 held) {
                 }
                 break;
             }
-            case 5: // Manage consoles
+            case 4: // Manage consoles
                 this->GotoManage();
                 return;
-            case 6: // Advanced
+            case 5: // Advanced
                 this->GotoAdvanced();
                 return;
-            case 7: // Controls / Help
+            case 6: // Controls / Help
                 this->CreateShowDialog(
                     "Controls",
                     "Tabs: L / R  (Browse | Installed | Queue | Settings)\n"
@@ -1504,7 +1539,7 @@ void MainApplication::HandleInput(u64 down, u64 held) {
                     "Queue: A cancel  X retry  ZL/ZR move  Y clear  - log",
                     {"OK"}, true);
                 break;
-            case 8: // Credits
+            case 7: // Credits
                 this->CreateShowDialog(
                     "Credits",
                     "TicoDL+\ncreated by digdat0\n\n"
@@ -1539,6 +1574,10 @@ void MainApplication::HandleInput(u64 down, u64 held) {
             case 2:
                 this->GotoCreds();
                 return;
+            case 3:
+                g_prefs.use_cache = !g_prefs.use_cache;
+                prefs_save(&g_prefs);
+                break;
             default:
                 break;
             }
