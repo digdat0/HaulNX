@@ -379,6 +379,7 @@ void prefs_load(Prefs *p) {
     p->use_cache = true;       /* defaults */
     p->prevent_sleep = true;
     p->group_consoles = true;
+    p->max_downloads = 1;
     size_t len = 0;
     char *js = json_read_file(PREFS_PATH, &len);
     if (!js) {
@@ -399,6 +400,11 @@ void prefs_load(Prefs *p) {
         if (idx >= 0) {
             p->group_consoles = json_bool(js, tok, idx);
         }
+        idx = json_obj_get(js, tok, 0, "maxDownloads");
+        if (idx >= 0) {
+            int v = (int)json_u64(js, tok, idx);
+            if (v >= 1 && v <= 5) p->max_downloads = v;
+        }
     }
     free(tok);
     free(js);
@@ -412,10 +418,11 @@ bool prefs_save(const Prefs *p) {
     }
     fprintf(f,
             "{\n  \"useCache\": %s,\n  \"preventSleep\": %s,\n"
-            "  \"groupConsoles\": %s\n}\n",
+            "  \"groupConsoles\": %s,\n  \"maxDownloads\": %d\n}\n",
             p->use_cache ? "true" : "false",
             p->prevent_sleep ? "true" : "false",
-            p->group_consoles ? "true" : "false");
+            p->group_consoles ? "true" : "false",
+            p->max_downloads);
     fclose(f);
     return true;
 }

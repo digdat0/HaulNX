@@ -863,6 +863,8 @@ void MainApplication::GotoAdvanced() {
     this->layout->AddRow(r);                      // 2
     snprintf(r, sizeof(r), "Metadata cache: %s", g_prefs.use_cache ? "ON" : "OFF");
     this->layout->AddRow(r);                      // 3
+    snprintf(r, sizeof(r), "Max simultaneous downloads: %d", g_prefs.max_downloads);
+    this->layout->AddRow(r);                      // 4
 }
 
 void MainApplication::GotoManage() {
@@ -927,7 +929,7 @@ void MainApplication::GotoInstalled(const std::string &path) {
                 label += e.name;
             }
             this->layout->AddRow2(label, cnt,
-                                  pu::ui::Color(170, 200, 250, 255),
+                                  pu::ui::Color(245, 246, 250, 255),
                                   count_color());
         } else {
             // File: right column is the size, tinted by magnitude.
@@ -1578,6 +1580,10 @@ void MainApplication::HandleInput(u64 down, u64 held) {
                 g_prefs.use_cache = !g_prefs.use_cache;
                 prefs_save(&g_prefs);
                 break;
+            case 4:
+                g_prefs.max_downloads = (g_prefs.max_downloads % 5) + 1;
+                prefs_save(&g_prefs);
+                break;
             default:
                 break;
             }
@@ -1817,7 +1823,7 @@ void MainApplication::OnLoad() {
     config_sort(&g_cfg);
     creds_load(&g_creds);
     prefs_load(&g_prefs);
-    queue_init(roms_root(&g_tico));
+    queue_init(roms_root(&g_tico), g_prefs.max_downloads);
 
     this->screen = Screen::Home;
     this->sel_ci = 0;

@@ -17,29 +17,34 @@
 static QueueItem g_items[QUEUE_MAX];
 static uint32_t g_seq = 1;
 static Mutex g_mtx;
-static Thread g_dl_thread;
+#define MAX_DL_THREADS 5
+static Thread g_dl_threads[MAX_DL_THREADS];
+static int g_dl_count = 0;
 static Thread g_ex_thread;
 static volatile bool g_run = false;
 static const char *g_roms_root = "sdmc:/tico/roms";
 
 /* ---- worker-side processing ----------------------------------------- */
 
-static uint64_t s_last_now;  /* worker-only: for speed calc */
-static uint64_t s_last_tick;
+typedef struct {
+    QueueItem *it;
+    uint64_t last_now;
+    uint64_t last_tick;
+} DlCtx;
 
 static int dl_progress(void *ud, uint64_t now, uint64_t total) {
-    QueueItem *it = (QueueItem *)ud;
+    DlCtx *ctx = (DlCtx *)ud;
+    QueueItem *it = ctx->it;
     it->now = now;
     it->total = total;
     uint64_t tick = armGetSystemTick();
-    uint64_t dt_ns = armTicksToNs(tick - s_last_tick);
-    if (dt_ns >= 500000000ULL) { /* recompute every ~0.5s */
-        uint64_t db = (now >= s_last_now) ? (now - s_last_now) : 0;
+    uint64_t dt_ns = armTicksToNs(tick - ctx->last_tick);
+    if (dt_ns >= 500000000ULL) {
+        uint64_t db = (now >= ctx->last_now) ? (now - ctx->last_now) : 0;
         it->speed = db * 1000000000ULL / dt_ns;
-        s_last_now = now;
-        s_last_tick = tick;
+        ctx->last_now = now;
+        ctx->last_tick = tick;
     }
-    /* Abort on user cancel, or to let the app shut down promptly. */
     return (it->cancel || !g_run) ? 1 : 0;
 }
 
@@ -286,8 +291,7 @@ static void process_item(QueueItem *it) {
     it->now = have;
     it->total = it->size;
     it->speed = 0;
-    s_last_now = have;
-    s_last_tick = armGetSystemTick();
+    DlCtx ctx = { it, have, armGetSystemTick() };
 
     /* Bail out before writing if the SD card can't hold what's still to fetch. */
     uint64_t need = (it->size > have) ? (it->size - have) : 0;
@@ -300,7 +304,7 @@ static void process_item(QueueItem *it) {
     const char *auth =
         (it->auth[0] && is_archive_org_url(it->url)) ? it->auth : NULL;
     long code = 0;
-    bool ok = http_download(it->url, tmp, auth, dl_progress, it, have, &code);
+    bool ok = http_download(it->url, tmp, auth, dl_progress, &ctx, have, &code);
     it->http_code = code;
 
     if (!g_run) {
@@ -477,22 +481,27 @@ static void ex_worker(void *arg) {
 
 /* ---- public API ------------------------------------------------------ */
 
-void queue_init(const char *roms_root) {
+void queue_init(const char *roms_root, int max_dl) {
     if (roms_root && roms_root[0]) g_roms_root = roms_root;
     memset(g_items, 0, sizeof(g_items));
     mutexInit(&g_mtx);
     queue_load(); /* restore any downloads pending from a previous session */
     g_run = true;
+    if (max_dl < 1) max_dl = 1;
+    if (max_dl > MAX_DL_THREADS) max_dl = MAX_DL_THREADS;
     /* cpuid -2 = default core (–1 is invalid for svcCreateThread). */
-    bool dl_ok = false, ex_ok = false;
-    Result rc = threadCreate(&g_dl_thread, dl_worker, NULL, NULL, 0x40000, 0x2C, -2);
-    if (R_SUCCEEDED(rc)) {
-        if (R_SUCCEEDED(threadStart(&g_dl_thread))) {
-            dl_ok = true;
-        } else {
-            threadClose(&g_dl_thread);
+    g_dl_count = 0;
+    for (int i = 0; i < max_dl; i++) {
+        Result rc = threadCreate(&g_dl_threads[i], dl_worker, NULL, NULL, 0x40000, 0x2C, -2);
+        if (R_SUCCEEDED(rc)) {
+            if (R_SUCCEEDED(threadStart(&g_dl_threads[i]))) {
+                g_dl_count++;
+            } else {
+                threadClose(&g_dl_threads[i]);
+            }
         }
     }
+    bool ex_ok = false;
     Result rc2 = threadCreate(&g_ex_thread, ex_worker, NULL, NULL, 0x40000, 0x2C, -2);
     if (R_SUCCEEDED(rc2)) {
         if (R_SUCCEEDED(threadStart(&g_ex_thread))) {
@@ -501,14 +510,14 @@ void queue_init(const char *roms_root) {
             threadClose(&g_ex_thread);
         }
     }
-    if (!dl_ok && !ex_ok) {
+    if (g_dl_count == 0 && !ex_ok) {
         g_run = false;
     }
     fs_mkdir_p(CONFIG_DIR);
     FILE *f = fopen(LOG_PATH, "a");
     if (f) {
-        fprintf(f, "queue: dl_worker %s, ex_worker %s\n",
-                dl_ok ? "started" : "FAILED", ex_ok ? "started" : "FAILED");
+        fprintf(f, "queue: %d/%d dl_workers started, ex_worker %s\n",
+                g_dl_count, max_dl, ex_ok ? "started" : "FAILED");
         fclose(f);
     }
 }
@@ -522,8 +531,10 @@ void queue_exit(void) {
      * Downloads interrupted this way keep their .part and stay pending so they
      * resume next launch. */
     g_run = false;
-    threadWaitForExit(&g_dl_thread);
-    threadClose(&g_dl_thread);
+    for (int i = 0; i < g_dl_count; i++) {
+        threadWaitForExit(&g_dl_threads[i]);
+        threadClose(&g_dl_threads[i]);
+    }
     threadWaitForExit(&g_ex_thread);
     threadClose(&g_ex_thread);
     /* Persist after both threads have stopped so interrupted downloads and

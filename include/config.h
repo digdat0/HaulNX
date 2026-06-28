@@ -67,6 +67,7 @@ typedef struct {
     bool prevent_sleep;  /* true: keep console awake while downloads are active */
     bool group_consoles; /* true: main list shows consoles (open to see repos);
                             false: flat list, one row per repo */
+    int max_downloads;   /* 1–5; how many downloads run simultaneously (default 1) */
 } Prefs;
 
 /* Load dl_sources.json; seeds from romfs:/dl_sources.json on first run if the
