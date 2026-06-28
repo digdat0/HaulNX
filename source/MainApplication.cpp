@@ -566,7 +566,7 @@ MainLayout::MainLayout() : Layout::Layout() {
     this->list = TableList::New(0, list_y, sw, row_h, rows_visible);
     this->Add(this->list);
 
-    this->rom_info = pu::ui::elm::TextBlock::New(45, sh - footer_h - 30, "");
+    this->rom_info = pu::ui::elm::TextBlock::New(45, sh - footer_h - 38, "");
     this->rom_info->SetColor(pu::ui::Color(150, 160, 185, 255));
     this->Add(this->rom_info);
 
@@ -1010,7 +1010,9 @@ void MainApplication::GotoPicker(Pending what) {
     }
     std::sort(g_picker.begin(), g_picker.end(),
               [](const std::string &a, const std::string &b) {
-                  return strcasecmp(a.c_str(), b.c_str()) < 0;
+                  const char *fa = console_full_name(a.c_str());
+                  const char *fb = console_full_name(b.c_str());
+                  return strcasecmp(fa ? fa : a.c_str(), fb ? fb : b.c_str()) < 0;
               });
 
     for (const auto &name : g_picker) {
