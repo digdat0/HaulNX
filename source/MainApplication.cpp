@@ -706,7 +706,7 @@ void MainApplication::GotoHome() {
     if (g_prefs.group_consoles) {
         this->layout->SetTitle("Consoles");
         this->layout->SetSubtitle(
-            "A open  Y add  X del console  L/R tabs  ZL/ZR page");
+            "A open  Y add repo  L/R tabs  ZL/ZR page");
         // Build the shown consoles, sorted A-Z by their displayed label (the
         // full name), since the stored order is by folder key. g_home_map maps
         // each visible row back to its real console index (for open / delete).
@@ -743,7 +743,7 @@ void MainApplication::GotoHome() {
     } else {
         this->layout->SetTitle("Repos");
         this->layout->SetSubtitle(
-            "A browse  X edit  Y add  - delete  L/R tabs  ZL/ZR page");
+            "A browse  X edit  Y add repo  - delete  L/R tabs  ZL/ZR page");
         for (int c = 0; c < g_cfg.console_count; c++) {
             for (int r = 0; r < g_cfg.consoles[c].repo_count; r++) {
                 Repo *rp = &g_cfg.consoles[c].repos[r];
@@ -766,7 +766,7 @@ void MainApplication::GotoRepos(int ci) {
     this->sel_ci = ci;
     ConsoleGroup *g = &g_cfg.consoles[ci];
     this->layout->SetTitle(std::string("Console: ") + g->console);
-    this->layout->SetSubtitle("A browse  X edit  Y add  - delete  L/R tabs  B back");
+    this->layout->SetSubtitle("A browse  X edit  Y add repo  - delete  L/R tabs  B back");
     this->layout->ClearMenu();
     for (int i = 0; i < g->repo_count; i++) {
         char row[180];
@@ -994,7 +994,9 @@ void MainApplication::GotoPicker(Pending what) {
         int rc = g ? g->repo_count : 0;
         char cnt[32];
         snprintf(cnt, sizeof(cnt), "%d %s", rc, rc == 1 ? "repo" : "repos");
-        this->layout->AddRow2(name, cnt, pu::ui::Color(232, 234, 240, 255),
+        char label[160];
+        console_label(name.c_str(), label, sizeof(label));
+        this->layout->AddRow2(label, cnt, pu::ui::Color(232, 234, 240, 255),
                               count_color());
     }
     if (g_picker.empty()) {
@@ -1270,17 +1272,6 @@ void MainApplication::HandleInput(u64 down, u64 held) {
                 this->GotoRepos(g_home_map[sel]);
             } else if (down & HidNpadButton_Y) {
                 this->GotoPicker(Pending::AddRepo);
-            } else if ((down & HidNpadButton_X) && valid) {
-                int ci = g_home_map[sel];
-                if (this->Confirm("Delete console",
-                                  std::string("Delete '") +
-                                      g_cfg.consoles[ci].console +
-                                      "' and its repos?")) {
-                    config_remove_console(&g_cfg, ci);
-                    config_save(&g_cfg);
-                    this->Toast("Deleted");
-                    this->GotoHome();
-                }
             }
         } else {
             int ci, ri;
@@ -1661,7 +1652,10 @@ void MainApplication::HandleInput(u64 down, u64 held) {
                                                 g_inst[i].name + "'?")) {
                     fs_rm_rf((this->inst_path + "/" + g_inst[i].name).c_str());
                     this->Toast("Deleted");
+                    s32 keep = i;
                     this->GotoInstalled(this->inst_path);
+                    if (keep >= (s32)g_inst.size()) keep = (s32)g_inst.size() - 1;
+                    if (keep >= 0) this->layout->SetSel(keep);
                 }
             }
         }
