@@ -10,6 +10,7 @@
 #include <pu/Plutonium>
 #include <string>
 #include <vector>
+#include <set>
 
 class TableList : public pu::ui::elm::Element {
   public:
@@ -33,7 +34,8 @@ class TableList : public pu::ui::elm::Element {
     s32 rows_visible;
     s32 sel;
     s32 scroll_top;
-    pu::ui::Color row_bg, row_alt_bg, focus_bg, scroll_clr;
+    pu::ui::Color row_bg, row_alt_bg, focus_bg, scroll_clr, mark_bg;
+    std::set<s32> marked;
     std::string font;
     std::vector<Row> rows;
 
@@ -116,6 +118,7 @@ class TableList : public pu::ui::elm::Element {
           scroll_top(0), row_bg(22, 23, 27, 255), row_alt_bg(28, 30, 36, 255),
           // Teal selection highlight, distinct from the blue header/tab bar.
           focus_bg(28, 122, 116, 255), scroll_clr(80, 86, 100, 255),
+          mark_bg(60, 80, 120, 255),
           cache_top(-1), dirty(true) {
         this->font = pu::ui::GetDefaultFont(pu::ui::DefaultFontSize::MediumLarge);
     }
@@ -127,6 +130,7 @@ class TableList : public pu::ui::elm::Element {
         this->rows.clear();
         this->sel = 0;
         this->scroll_top = 0;
+        this->marked.clear();
         this->dirty = true;
     }
     void AddRow(const std::string &left, const pu::ui::Color lclr) {
@@ -169,6 +173,15 @@ class TableList : public pu::ui::elm::Element {
         this->SetSelected(i);
     }
 
+    void ToggleMark(s32 i) {
+        if (this->marked.count(i)) this->marked.erase(i);
+        else this->marked.insert(i);
+    }
+    bool IsMarked(s32 i) { return this->marked.count(i) > 0; }
+    const std::set<s32> &Marked() { return this->marked; }
+    int MarkedCount() { return (int)this->marked.size(); }
+    void ClearMarks() { this->marked.clear(); }
+
     s32 GetX() override { return this->x; }
     s32 GetY() override { return this->y; }
     s32 GetWidth() override { return this->w; }
@@ -183,9 +196,11 @@ class TableList : public pu::ui::elm::Element {
             s32 ridx = this->scroll_top + i;
             s32 rowy = ry + i * this->row_h;
             bool has = (ridx >= 0 && ridx < (s32)this->rows.size());
+            bool is_marked = has && this->marked.count(ridx);
             pu::ui::Color bg =
                 (has && ridx == this->sel)
                     ? this->focus_bg
+                    : is_marked ? this->mark_bg
                     : ((ridx % 2) ? this->row_alt_bg : this->row_bg);
             drawer->RenderRectangleFill(bg, rx, rowy, this->w, this->row_h);
             if (!has) {

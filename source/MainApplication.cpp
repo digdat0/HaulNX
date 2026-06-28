@@ -668,6 +668,10 @@ void MainLayout::MoveUp() { this->MoveBy(-1); }
 void MainLayout::MoveDown() { this->MoveBy(1); }
 void MainLayout::PageUp() { this->MoveBy(-this->list->RowsVisible()); }
 void MainLayout::PageDown() { this->MoveBy(this->list->RowsVisible()); }
+void MainLayout::ToggleMark(s32 i) { this->list->ToggleMark(i); }
+int MainLayout::MarkedCount() { return this->list->MarkedCount(); }
+const std::set<s32> &MainLayout::Marked() { return this->list->Marked(); }
+void MainLayout::ClearMarks() { this->list->ClearMarks(); }
 
 // ---- app: feedback --------------------------------------------------------
 void MainApplication::Toast(const std::string &msg) {
@@ -918,8 +922,16 @@ void MainApplication::GotoInstalled(const std::string &path) {
     this->screen = Screen::Installed;
     this->inst_path = path;
     g_inst = list_dir(path);
-    std::sort(g_inst.begin(), g_inst.end(), [](const DirEnt &a, const DirEnt &b) {
+    bool is_root = (path == roms_root(&g_tico));
+    std::sort(g_inst.begin(), g_inst.end(), [is_root](const DirEnt &a, const DirEnt &b) {
         if (a.is_dir != b.is_dir) return a.is_dir > b.is_dir;
+        if (is_root && a.is_dir && b.is_dir) {
+            const char *fa = console_full_name(a.name.c_str());
+            const char *fb = console_full_name(b.name.c_str());
+            const char *sa = fa ? fa : a.name.c_str();
+            const char *sb = fb ? fb : b.name.c_str();
+            return strcasecmp(sa, sb) < 0;
+        }
         return strcasecmp(a.name.c_str(), b.name.c_str()) < 0;
     });
     std::string shown = path;
@@ -927,7 +939,7 @@ void MainApplication::GotoInstalled(const std::string &path) {
         shown = "roms" + shown.substr(strlen(roms_root(&g_tico)));
     }
     this->layout->SetTitle(std::string("Installed: ") + shown);
-    this->layout->SetSubtitle("A open  X rename  - delete  L/R tabs  B back/up");
+    this->layout->SetSubtitle("A open  Y select  X rename  - delete  L/R tabs  B back");
     this->layout->ClearMenu();
     for (int i = 0; i < (int)g_inst.size(); i++) {
         DirEnt &e = g_inst[i];
@@ -1617,6 +1629,11 @@ void MainApplication::HandleInput(u64 down, u64 held) {
                         {"OK"}, true, {}, style_dialog);
                 }
             }
+        } else if (down & HidNpadButton_Y) {
+            s32 i = this->layout->Sel();
+            if (i >= 0 && i < (s32)g_inst.size()) {
+                this->layout->ToggleMark(i);
+            }
         } else if (down & HidNpadButton_X) {
             s32 i = this->layout->Sel();
             if (i >= 0 && i < (s32)g_inst.size()) {
@@ -1633,16 +1650,37 @@ void MainApplication::HandleInput(u64 down, u64 held) {
                 }
             }
         } else if (down & HidNpadButton_Minus) {
-            s32 i = this->layout->Sel();
-            if (i >= 0 && i < (s32)g_inst.size()) {
-                if (this->Confirm("Delete", std::string("Delete '") +
-                                                g_inst[i].name + "'?")) {
-                    fs_rm_rf((this->inst_path + "/" + g_inst[i].name).c_str());
-                    this->Toast("Deleted");
-                    s32 keep = i;
+            int mc = this->layout->MarkedCount();
+            if (mc > 0) {
+                char msg[64];
+                snprintf(msg, sizeof(msg), "Delete %d selected item%s?",
+                         mc, mc == 1 ? "" : "s");
+                if (this->Confirm("Delete", msg)) {
+                    // Delete in reverse order so indices stay valid
+                    auto marks = this->layout->Marked();
+                    for (auto it = marks.rbegin(); it != marks.rend(); ++it) {
+                        s32 idx = *it;
+                        if (idx >= 0 && idx < (s32)g_inst.size()) {
+                            fs_rm_rf((this->inst_path + "/" + g_inst[idx].name).c_str());
+                        }
+                    }
+                    char t[32];
+                    snprintf(t, sizeof(t), "Deleted %d", mc);
+                    this->Toast(t);
                     this->GotoInstalled(this->inst_path);
-                    if (keep >= (s32)g_inst.size()) keep = (s32)g_inst.size() - 1;
-                    if (keep >= 0) this->layout->SetSel(keep);
+                }
+            } else {
+                s32 i = this->layout->Sel();
+                if (i >= 0 && i < (s32)g_inst.size()) {
+                    if (this->Confirm("Delete", std::string("Delete '") +
+                                                    g_inst[i].name + "'?")) {
+                        fs_rm_rf((this->inst_path + "/" + g_inst[i].name).c_str());
+                        this->Toast("Deleted");
+                        s32 keep = i;
+                        this->GotoInstalled(this->inst_path);
+                        if (keep >= (s32)g_inst.size()) keep = (s32)g_inst.size() - 1;
+                        if (keep >= 0) this->layout->SetSel(keep);
+                    }
                 }
             }
         }

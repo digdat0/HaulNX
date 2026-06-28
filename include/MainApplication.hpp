@@ -3,6 +3,7 @@
 #include <pu/Plutonium>
 #include <string>
 #include <vector>
+#include <set>
 #include <switch.h>
 #include "TableList.hpp"
 
@@ -42,6 +43,10 @@ class MainLayout : public pu::ui::Layout {
     void MoveDown();
     void PageUp();
     void PageDown();
+    void ToggleMark(s32 i);
+    int MarkedCount();
+    const std::set<s32> &Marked();
+    void ClearMarks();
 };
 
 class MainApplication : public pu::ui::Application {
