@@ -34,7 +34,8 @@ but it works.**
   the next download starts immediately while the previous archive is still
   extracting, so multi-file queues finish faster. You can run up to **5
   simultaneous downloads** (configurable in Advanced settings) — each with its
-  own speed tracking. The Queue tab shows a
+  own speed tracking. Each queued item shows its **console code** (e.g. `[nes]`)
+  next to the filename. The Queue tab shows a
   **progress bar** plus size, speed and **ETA** on the active download, and lets
   you **cancel**, **retry** (resumes in place), **reorder** (move items up/down
   with ZL/ZR — never above the active download), and clear finished items. Failed
@@ -64,11 +65,13 @@ but it works.**
 - **Easy navigation.** D-pad **or left analog stick**, hold to auto-repeat,
   lists **wrap around** at the ends, and each list **remembers your position**
   when you back out and return.
-- **Installed browser.** The Installed tab is a table of the ROM folder —
-  console folders show their **full name** (e.g. "Nintendo Entertainment System
-  (nes)") and how many files are inside, files show their size. Rename or delete
-  entries in place.
+- **Installed browser.** The Installed tab is a table of the ROM folder,
+  sorted alphabetically by full console name. Console folders show their
+  **full name** (e.g. "Nintendo Entertainment System (NES)") and how many
+  files are inside, files show their size. Rename or delete entries in place,
+  or **multi-select** items with **Y** and bulk-delete with **−**.
 - **In-app self-update** from GitHub releases — no manual `.nro` copying.
+  Press **B** to cancel a download in progress.
 - **Download log** you can view and clear from Settings.
 - **Built-in help** (Settings → Controls / Help for the full control list).
 
@@ -177,8 +180,8 @@ available on the current screen.
 | Key | Action |
 |-----|--------|
 | A | open console / browse repo |
-| Y | add a repo (pick a supported console, then name + archive id) |
-| X | grouped: delete console · flat: edit repo |
+| Y | add a repo (pick a supported console by full name, then name + archive id) |
+| X | flat mode: edit repo |
 | − | delete the selected repo |
 
 Each console row shows its **repo count** in the right column. Inside a console:
@@ -216,22 +219,21 @@ failed items show the reason (`HTTP 404`, `no space`, …).
 | Key | Action |
 |-----|--------|
 | A | open folder / file details |
+| Y | toggle-select (multi-select for bulk delete) |
 | X | rename |
-| − | delete |
+| − | delete selected items (or single item if none selected) |
 | B | up a level |
 
 Folders show the number of files/apps inside; files show a color-coded size.
+Selected items are highlighted in blue.
 
 **Settings tab**
 
 Highlight an item and press **A** to open/toggle:
 
-- **ROM folder** — shows the current download destination (read-only; set it in
-  TICO's own settings).
 - **Check for updates** — in-app self-update, with download progress (press
   **B** to cancel).
 - **View download log** — press **X** in the log to clear it.
-- **Download from URL** — paste an archive.org URL / item id for a one-off grab.
 - **Manage consoles** — show/hide which consoles appear on the Browse page.
 - **Advanced** — sub-menu with:
   - **Stay awake while downloading** — toggle.
@@ -243,6 +245,10 @@ Highlight an item and press **A** to open/toggle:
     (1–5); controls how many files download at once (takes effect on next
     launch).
 - **Controls / Help**, **Credits**.
+
+The current ROM folder path is displayed above the footer bar for reference.
+
+All confirmation dialogs use a blue theme matching the header/tab bar.
 
 ## Console groups & supported consoles
 
