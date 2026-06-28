@@ -522,7 +522,7 @@ MainLayout::MainLayout() : Layout::Layout() {
     this->title->SetColor(pu::ui::Color(255, 255, 255, 255));
     this->Add(this->title);
 
-    this->status = pu::ui::elm::TextBlock::New(sw - 430, 30, "");
+    this->status = pu::ui::elm::TextBlock::New(sw - 580, 30, "");
     this->status->SetColor(pu::ui::Color(210, 222, 245, 255));
     this->Add(this->status);
 
@@ -687,10 +687,10 @@ void MainApplication::RefreshStatus() {
     queue_active_info(NULL, 0, NULL, NULL, NULL, &speed, NULL, NULL);
     if (speed > 0) {
         std::string sp = human_size(speed);
-        snprintf(s, sizeof(s), "SD %s / %s   %s/s   BAT %u%%%s",
+        snprintf(s, sizeof(s), "SD %s/%s  DL %s/s  BAT %u%%%s",
                  sf.c_str(), st.c_str(), sp.c_str(), (unsigned)bat, plug);
     } else {
-        snprintf(s, sizeof(s), "SD %s / %s   BAT %u%%%s",
+        snprintf(s, sizeof(s), "SD %s/%s  BAT %u%%%s",
                  sf.c_str(), st.c_str(), (unsigned)bat, plug);
     }
     this->layout->SetStatus(s);
@@ -1588,7 +1588,22 @@ void MainApplication::HandleInput(u64 down, u64 held) {
                 break;
             }
             if (this->screen == Screen::Advanced) {
+                s32 sel = this->layout->Sel();
                 this->GotoAdvanced();
+                this->layout->SetSel(sel);
+            }
+        } else if (down & (HidNpadButton_Left | HidNpadButton_Right)) {
+            s32 i = this->layout->Sel();
+            if (i == 4) {
+                if (down & HidNpadButton_Right) {
+                    g_prefs.max_downloads = (g_prefs.max_downloads % 5) + 1;
+                } else {
+                    g_prefs.max_downloads = (g_prefs.max_downloads <= 1) ? 5 : g_prefs.max_downloads - 1;
+                }
+                prefs_save(&g_prefs);
+                s32 sel = this->layout->Sel();
+                this->GotoAdvanced();
+                this->layout->SetSel(sel);
             }
         }
         break;
