@@ -31,7 +31,9 @@ but it works.**
 - **Background download queue.** Queue many files and keep browsing while they
   download FIFO in the background. **Downloads and extraction are pipelined** —
   the next download starts immediately while the previous archive is still
-  extracting, so multi-file queues finish faster. The Queue tab shows a
+  extracting, so multi-file queues finish faster. You can run up to **5
+  simultaneous downloads** (configurable in Advanced settings) — each with its
+  own speed tracking. The Queue tab shows a
   **progress bar** plus size, speed and **ETA** on the active download, and lets
   you **cancel**, **retry** (resumes in place), **reorder** (move items up/down
   with ZL/ZR — never above the active download), and clear finished items. Failed
@@ -234,6 +236,8 @@ Highlight an item and press **A** to open/toggle:
   - **Group consoles** — toggle.
   - **Archive.org credentials** — sub-menu to edit access key / secret
     (pre-filled for easy editing) or clear them.
+  - **Max simultaneous downloads** — cycle 1–5; controls how many files
+    download at once (takes effect on next launch).
 - **Controls / Help**, **Credits**.
 
 ## Console groups & supported consoles
