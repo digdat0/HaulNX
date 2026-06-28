@@ -13,6 +13,7 @@ class MainLayout : public pu::ui::Layout {
     pu::ui::elm::Rectangle::Ref footer;
     pu::ui::elm::TextBlock::Ref title;
     pu::ui::elm::TextBlock::Ref status;
+    pu::ui::elm::TextBlock::Ref rom_info;
     std::vector<pu::ui::elm::TextBlock::Ref> footer_segs;
     TableList::Ref list;
     std::vector<pu::ui::elm::TextBlock::Ref> tabs;
@@ -25,6 +26,7 @@ class MainLayout : public pu::ui::Layout {
     void SetTitle(const std::string &t);
     void SetStatus(const std::string &t);
     void SetSubtitle(const std::string &t);
+    void SetRomInfo(const std::string &t);
     void SetActiveTab(int idx); // 0=Browse 1=Installed 2=Queue 3=Settings
     void ClearMenu();
     void AddRow(const std::string &name);

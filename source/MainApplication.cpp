@@ -132,6 +132,14 @@ static void console_label(const char *abbr, char *out, size_t out_sz) {
     snprintf(out, out_sz, "%s (%s)", full, up);
 }
 
+static void style_dialog(pu::ui::Dialog::Ref &d) {
+    d->SetDialogColor(pu::ui::Color(28, 54, 104, 255));
+    d->SetTitleColor(pu::ui::Color(255, 255, 255, 255));
+    d->SetContentColor(pu::ui::Color(210, 222, 245, 255));
+    d->SetOptionColor(pu::ui::Color(255, 255, 255, 255));
+    d->SetOverColor(pu::ui::Color(40, 75, 140, 255));
+}
+
 // Compact "time remaining" string from a seconds count.
 static std::string human_eta(uint64_t secs) {
     char buf[24];
@@ -558,6 +566,10 @@ MainLayout::MainLayout() : Layout::Layout() {
     this->list = TableList::New(0, list_y, sw, row_h, rows_visible);
     this->Add(this->list);
 
+    this->rom_info = pu::ui::elm::TextBlock::New(45, sh - footer_h - 30, "");
+    this->rom_info->SetColor(pu::ui::Color(150, 160, 185, 255));
+    this->Add(this->rom_info);
+
     this->footer = pu::ui::elm::Rectangle::New(0, sh - footer_h, sw, footer_h,
                                                pu::ui::Color(22, 42, 80, 255));
     this->Add(this->footer);
@@ -591,6 +603,7 @@ void MainLayout::SetTitle(const std::string &t) {
     this->title->SetText(t.empty() ? std::string("TicoDL+")
                                    : std::string("TicoDL+     ") + t);
 }
+void MainLayout::SetRomInfo(const std::string &t) { this->rom_info->SetText(t); }
 void MainLayout::SetStatus(const std::string &t) {
     this->status->SetText(t);
     s32 w = this->status->GetWidth();
@@ -635,7 +648,7 @@ void MainLayout::SetSubtitle(const std::string &t) {
         }
     }
 }
-void MainLayout::ClearMenu() { this->list->Clear(); }
+void MainLayout::ClearMenu() { this->list->Clear(); this->rom_info->SetText(""); }
 void MainLayout::AddRow(const std::string &name) {
     this->AddRow(name, pu::ui::Color(232, 234, 240, 255)); // default: white text
 }
@@ -673,7 +686,7 @@ void MainApplication::ToastErr(const std::string &msg) {
 
 bool MainApplication::Confirm(const std::string &title, const std::string &msg) {
     // "Cancel" first so it's the default-highlighted (safe) option; B cancels.
-    int r = this->CreateShowDialog(title, msg, {"Cancel", "Yes"}, false);
+    int r = this->CreateShowDialog(title, msg, {"Cancel", "Yes"}, false, {}, style_dialog);
     return r == 1;
 }
 
@@ -837,15 +850,15 @@ void MainApplication::GotoSettings() {
     this->layout->SetTitle(std::string("Settings   (v") + APP_VERSION_STR + ")");
     this->layout->SetSubtitle("A select  L/R tabs  ZL/ZR page");
     this->layout->ClearMenu();
-    char r[600];
-    snprintf(r, sizeof(r), "ROM folder: %s", roms_root(&g_tico));
-    this->layout->AddRow(r);                      // 0
-    this->layout->AddRow("Check for updates");    // 1
-    this->layout->AddRow("View download log");    // 2
-    this->layout->AddRow("Manage consoles (show/hide)"); // 3
-    this->layout->AddRow("Advanced");             // 4
-    this->layout->AddRow("Controls / Help");      // 5
-    this->layout->AddRow("Credits");              // 6
+    this->layout->AddRow("Check for updates");    // 0
+    this->layout->AddRow("View download log");    // 1
+    this->layout->AddRow("Manage consoles (show/hide)"); // 2
+    this->layout->AddRow("Advanced");             // 3
+    this->layout->AddRow("Controls / Help");      // 4
+    this->layout->AddRow("Credits");              // 5
+    char ri[600];
+    snprintf(ri, sizeof(ri), "ROM folder: %s", roms_root(&g_tico));
+    this->layout->SetRomInfo(ri);
 }
 
 void MainApplication::GotoAdvanced() {
@@ -1467,22 +1480,13 @@ void MainApplication::HandleInput(u64 down, u64 held) {
         } else if (down & HidNpadButton_A) {
             s32 i = this->layout->Sel();
             switch (i) {
-            case 0: // ROM folder (read-only)
-                this->CreateShowDialog(
-                    "ROM folder",
-                    std::string("Current: ") + roms_root(&g_tico) +
-                        "\n\nThis is read from TICO's config.\n"
-                        "To change it, open TICO and set the\n"
-                        "ROMs path in its Settings.",
-                    {"OK"}, true);
-                break;
-            case 1: { // Check for updates
+            case 0: { // Check for updates
                 char tag[64], url[1024];
                 if (!update_fetch_latest(UPDATE_REPO, tag, sizeof(tag), url,
                                          sizeof(url))) {
                     this->CreateShowDialog("Update",
                                            "Could not fetch release info.",
-                                           {"OK"}, true);
+                                           {"OK"}, true, {}, style_dialog);
                     break;
                 }
                 if (version_cmp(APP_VERSION_STR, tag) >= 0) {
@@ -1490,7 +1494,7 @@ void MainApplication::HandleInput(u64 down, u64 held) {
                         "Update",
                         std::string("You are up to date (v") + APP_VERSION_STR +
                             ").",
-                        {"OK"}, true);
+                        {"OK"}, true, {}, style_dialog);
                     break;
                 }
                 if (!this->Confirm("Update", std::string("Update to ") + tag +
@@ -1503,16 +1507,16 @@ void MainApplication::HandleInput(u64 down, u64 held) {
                 this->UpdStart(url, dl, tag);
                 return;
             }
-            case 2: // View download log
+            case 1: // View download log
                 this->GotoLog();
                 return;
-            case 3: // Manage consoles
+            case 2: // Manage consoles
                 this->GotoManage();
                 return;
-            case 4: // Advanced
+            case 3: // Advanced
                 this->GotoAdvanced();
                 return;
-            case 5: // Controls / Help
+            case 4: // Controls / Help
                 this->CreateShowDialog(
                     "Controls",
                     "Tabs: L / R  (Browse | Installed | Queue | Settings)\n"
@@ -1521,15 +1525,15 @@ void MainApplication::HandleInput(u64 down, u64 held) {
                     "Browse: A open  Y add  X edit/del  - delete\n"
                     "Files: A get  - all  Y filter  X refresh  Dpad L/R: repo\n"
                     "Queue: A cancel  X retry  ZL/ZR move  Y clear  - log",
-                    {"OK"}, true);
+                    {"OK"}, true, {}, style_dialog);
                 break;
-            case 6: // Credits
+            case 5: // Credits
                 this->CreateShowDialog(
                     "Credits",
                     "TicoDL+ by digdat0\n\n"
                     "Plutonium UI library provided by XorTroll\n\n"
                     "TICO emulator - https://ticoverse.com/",
-                    {"OK"}, true);
+                    {"OK"}, true, {}, style_dialog);
                 break;
             default:
                 break;
@@ -1610,7 +1614,7 @@ void MainApplication::HandleInput(u64 down, u64 held) {
                     this->CreateShowDialog(
                         "File",
                         g_inst[i].name + "\n" + human_size(g_inst[i].size),
-                        {"OK"}, true);
+                        {"OK"}, true, {}, style_dialog);
                 }
             }
         } else if (down & HidNpadButton_X) {
@@ -1842,7 +1846,7 @@ void MainApplication::OnLoad() {
             "Downloads will go to the default folder:\n" +
                 std::string(roms_root(&g_tico)) +
                 "\n\nContinue without TICO?",
-            {"Continue", "Exit"}, true);
+            {"Continue", "Exit"}, true, {}, style_dialog);
         if (opt != 0) {
             this->Close();
             return;
@@ -1924,7 +1928,7 @@ void MainApplication::UpdStart(const std::string &url, const std::string &dl,
     }
     this->upd_running = false;
     this->CreateShowDialog("Update", "Could not start the downloader.", {"OK"},
-                           true);
+                           true, {}, style_dialog);
     this->GotoSettings();
 }
 
@@ -1969,15 +1973,15 @@ void MainApplication::UpdTick() {
                                    std::string("Updated to ") + tag +
                                        ".\nInstalled to:\n" + selfp +
                                        "\n\nClose and relaunch TicoDL+.",
-                                   {"OK"}, true);
+                                   {"OK"}, true, {}, style_dialog);
         } else {
             this->CreateShowDialog(
                 "Update", std::string("Install failed. New build kept at:\n") + dl,
-                {"OK"}, true);
+                {"OK"}, true, {}, style_dialog);
         }
     } else {
         remove(dl.c_str());
-        this->CreateShowDialog("Update", "Download failed.", {"OK"}, true);
+        this->CreateShowDialog("Update", "Download failed.", {"OK"}, true, {}, style_dialog);
     }
     this->GotoSettings();
 }
