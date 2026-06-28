@@ -18,7 +18,8 @@ but it works.**
 
 - **Tabbed graphical UI.** A dark-themed Plutonium (SDL2) interface with four
   top tabs — **Browse · Installed · Queue · Settings** — switched with the
-  **L/R** shoulder buttons. The header shows SD space (free / total) and battery %.
+  **L/R** shoulder buttons. The header shows free/total SD space and battery %
+  (with a `+` charging indicator), right-aligned.
 - **Table-style lists.** Every list is a real table: a left name column and a
   right-aligned size/count column, with file sizes **color-coded** by magnitude
   (KB / MB / GB). The selected row is highlighted; the active download is white.
@@ -42,7 +43,8 @@ but it works.**
   **Saved** (kept raw because it couldn't be unpacked) or **Failed** — even when
   you're on another tab.
 - **Download a whole list at once.** In a file list, **−** queues every file
-  matching the current filter (with a confirmation).
+  matching the current filter (with a confirmation). A **free space check**
+  warns you before queuing if the total size exceeds available SD space.
 - **Resume + persistence.** Interrupted downloads resume from where they
   stopped, and the queue survives closing the app — pending downloads pick back
   up on next launch. Retry resumes a cancelled/failed item in place.
@@ -156,9 +158,9 @@ are sent only to archive.org hosts.
 ## Controls
 
 A graphical app (Plutonium UI) with four tabs. The header shows the current
-screen plus **SD free / total and battery %** (top-right, e.g.
-`SD 30.2 GB / 400.0 GB  BAT 55%`). The footer shows the buttons available on
-the current screen.
+screen plus **free/total SD and battery %** (top-right, e.g.
+`29.8/419.1 GB  57%`; shows `+` when charging). The footer shows the buttons
+available on the current screen.
 
 **Everywhere**
 
@@ -167,7 +169,7 @@ the current screen.
 | D-pad / left stick | move (hold to auto-repeat; wraps at the ends) |
 | L / R | switch tabs (Browse ↔ Installed ↔ Queue ↔ Settings) |
 | ZL / ZR | page up / down (in the Queue, move the selected item up / down) |
-| + | exit |
+| + | exit (confirms if downloads are active) |
 | B | back / up a level |
 
 **Browse tab** (consoles, or repos in flat mode — toggle in Settings)
@@ -226,8 +228,8 @@ Highlight an item and press **A** to open/toggle:
 
 - **ROM folder** — shows the current download destination (read-only; set it in
   TICO's own settings).
-- **Check for updates** — in-app self-update, with download progress.
-- **Metadata cache** — toggle.
+- **Check for updates** — in-app self-update, with download progress (press
+  **B** to cancel).
 - **View download log** — press **X** in the log to clear it.
 - **Download from URL** — paste an archive.org URL / item id for a one-off grab.
 - **Manage consoles** — show/hide which consoles appear on the Browse page.
@@ -236,8 +238,10 @@ Highlight an item and press **A** to open/toggle:
   - **Group consoles** — toggle.
   - **Archive.org credentials** — sub-menu to edit access key / secret
     (pre-filled for easy editing) or clear them.
-  - **Max simultaneous downloads** — cycle 1–5; controls how many files
-    download at once (takes effect on next launch).
+  - **Metadata cache** — toggle cached metadata on/off.
+  - **Max simultaneous downloads** — adjust with A or D-pad left/right
+    (1–5); controls how many files download at once (takes effect on next
+    launch).
 - **Controls / Help**, **Credits**.
 
 ## Console groups & supported consoles
@@ -317,8 +321,9 @@ restricted items. Public collections download anonymously and need no keys.
 
 Open **Settings → Check for updates**. TicoDL+ checks the GitHub releases for a
 newer version and, if found, downloads the new `.nro` (with a live progress
-indicator) and replaces itself (keeping a `.previous` backup). Close and relaunch
-to run the new build.
+indicator) and replaces itself (keeping a `.previous` backup). Press **B** to
+cancel the download at any time — the partial file is discarded and you're
+returned to Settings. Close and relaunch to run the new build.
 
 ---
 

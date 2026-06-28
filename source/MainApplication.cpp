@@ -694,16 +694,8 @@ void MainApplication::RefreshStatus() {
     }
     const char *plug = (charger != PsmChargerType_Unconnected) ? "+" : "";
     char s[160];
-    uint64_t speed = 0;
-    queue_active_info(NULL, 0, NULL, NULL, NULL, &speed, NULL, NULL);
-    if (speed > 0) {
-        std::string sp = human_size(speed);
-        snprintf(s, sizeof(s), "%s/%s  %s/s  %u%%%s",
-                 sf.c_str(), st.c_str(), sp.c_str(), (unsigned)bat, plug);
-    } else {
-        snprintf(s, sizeof(s), "%s/%s  %u%%%s",
-                 sf.c_str(), st.c_str(), (unsigned)bat, plug);
-    }
+    snprintf(s, sizeof(s), "%s/%s  %u%%%s",
+             sf.c_str(), st.c_str(), (unsigned)bat, plug);
     this->layout->SetStatus(s);
 }
 
