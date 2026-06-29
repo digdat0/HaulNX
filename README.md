@@ -19,64 +19,33 @@ but it works.**
 
 ## Features
 
-- **Tabbed graphical UI.** A dark-themed Plutonium (SDL2) interface with four
-  top tabs — **Browse · Installed · Queue · Settings** — switched with the
-  **L/R** shoulder buttons. The header shows free/total SD space and battery %
-  (with a `+` charging indicator), right-aligned.
-- **Table-style lists.** Every list is a real table: a left name column and a
-  right-aligned size/count column, with file sizes **color-coded** by magnitude
-  (KB / MB / GB). The selected row is highlighted; the active download is white.
-- **Console groups with multiple repos.** Each console (snes, genesis, psx, …)
-  can hold several archive.org collections, so if one set is missing games you
-  can add another. Everything for a console installs into the same
-  `sdmc:/tico/roms/<console>/` folder. The Browse tab shows each console's repo
-  count, and you can **show/hide consoles** on the Browse page from
-  **Settings → Manage consoles**.
-- **Background download queue.** Queue many files and keep browsing while they
-  download FIFO in the background. **Downloads and extraction are pipelined** —
-  the next download starts immediately while the previous archive is still
-  extracting, so multi-file queues finish faster. You can run up to **5
-  simultaneous downloads** (configurable in Advanced settings) — each with its
-  own speed tracking. Each queued item shows its **console code** (e.g. `[nes]`)
-  next to the filename. The Queue tab shows a
-  **progress bar** plus size, speed and **ETA** on the active download, and lets
-  you **cancel**, **retry** (resumes in place), **reorder** (move items up/down
-  with ZL/ZR — never above the active download), and clear finished items. Failed
-  items show the **reason** (`HTTP 404`, `no space`, `bad md5`, …).
-- **Completion alerts.** A toast pops up when a download finishes — **Done**,
-  **Saved** (kept raw because it couldn't be unpacked) or **Failed** — even when
-  you're on another tab.
-- **Download a whole list at once.** In a file list, **−** queues every file
-  matching the current filter (with a confirmation). A **free space check**
-  warns you before queuing if the total size exceeds available SD space.
-- **Resume + persistence.** Interrupted downloads resume from where they
-  stopped, and the queue survives closing the app — pending downloads pick back
-  up on next launch. Retry resumes a cancelled/failed item in place.
-- **No frozen screens.** Loading a repo's metadata and the in-app self-update
-  both run in the background with an animated progress indicator.
-- **Automatic extraction.** `.zip` / `.7z` / `.rar` / `.tar.*` archives are
-  unpacked into the console folder automatically; plain files are moved as-is.
-  Extraction is optimized for SD card I/O with large read/write buffers.
-- **TICO detection.** On launch, TicoDL+ checks whether the TICO emulator is
-  installed and reads its config for the ROM folder path. If TICO set a custom
-  `roms_path` in its settings, TicoDL+ uses it automatically. If TICO isn't
-  found, you're warned and can continue with the default path.
-- **Integrity checks.** Downloads are verified by size and, when archive.org
-  provides one, MD5 — corrupt files are rejected instead of installed.
-- **Find things fast.** On-screen name filter, ZL/ZR paging, a scrollbar for
-  huge lists, and `*` markers next to files you already have installed.
-- **Easy navigation.** D-pad **or left analog stick**, hold to auto-repeat,
-  lists **wrap around** at the ends, and each list **remembers your position**
-  when you back out and return.
-- **Installed browser.** The Installed tab is a table of the ROM folder,
-  sorted alphabetically by full console name. Console folders show their
-  **full name** (e.g. "Nintendo Entertainment System (NES)") and how many
-  files are inside, files show their size. Rename or delete entries in place,
-  or **multi-select** items with **Y** and bulk-delete with **−**.
-- **In-app self-update** from GitHub releases — no manual `.nro` copying.
-  Press **B** to cancel a download in progress.
-- **Download log** you can view and clear from Settings.
-- **Built-in help** (Settings → Controls / Help for the full control list).
+- **Browse & organize**
+  - Multiple repos per console — add extra archive.org collections when one set is incomplete
+  - Show/hide consoles from **Settings → Manage consoles**
+  - On-screen name filter, `*` markers for already-installed files, ZL/ZR paging
+
+- **Download queue**
+  - Queue files and keep browsing — downloads run in the background
+  - Up to **5 simultaneous downloads** (configurable), each with its own speed tracking
+  - Pipelined extraction — the next download starts while the previous archive unpacks
+  - Progress bar, speed, ETA, cancel, retry (resumes in place), reorder (ZL/ZR)
+  - Queue the entire file list at once with **−** (free-space check included)
+  - Queue persists across app restarts; interrupted downloads resume automatically
+
+- **Automatic extraction**
+  - `.zip` / `.7z` / `.rar` / `.tar.*` unpacked into the console folder; plain files moved as-is
+  - Integrity verified by size and MD5 — corrupt files are rejected
+
+- **Installed browser**
+  - Sorted alphabetically by full console name (e.g. "Nintendo Entertainment System (NES)")
+  - Multi-select with **Y**, bulk-delete with **−**, rename with **X**
+
+- **TICO integration**
+  - Auto-detects TICO and reads its ROM folder path
+  - Falls back to the default path with a warning if TICO isn't found
+
+- **In-app self-update**
+  - One-tap update from GitHub releases — press **B** to cancel
 
 ---
 
