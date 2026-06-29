@@ -91,6 +91,11 @@ void queue_clear_finished(void);
 /* Number of items still pending or in progress (for sleep-prevention). */
 int queue_active_count(void);
 
+/* Count how many queued/active items have a .part file matching `partname`
+ * (the bare filename, e.g. "foo.zip.part"). If `do_cancel` is true, cancel
+ * all matching items. Returns the number of matches. */
+int queue_cancel_by_part(const char *partname, bool do_cancel);
+
 #ifdef __cplusplus
 }
 #endif

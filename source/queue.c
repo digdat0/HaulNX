@@ -776,3 +776,32 @@ int queue_active_count(void) {
     mutexUnlock(&g_mtx);
     return c;
 }
+
+int queue_cancel_by_part(const char *partname, bool do_cancel) {
+    int hits = 0;
+    mutexLock(&g_mtx);
+    for (int i = 0; i < QUEUE_MAX; i++) {
+        QStatus s = g_items[i].status;
+        if (s == Q_FREE || s == Q_DONE || s == Q_SAVED ||
+            s == Q_FAILED || s == Q_CANCELLED)
+            continue;
+        char safe[600];
+        if (!safe_rel(g_items[i].name, safe, sizeof(safe)))
+            continue;
+        char expect[700];
+        snprintf(expect, sizeof(expect), "%s.part", safe);
+        if (strcasecmp(expect, partname) == 0) {
+            hits++;
+            if (do_cancel) {
+                if (s == Q_QUEUED) {
+                    g_items[i].status = Q_CANCELLED;
+                } else {
+                    g_items[i].cancel = true;
+                }
+            }
+        }
+    }
+    if (do_cancel && hits > 0) save_locked();
+    mutexUnlock(&g_mtx);
+    return hits;
+}

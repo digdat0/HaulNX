@@ -45,6 +45,7 @@ struct DirEnt {
     uint64_t size;
 };
 static std::vector<DirEnt> g_inst;
+static std::vector<DirEnt> g_dlfiles; // files in the downloads temp folder
 static std::vector<std::string> g_picker; // sorted supported consoles for the picker
 static std::vector<int> g_home_map; // grouped Browse: visible row -> console index
 static std::string g_launch_path;   // argv[0] from main(), for self-update
@@ -818,7 +819,8 @@ MainApplication::Tab MainApplication::CurrentTab() {
     case Screen::Log:
     case Screen::Manage:
     case Screen::Creds:
-    case Screen::Advanced:  return Tab::Settings;
+    case Screen::Advanced:
+    case Screen::Downloads: return Tab::Settings;
     default:                return Tab::Browse; // Home/Repos/Files/RepoEdit/Picker
     }
 }
@@ -857,9 +859,10 @@ void MainApplication::GotoSettings() {
     this->layout->AddRow("Check for updates");    // 0
     this->layout->AddRow("View download log");    // 1
     this->layout->AddRow("Manage consoles (show/hide)"); // 2
-    this->layout->AddRow("Advanced");             // 3
-    this->layout->AddRow("Controls / Help");      // 4
-    this->layout->AddRow("Credits");              // 5
+    this->layout->AddRow("Manage downloads folder");     // 3
+    this->layout->AddRow("Advanced");             // 4
+    this->layout->AddRow("Controls / Help");      // 5
+    this->layout->AddRow("Credits");              // 6
     char ri[600];
     snprintf(ri, sizeof(ri), "ROM folder: %s", roms_root(&g_tico));
     this->layout->SetRomInfo(ri);
@@ -884,6 +887,36 @@ void MainApplication::GotoAdvanced() {
     this->layout->AddRow(r);                      // 3
     snprintf(r, sizeof(r), "Max simultaneous downloads: %d", g_prefs.max_downloads);
     this->layout->AddRow(r);                      // 4
+}
+
+void MainApplication::GotoDownloads() {
+    this->screen = Screen::Downloads;
+    this->layout->SetTitle("Downloads folder");
+    this->layout->SetSubtitle("Y select  - delete  A delete all  B back");
+    this->layout->ClearMenu();
+    g_dlfiles = list_dir(DL_TMP_DIR);
+    // Remove directories — only show files
+    g_dlfiles.erase(
+        std::remove_if(g_dlfiles.begin(), g_dlfiles.end(),
+                       [](const DirEnt &e) { return e.is_dir; }),
+        g_dlfiles.end());
+    uint64_t total = 0;
+    for (auto &e : g_dlfiles) {
+        this->layout->AddRow2(e.name, human_size(e.size),
+                              pu::ui::Color(232, 234, 240, 255),
+                              size_color(e.size));
+        total += e.size;
+    }
+    if (g_dlfiles.empty()) {
+        this->layout->AddRow("(empty)");
+    } else {
+        char info[128];
+        snprintf(info, sizeof(info), "%d file%s, %s total",
+                 (int)g_dlfiles.size(),
+                 g_dlfiles.size() == 1 ? "" : "s",
+                 human_size(total).c_str());
+        this->layout->SetRomInfo(info);
+    }
 }
 
 void MainApplication::GotoManage() {
@@ -1527,10 +1560,13 @@ void MainApplication::HandleInput(u64 down, u64 held) {
             case 2: // Manage consoles
                 this->GotoManage();
                 return;
-            case 3: // Advanced
+            case 3: // Manage downloads folder
+                this->GotoDownloads();
+                return;
+            case 4: // Advanced
                 this->GotoAdvanced();
                 return;
-            case 4: // Controls / Help
+            case 5: // Controls / Help
                 this->CreateShowDialog(
                     "Controls",
                     "Tabs: L / R  (Browse | Installed | Queue | Settings)\n"
@@ -1541,7 +1577,7 @@ void MainApplication::HandleInput(u64 down, u64 held) {
                     "Queue: A cancel  X retry  ZL/ZR move  Y clear  - log",
                     {"OK"}, true, {}, style_dialog);
                 break;
-            case 5: // Credits
+            case 6: // Credits
                 this->CreateShowDialog(
                     "Credits",
                     std::string("TicoDL+ v") + APP_VERSION_STR + " by digdat0\n\n"
@@ -1604,6 +1640,94 @@ void MainApplication::HandleInput(u64 down, u64 held) {
                 s32 sel = this->layout->Sel();
                 this->GotoAdvanced();
                 this->layout->SetSel(sel);
+            }
+        }
+        break;
+    }
+
+    case Screen::Downloads: {
+        if (down & HidNpadButton_B) {
+            this->GotoSettings();
+        } else if (down & HidNpadButton_Y) {
+            s32 i = this->layout->Sel();
+            if (i >= 0 && i < (s32)g_dlfiles.size()) {
+                this->layout->ToggleMark(i);
+            }
+        } else if (down & HidNpadButton_A) {
+            // Delete all
+            if (g_dlfiles.empty()) break;
+            int qc = queue_active_count();
+            std::string msg = "Delete ALL " + std::to_string(g_dlfiles.size()) +
+                              " file(s) in the downloads folder?";
+            if (qc > 0) {
+                msg += "\n\n" + std::to_string(qc) +
+                       " download(s) are active and will be cancelled.";
+            }
+            if (this->Confirm("Delete all", msg)) {
+                if (qc > 0) {
+                    for (auto &e : g_dlfiles)
+                        queue_cancel_by_part(e.name.c_str(), true);
+                }
+                for (auto &e : g_dlfiles) {
+                    std::string fp = std::string(DL_TMP_DIR) + "/" + e.name;
+                    remove(fp.c_str());
+                }
+                this->Toast("Downloads cleared");
+                this->GotoDownloads();
+            }
+        } else if (down & HidNpadButton_Minus) {
+            int mc = this->layout->MarkedCount();
+            if (mc > 0) {
+                // Multi-select delete
+                bool has_queued = false;
+                auto marks = this->layout->Marked();
+                for (auto it = marks.begin(); it != marks.end(); ++it) {
+                    s32 idx = *it;
+                    if (idx >= 0 && idx < (s32)g_dlfiles.size() &&
+                        queue_cancel_by_part(g_dlfiles[idx].name.c_str(), false) > 0) {
+                        has_queued = true;
+                    }
+                }
+                char msg[128];
+                snprintf(msg, sizeof(msg), "Delete %d selected file%s?",
+                         mc, mc == 1 ? "" : "s");
+                std::string full = msg;
+                if (has_queued)
+                    full += "\n\nSome are in the download queue and will be cancelled.";
+                if (this->Confirm("Delete", full)) {
+                    for (auto it = marks.rbegin(); it != marks.rend(); ++it) {
+                        s32 idx = *it;
+                        if (idx >= 0 && idx < (s32)g_dlfiles.size()) {
+                            queue_cancel_by_part(g_dlfiles[idx].name.c_str(), true);
+                            std::string fp = std::string(DL_TMP_DIR) + "/" + g_dlfiles[idx].name;
+                            remove(fp.c_str());
+                        }
+                    }
+                    char t[32];
+                    snprintf(t, sizeof(t), "Deleted %d", mc);
+                    this->Toast(t);
+                    this->GotoDownloads();
+                }
+            } else {
+                // Single delete
+                s32 i = this->layout->Sel();
+                if (i >= 0 && i < (s32)g_dlfiles.size()) {
+                    std::string msg = "Delete '" + g_dlfiles[i].name + "'?";
+                    bool in_queue = queue_cancel_by_part(g_dlfiles[i].name.c_str(), false) > 0;
+                    if (in_queue)
+                        msg += "\n\nThis file is in the download queue and will be cancelled.";
+                    if (this->Confirm("Delete", msg)) {
+                        if (in_queue)
+                            queue_cancel_by_part(g_dlfiles[i].name.c_str(), true);
+                        std::string fp = std::string(DL_TMP_DIR) + "/" + g_dlfiles[i].name;
+                        remove(fp.c_str());
+                        this->Toast("Deleted");
+                        s32 keep = i;
+                        this->GotoDownloads();
+                        if (keep >= (s32)g_dlfiles.size()) keep = (s32)g_dlfiles.size() - 1;
+                        if (keep >= 0) this->layout->SetSel(keep);
+                    }
+                }
             }
         }
         break;
