@@ -1,4 +1,7 @@
-# TicoDL+
+# TicoDL+ (beta)
+
+> **This is a beta release.** Features may change and bugs are expected.
+> Please report issues on the [GitHub Issues](https://github.com/digdat0/ticodlplus/issues) page.
 
 A Nintendo Switch homebrew that browses and downloads game files from
 [archive.org](https://archive.org) and drops them straight into the folder

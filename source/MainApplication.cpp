@@ -1544,7 +1544,7 @@ void MainApplication::HandleInput(u64 down, u64 held) {
             case 5: // Credits
                 this->CreateShowDialog(
                     "Credits",
-                    "TicoDL+ by digdat0\n\n"
+                    std::string("TicoDL+ v") + APP_VERSION_STR + " by digdat0\n\n"
                     "Plutonium UI library provided by XorTroll\n\n"
                     "TICO emulator - https://ticoverse.com/",
                     {"OK"}, true, {}, style_dialog);
