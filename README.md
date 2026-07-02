@@ -13,12 +13,11 @@ but it works.**
 > credentials** — it's an empty downloader. **You provide your own** archive.org
 > item ids (and optionally your own archive.org keys for restricted items). No
 > links to any content are bundled.
-
+>
 > **Disclaimer:** This project does not condone piracy or copyright infringement in any form.
 > The screenshots shown use placeholder file names for illustration only. Please do not discuss
 > piracy, ROM sources, or copyrighted content in issues, pull requests, or discussions —
-> such posts will be removed.  You are responsible for complying with the
-> laws that apply to you.
+> such will be removed.  You are responsible for complying with the laws that apply to you.> 
 
 ---
 
