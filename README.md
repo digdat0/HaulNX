@@ -53,27 +53,27 @@ but it works.**
 
 Browse Console - Add repos, open repos and view the details
 
-<img width="1280" height="720" alt="01 - Browse Consoles" src="https://github.com/user-attachments/assets/d1d689bd-661c-49e8-ac2e-e108f2f677ab" />
+<img width="700" height="394" alt="01 - Browse Consoles" src="https://github.com/user-attachments/assets/d1d689bd-661c-49e8-ac2e-e108f2f677ab" />
 
 Collection File Viewer - Open a repo/collection and view the files available to download
 
-<img width="1280" height="720" alt="Browse_Collection_Whimsical" src="https://github.com/user-attachments/assets/bda57726-f110-4ea3-a76c-568233658e8c" />
+<img width="700" height="394" alt="Browse_Collection_Whimsical" src="https://github.com/user-attachments/assets/bda57726-f110-4ea3-a76c-568233658e8c" />
 
 Installed File Folder Viewer - How many per console folder and view the files within
 
-<img width="1280" height="720" alt="Installed_Games_Zero_Apps" src="https://github.com/user-attachments/assets/47ee4545-f93d-411b-b456-eea66cb052d2" />
+<img width="700" height="394" alt="Installed_Games_Zero_Apps" src="https://github.com/user-attachments/assets/47ee4545-f93d-411b-b456-eea66cb052d2" />
 
 Installed File Folder Viewer - View and manage individual files
 
-<img width="1280" height="720" alt="Installed_Roms_Whimsical" src="https://github.com/user-attachments/assets/b205ba44-6c07-491a-8b3a-d37ab98d5c19" />
+<img width="700" height="394" alt="Installed_Roms_Whimsical" src="https://github.com/user-attachments/assets/b205ba44-6c07-491a-8b3a-d37ab98d5c19" />
 
 Download Queue - View active download status, cancel / resume Downloads, manage order, multiple downloads
 
-<img width="1280" height="720" alt="Download_Queue_Whimsical" src="https://github.com/user-attachments/assets/f97e249c-0727-448a-a601-3a70ca60c66b" />
+<img width="700" height="394" alt="Download_Queue_Whimsical" src="https://github.com/user-attachments/assets/f97e249c-0727-448a-a601-3a70ca60c66b" />
 
 Options - All those fun "Setting" type configuration things
 
-<img width="1280" height="720" alt="06 - Settings" src="https://github.com/user-attachments/assets/673d0055-697f-4dab-bb9e-934dbfdefafd" />
+<img width="700" height="394" alt="06 - Settings" src="https://github.com/user-attachments/assets/673d0055-697f-4dab-bb9e-934dbfdefafd" />
 
 
 
