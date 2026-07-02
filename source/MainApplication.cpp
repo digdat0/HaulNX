@@ -9,6 +9,7 @@
 
 extern "C" {
 #include "config.h"
+#include "i18n.h"
 #include "iarchive.h"
 #include "net.h"
 #include "queue.h"
@@ -36,8 +37,7 @@ static std::string g_filter;
 static char g_files_id[256], g_files_base[512], g_files_target[64];
 static bool g_files_manual = false;
 
-#define FILES_SUBTITLE \
-    "A get  - all  Y filter  X refresh  Dpad< >repo  L/R tabs  B back"
+#define FILES_SUBTITLE tr(S_SUB_FILES)
 
 struct DirEnt {
     std::string name;
@@ -307,7 +307,7 @@ static void rebuild_files(MainLayout *lay, const char *target) {
     g_files.clear();
     g_marks.clear();
     if (!g_have_item) {
-        lay->AddRow("(metadata fetch failed - B back)");
+        lay->AddRow(tr(S_META_FAILED));
         return;
     }
     for (int i = 0; i < g_item.file_count; i++) {
@@ -327,7 +327,7 @@ static void rebuild_files(MainLayout *lay, const char *target) {
                      pu::ui::Color(232, 234, 240, 255), size_color(f->size));
     }
     if (g_files.empty()) {
-        lay->AddRow("(no files match)");
+        lay->AddRow(tr(S_NO_FILES_MATCH));
     }
 }
 
@@ -361,9 +361,9 @@ void MainApplication::StartMetaLoad(const std::string &id,
     this->meta_ok = false;
     this->meta_running = true;
 
-    this->layout->SetSubtitle("Loading metadata - please wait");
+    this->layout->SetSubtitle(tr(S_LOADING_META));
     this->layout->ClearMenu();
-    this->layout->AddRow("Loading metadata ...");
+    this->layout->AddRow(tr(S_LOADING_META));
 
     Result rc = threadCreate(&this->meta_thread, &MainApplication::MetaThread,
                              this, NULL, 0x40000, 0x2C, -2);
@@ -691,7 +691,7 @@ void MainApplication::ToastErr(const std::string &msg) {
 
 bool MainApplication::Confirm(const std::string &title, const std::string &msg) {
     // "Cancel" first so it's the default-highlighted (safe) option; B cancels.
-    int r = this->CreateShowDialog(title, msg, {"Cancel", "Yes"}, false, {}, style_dialog);
+    int r = this->CreateShowDialog(title, msg, {tr(S_CANCEL), tr(S_YES)}, false, {}, style_dialog);
     return r == 1;
 }
 
@@ -722,9 +722,8 @@ void MainApplication::GotoHome() {
     this->screen = Screen::Home;
     this->layout->ClearMenu();
     if (g_prefs.group_consoles) {
-        this->layout->SetTitle("Consoles");
-        this->layout->SetSubtitle(
-            "A open  Y add repo  L/R tabs  ZL/ZR page");
+        this->layout->SetTitle(tr(S_TITLE_CONSOLES));
+        this->layout->SetSubtitle(tr(S_SUB_HOME_GROUPED));
         // Build the shown consoles, sorted A-Z by their displayed label (the
         // full name), since the stored order is by folder key. g_home_map maps
         // each visible row back to its real console index (for open / delete).
@@ -756,12 +755,11 @@ void MainApplication::GotoHome() {
             g_home_map.push_back(row.idx);
         }
         if (g_home_map.empty()) {
-            this->layout->AddRow("(no collections - press Y to add)");
+            this->layout->AddRow(tr(S_NO_COLLECTIONS));
         }
     } else {
-        this->layout->SetTitle("Repos");
-        this->layout->SetSubtitle(
-            "A browse  X edit  Y add repo  - delete  L/R tabs  ZL/ZR page");
+        this->layout->SetTitle(tr(S_TITLE_REPOS));
+        this->layout->SetSubtitle(tr(S_SUB_HOME_FLAT));
         for (int c = 0; c < g_cfg.console_count; c++) {
             for (int r = 0; r < g_cfg.consoles[c].repo_count; r++) {
                 Repo *rp = &g_cfg.consoles[c].repos[r];
@@ -773,7 +771,7 @@ void MainApplication::GotoHome() {
             }
         }
         if (flat_count() == 0) {
-            this->layout->AddRow("(no repos - press Y to add)");
+            this->layout->AddRow(tr(S_NO_REPOS));
         }
     }
     this->layout->SetSel(this->home_sel); // restore place
@@ -784,7 +782,7 @@ void MainApplication::GotoRepos(int ci) {
     this->sel_ci = ci;
     ConsoleGroup *g = &g_cfg.consoles[ci];
     this->layout->SetTitle(std::string("Console: ") + g->console);
-    this->layout->SetSubtitle("A browse  X edit  Y add repo  - delete  L/R tabs  B back");
+    this->layout->SetSubtitle(tr(S_SUB_REPOS));
     this->layout->ClearMenu();
     for (int i = 0; i < g->repo_count; i++) {
         char row[180];
@@ -793,7 +791,7 @@ void MainApplication::GotoRepos(int ci) {
         this->layout->AddRow(row);
     }
     if (g->repo_count == 0) {
-        this->layout->AddRow("(no repos - press Y to add)");
+        this->layout->AddRow(tr(S_NO_REPOS));
     }
     this->layout->SetSel(ci == this->repos_sel_ci ? this->repos_sel : 0);
 }
@@ -846,53 +844,53 @@ void MainApplication::SwitchTab(int dir) {
 
 void MainApplication::GotoQueue() {
     this->screen = Screen::Queue;
-    this->layout->SetTitle("Download Queue");
-    this->layout->SetSubtitle("A cancel  X retry  ZL/ZR move  Y clear  - log  B back");
+    this->layout->SetTitle(tr(S_TITLE_QUEUE));
+    this->layout->SetSubtitle(tr(S_SUB_QUEUE));
     this->layout->ClearMenu();
 }
 
 void MainApplication::GotoSettings() {
     this->screen = Screen::Settings;
-    this->layout->SetTitle(std::string("Settings   (v") + APP_VERSION_STR + ")");
-    this->layout->SetSubtitle("A select  L/R tabs  ZL/ZR page");
+    this->layout->SetTitle(std::string(tr(S_TITLE_SETTINGS)) + "   (v" + APP_VERSION_STR + ")");
+    this->layout->SetSubtitle(tr(S_SUB_SETTINGS));
     this->layout->ClearMenu();
-    this->layout->AddRow("Check for updates");    // 0
-    this->layout->AddRow("View download log");    // 1
-    this->layout->AddRow("Manage consoles (show/hide)"); // 2
-    this->layout->AddRow("Manage downloads folder");     // 3
-    this->layout->AddRow("Advanced");             // 4
-    this->layout->AddRow("Controls / Help");      // 5
-    this->layout->AddRow("Credits");              // 6
+    this->layout->AddRow(tr(S_CHECK_UPDATES));          // 0
+    this->layout->AddRow(tr(S_VIEW_LOG));               // 1
+    this->layout->AddRow(tr(S_MANAGE_CONSOLES));        // 2
+    this->layout->AddRow(tr(S_MANAGE_DOWNLOADS));       // 3
+    this->layout->AddRow(tr(S_ADVANCED));               // 4
+    this->layout->AddRow(tr(S_CONTROLS_HELP));          // 5
+    this->layout->AddRow(tr(S_CREDITS));                // 6
     char ri[600];
-    snprintf(ri, sizeof(ri), "ROM folder: %s", roms_root(&g_tico));
+    snprintf(ri, sizeof(ri), tr(S_ROM_FOLDER), roms_root(&g_tico));
     this->layout->SetRomInfo(ri);
 }
 
 void MainApplication::GotoAdvanced() {
     this->screen = Screen::Advanced;
-    this->layout->SetTitle("Advanced");
-    this->layout->SetSubtitle("A toggle/edit  B back");
+    this->layout->SetTitle(tr(S_TITLE_ADVANCED));
+    this->layout->SetSubtitle(tr(S_SUB_ADVANCED));
     this->layout->ClearMenu();
     char r[96];
-    snprintf(r, sizeof(r), "Stay awake while downloading: %s",
-             g_prefs.prevent_sleep ? "ON" : "OFF");
+    snprintf(r, sizeof(r), tr(S_STAY_AWAKE),
+             g_prefs.prevent_sleep ? tr(S_ON) : tr(S_OFF));
     this->layout->AddRow(r);                      // 0
-    snprintf(r, sizeof(r), "Group consoles: %s",
-             g_prefs.group_consoles ? "ON" : "OFF");
+    snprintf(r, sizeof(r), tr(S_GROUP_CONSOLES),
+             g_prefs.group_consoles ? tr(S_ON) : tr(S_OFF));
     this->layout->AddRow(r);                      // 1
-    snprintf(r, sizeof(r), "Archive.org credentials: %s",
-             g_creds.access_key[0] ? "set" : "unset");
+    snprintf(r, sizeof(r), tr(S_ARCHIVE_CREDS),
+             g_creds.access_key[0] ? tr(S_SET) : tr(S_UNSET));
     this->layout->AddRow(r);                      // 2
-    snprintf(r, sizeof(r), "Metadata cache: %s", g_prefs.use_cache ? "ON" : "OFF");
+    snprintf(r, sizeof(r), tr(S_META_CACHE), g_prefs.use_cache ? tr(S_ON) : tr(S_OFF));
     this->layout->AddRow(r);                      // 3
-    snprintf(r, sizeof(r), "Max simultaneous downloads: %d", g_prefs.max_downloads);
+    snprintf(r, sizeof(r), tr(S_MAX_DOWNLOADS), g_prefs.max_downloads);
     this->layout->AddRow(r);                      // 4
 }
 
 void MainApplication::GotoDownloads() {
     this->screen = Screen::Downloads;
-    this->layout->SetTitle("Downloads folder");
-    this->layout->SetSubtitle("Y select  - delete  A delete all  B back");
+    this->layout->SetTitle(tr(S_TITLE_DOWNLOADS));
+    this->layout->SetSubtitle(tr(S_SUB_DOWNLOADS));
     this->layout->ClearMenu();
     g_dlfiles = list_dir(DL_TMP_DIR);
     // Remove directories — only show files
@@ -908,7 +906,7 @@ void MainApplication::GotoDownloads() {
         total += e.size;
     }
     if (g_dlfiles.empty()) {
-        this->layout->AddRow("(empty)");
+        this->layout->AddRow(tr(S_EMPTY));
     } else {
         char info[128];
         snprintf(info, sizeof(info), "%d file%s, %s total",
@@ -921,26 +919,26 @@ void MainApplication::GotoDownloads() {
 
 void MainApplication::GotoManage() {
     this->screen = Screen::Manage;
-    this->layout->SetTitle("Manage consoles");
-    this->layout->SetSubtitle("A show/hide  L/R tabs  B back");
+    this->layout->SetTitle(tr(S_TITLE_MANAGE));
+    this->layout->SetSubtitle(tr(S_SUB_MANAGE));
     this->layout->ClearMenu();
     for (int i = 0; i < g_cfg.console_count; i++) {
         bool sh = g_cfg.consoles[i].shown;
         this->layout->AddRow2(
-            g_cfg.consoles[i].console, sh ? "shown" : "hidden",
+            g_cfg.consoles[i].console, sh ? tr(S_SHOWN) : tr(S_HIDDEN),
             pu::ui::Color(232, 234, 240, 255),
             sh ? pu::ui::Color(130, 225, 150, 255)   // green = shown
                : pu::ui::Color(150, 150, 162, 255)); // gray = hidden
     }
     if (g_cfg.console_count == 0) {
-        this->layout->AddRow("(no consoles configured)");
+        this->layout->AddRow(tr(S_NO_CONSOLES));
     }
 }
 
 void MainApplication::GotoCreds() {
     this->screen = Screen::Creds;
-    this->layout->SetTitle("Archive.org credentials");
-    this->layout->SetSubtitle("A edit  B back");
+    this->layout->SetTitle(tr(S_TITLE_CREDS));
+    this->layout->SetSubtitle(tr(S_SUB_CREDS));
     this->layout->ClearMenu();
     char r[200];
     snprintf(r, sizeof(r), "Access key: %.50s",
@@ -948,7 +946,7 @@ void MainApplication::GotoCreds() {
     this->layout->AddRow(r);
     snprintf(r, sizeof(r), "Secret: %s", g_creds.secret[0] ? "<set>" : "<unset>");
     this->layout->AddRow(r);
-    this->layout->AddRow("Clear credentials");
+    this->layout->AddRow(tr(S_CLEAR_CREDS));
 }
 
 void MainApplication::GotoInstalled(const std::string &path) {
@@ -971,8 +969,8 @@ void MainApplication::GotoInstalled(const std::string &path) {
     if (shown.rfind(roms_root(&g_tico), 0) == 0) {
         shown = "roms" + shown.substr(strlen(roms_root(&g_tico)));
     }
-    this->layout->SetTitle(std::string("Installed: ") + shown);
-    this->layout->SetSubtitle("A open  Y select  X rename  - delete  L/R tabs  B back");
+    this->layout->SetTitle(std::string(tr(S_TITLE_INSTALLED)) + ": " + shown);
+    this->layout->SetSubtitle(tr(S_SUB_INSTALLED));
     this->layout->ClearMenu();
     for (int i = 0; i < (int)g_inst.size(); i++) {
         DirEnt &e = g_inst[i];
@@ -980,7 +978,7 @@ void MainApplication::GotoInstalled(const std::string &path) {
             int n = count_dir_entries(path + "/" + e.name);
             char cnt[32];
             snprintf(cnt, sizeof(cnt), "%d %s", n, n == 1 ? "app" : "apps");
-            std::string label = "[DIR] ";
+            std::string label = tr(S_DIR_PREFIX);
             const char *full = (path == roms_root(&g_tico))
                                    ? console_full_name(e.name.c_str())
                                    : nullptr;
@@ -1012,8 +1010,8 @@ void MainApplication::GotoRepoEdit(int ci, int ri) {
     this->sel_ci = ci;
     this->sel_ri = ri;
     Repo *rp = &g_cfg.consoles[ci].repos[ri];
-    this->layout->SetTitle(std::string("Edit repo: ") + g_cfg.consoles[ci].console);
-    this->layout->SetSubtitle("A edit/toggle  B back");
+    this->layout->SetTitle(std::string(tr(S_TITLE_EDIT_REPO)) + ": " + g_cfg.consoles[ci].console);
+    this->layout->SetSubtitle(tr(S_SUB_EDIT_REPO));
     this->layout->ClearMenu();
     char r[600];
     snprintf(r, sizeof(r), "Name: %.80s", rp->label[0] ? rp->label : "<unset>");
@@ -1025,14 +1023,14 @@ void MainApplication::GotoRepoEdit(int ci, int ri) {
     this->layout->AddRow(r);
     snprintf(r, sizeof(r), "Enabled: %s", rp->enabled ? "yes" : "no");
     this->layout->AddRow(r);
-    this->layout->AddRow("Delete this repo");
+    this->layout->AddRow(tr(S_DELETE_REPO));
 }
 
 void MainApplication::GotoPicker(Pending what) {
     this->screen = Screen::Picker;
     this->pending = what;
-    this->layout->SetTitle("Select console");
-    this->layout->SetSubtitle("A select  B cancel");
+    this->layout->SetTitle(tr(S_TITLE_SELECT_CONSOLE));
+    this->layout->SetSubtitle(tr(S_SUB_SELECT_CONSOLE));
     this->layout->ClearMenu();
 
     // Build a sorted (A-Z) copy of the supported list so the picker is ordered;
@@ -1059,7 +1057,7 @@ void MainApplication::GotoPicker(Pending what) {
                               count_color());
     }
     if (g_picker.empty()) {
-        this->layout->AddRow("(no supported consoles)");
+        this->layout->AddRow(tr(S_NO_CONSOLES));
     }
 }
 
@@ -1069,8 +1067,8 @@ void MainApplication::GotoLog() {
         this->log_origin = this->screen;
     }
     this->screen = Screen::Log;
-    this->layout->SetTitle("Download Log");
-    this->layout->SetSubtitle("X clear log  B back");
+    this->layout->SetTitle(tr(S_TITLE_LOG));
+    this->layout->SetSubtitle(tr(S_SUB_LOG));
     this->layout->ClearMenu();
     std::vector<std::string> lines;
     std::ifstream f(DLLOG_PATH);
@@ -1084,7 +1082,7 @@ void MainApplication::GotoLog() {
         this->layout->AddRow(lines[i]);
     }
     if (lines.empty()) {
-        this->layout->AddRow("(no downloads logged yet)");
+        this->layout->AddRow(tr(S_NO_LOG));
     }
 }
 
@@ -1162,10 +1160,10 @@ void MainApplication::HandleInput(u64 down, u64 held) {
                         char nm[48];
                         snprintf(nm, sizeof(nm), "%.44s", cqv[k].item.name);
                         if (s == Q_FAILED) {
-                            this->ToastErr(std::string("Failed: ") + nm);
+                            this->ToastErr(std::string(tr(S_TOAST_FAILED)) + nm);
                         } else {
-                            this->Toast(std::string(s == Q_SAVED ? "Saved: "
-                                                                 : "Done: ") +
+                            this->Toast(std::string(s == Q_SAVED ? tr(S_TOAST_SAVED)
+                                                                 : tr(S_TOAST_DONE)) +
                                         nm);
                         }
                     }
@@ -1238,7 +1236,7 @@ void MainApplication::HandleInput(u64 down, u64 held) {
             this->layout->AddRow2(left, info, c, rc, prog);
         }
         if (n == 0) {
-            this->layout->AddRow("(queue empty)");
+            this->layout->AddRow(tr(S_QUEUE_EMPTY));
         }
         this->layout->SetSel(keep);
     }
@@ -1301,9 +1299,8 @@ void MainApplication::HandleInput(u64 down, u64 held) {
         int active = queue_active_count();
         if (active > 0) {
             char msg[80];
-            snprintf(msg, sizeof(msg),
-                     "%d download(s) still in progress.\nExit anyway?", active);
-            if (!this->Confirm("Exit", msg)) {
+            snprintf(msg, sizeof(msg), tr(S_EXIT_CONFIRM), active);
+            if (!this->Confirm(tr(S_EXIT), msg)) {
                 return;
             }
         }
@@ -1344,10 +1341,10 @@ void MainApplication::HandleInput(u64 down, u64 held) {
                 this->GotoPicker(Pending::AddRepo);
             } else if ((down & HidNpadButton_Minus) &&
                        flat_ref(this->layout->Sel(), &ci, &ri)) {
-                if (this->Confirm("Delete repo", "Delete this repo?")) {
+                if (this->Confirm(tr(S_DELETE_REPO), tr(S_DELETE_REPO_CONFIRM))) {
                     config_remove_repo(&g_cfg.consoles[ci], ri);
                     config_save(&g_cfg);
-                    this->Toast("Deleted");
+                    this->Toast(tr(S_DELETED));
                     this->GotoHome();
                 }
             }
@@ -1369,15 +1366,15 @@ void MainApplication::HandleInput(u64 down, u64 held) {
                 prompt("archive.org item id", nullptr, id, sizeof(id))) {
                 if (config_add_repo(g, nm, id)) {
                     config_save(&g_cfg);
-                    this->Toast("Added");
+                    this->Toast(tr(S_ADDED));
                 }
             }
             this->GotoRepos(this->sel_ci);
         } else if ((down & HidNpadButton_Minus) && g->repo_count > 0) {
-            if (this->Confirm("Delete repo", "Delete this repo?")) {
+            if (this->Confirm(tr(S_DELETE_REPO), tr(S_DELETE_REPO_CONFIRM))) {
                 config_remove_repo(g, this->layout->Sel());
                 config_save(&g_cfg);
-                this->Toast("Deleted");
+                this->Toast(tr(S_DELETED));
                 this->GotoRepos(this->sel_ci);
             }
         }
@@ -1404,9 +1401,9 @@ void MainApplication::HandleInput(u64 down, u64 held) {
                                         f->size, is_archive_name(f->name),
                                         f->md5);
                     if (ok) {
-                        this->Toast(std::string("Queued: ") + f->name);
+                        this->Toast(std::string(tr(S_QUEUED)) + ": " + f->name);
                     } else {
-                        this->ToastErr("Queue is full");
+                        this->ToastErr(tr(S_QUEUE_FULL));
                     }
                 }
             }
@@ -1435,7 +1432,7 @@ void MainApplication::HandleInput(u64 down, u64 held) {
                              avail != UINT64_MAX
                                  ? human_size(avail).c_str() : "?");
                 }
-                if (this->Confirm("Download all", msg)) {
+                if (this->Confirm(tr(S_DOWNLOAD_ALL), msg)) {
                     char auth[320];
                     creds_auth_header(&g_creds, auth, sizeof(auth));
                     int ok = 0;
@@ -1495,7 +1492,7 @@ void MainApplication::HandleInput(u64 down, u64 held) {
             return;
         } else if (down & HidNpadButton_Y) {
             queue_clear_finished();
-            this->Toast("Cleared");
+            this->Toast(tr(S_CLEARED));
         } else {
             static QueueView qv[QUEUE_MAX];
             int n = queue_snapshot(qv, QUEUE_MAX);
@@ -1503,10 +1500,10 @@ void MainApplication::HandleInput(u64 down, u64 held) {
             if (i >= 0 && i < n) {
                 if (down & HidNpadButton_A) {
                     queue_cancel(qv[i].slot);
-                    this->Toast("Cancelled");
+                    this->Toast(tr(S_CANCELLED));
                 } else if (down & HidNpadButton_X) {
                     queue_retry(qv[i].slot);
-                    this->Toast("Retrying");
+                    this->Toast(tr(S_RETRYING));
                 } else if (down & HidNpadButton_ZL) {
                     if (queue_move(qv[i].slot, -1)) {
                         this->layout->SetSel(i - 1); // follow the moved item
@@ -1531,22 +1528,25 @@ void MainApplication::HandleInput(u64 down, u64 held) {
                 char tag[64], url[1024];
                 if (!update_fetch_latest(UPDATE_REPO, tag, sizeof(tag), url,
                                          sizeof(url))) {
-                    this->CreateShowDialog("Update",
-                                           "Could not fetch release info.",
-                                           {"OK"}, true, {}, style_dialog);
+                    this->CreateShowDialog(tr(S_TITLE_UPDATE),
+                                           tr(S_UPDATE_FETCH_FAIL),
+                                           {tr(S_OK)}, true, {}, style_dialog);
                     break;
                 }
                 if (version_cmp(APP_VERSION_STR, tag) >= 0) {
+                    char umsg[128];
+                    snprintf(umsg, sizeof(umsg), tr(S_UPDATE_UP_TO_DATE), APP_VERSION_STR);
                     this->CreateShowDialog(
-                        "Update",
-                        std::string("You are up to date (v") + APP_VERSION_STR +
-                            ").",
-                        {"OK"}, true, {}, style_dialog);
+                        tr(S_TITLE_UPDATE), umsg,
+                        {tr(S_OK)}, true, {}, style_dialog);
                     break;
                 }
-                if (!this->Confirm("Update", std::string("Update to ") + tag +
-                                                 "?  Replaces the app.")) {
-                    break;
+                {
+                    char umsg[128];
+                    snprintf(umsg, sizeof(umsg), tr(S_UPDATE_CONFIRM), tag);
+                    if (!this->Confirm(tr(S_TITLE_UPDATE), umsg)) {
+                        break;
+                    }
                 }
                 char dl[1024];
                 snprintf(dl, sizeof(dl), "%s/downloads/update.nro", CONFIG_DIR);
@@ -1568,22 +1568,16 @@ void MainApplication::HandleInput(u64 down, u64 held) {
                 return;
             case 5: // Controls / Help
                 this->CreateShowDialog(
-                    "Controls",
-                    "Tabs: L / R  (Browse | Installed | Queue | Settings)\n"
-                    "Navigate: D-pad (hold to repeat)   ZL/ZR: page\n"
-                    "+: exit   B: back\n"
-                    "Browse: A open  Y add  X edit/del  - delete\n"
-                    "Files: A get  - all  Y filter  X refresh  Dpad L/R: repo\n"
-                    "Queue: A cancel  X retry  ZL/ZR move  Y clear  - log",
-                    {"OK"}, true, {}, style_dialog);
+                    tr(S_CONTROLS_HELP), tr(S_CONTROLS_BODY),
+                    {tr(S_OK)}, true, {}, style_dialog);
                 break;
             case 6: // Credits
                 this->CreateShowDialog(
-                    "Credits",
+                    tr(S_CREDITS),
                     std::string("TicoDL+ v") + APP_VERSION_STR + " by digdat0\n\n"
                     "Plutonium UI library provided by XorTroll\n\n"
                     "TICO emulator - https://ticoverse.com/",
-                    {"OK"}, true, {}, style_dialog);
+                    {tr(S_OK)}, true, {}, style_dialog);
                 break;
             default:
                 break;
@@ -1657,13 +1651,15 @@ void MainApplication::HandleInput(u64 down, u64 held) {
             // Delete all
             if (g_dlfiles.empty()) break;
             int qc = queue_active_count();
-            std::string msg = "Delete ALL " + std::to_string(g_dlfiles.size()) +
-                              " file(s) in the downloads folder?";
+            char dmsg[256];
+            snprintf(dmsg, sizeof(dmsg), tr(S_DELETE_ALL_CONFIRM), (int)g_dlfiles.size());
+            std::string msg = dmsg;
             if (qc > 0) {
-                msg += "\n\n" + std::to_string(qc) +
-                       " download(s) are active and will be cancelled.";
+                char wmsg[128];
+                snprintf(wmsg, sizeof(wmsg), tr(S_DL_ACTIVE_WARN), qc);
+                msg += wmsg;
             }
-            if (this->Confirm("Delete all", msg)) {
+            if (this->Confirm(tr(S_DELETE_ALL), msg)) {
                 if (qc > 0) {
                     for (auto &e : g_dlfiles)
                         queue_cancel_by_part(e.name.c_str(), true);
@@ -1672,7 +1668,7 @@ void MainApplication::HandleInput(u64 down, u64 held) {
                     std::string fp = std::string(DL_TMP_DIR) + "/" + e.name;
                     remove(fp.c_str());
                 }
-                this->Toast("Downloads cleared");
+                this->Toast(tr(S_DL_CLEARED));
                 this->GotoDownloads();
             }
         } else if (down & HidNpadButton_Minus) {
@@ -1689,12 +1685,11 @@ void MainApplication::HandleInput(u64 down, u64 held) {
                     }
                 }
                 char msg[128];
-                snprintf(msg, sizeof(msg), "Delete %d selected file%s?",
-                         mc, mc == 1 ? "" : "s");
+                snprintf(msg, sizeof(msg), tr(S_DELETE_SELECTED), mc);
                 std::string full = msg;
                 if (has_queued)
-                    full += "\n\nSome are in the download queue and will be cancelled.";
-                if (this->Confirm("Delete", full)) {
+                    full += tr(S_DL_QUEUE_WARN);
+                if (this->Confirm(tr(S_DELETE), full)) {
                     for (auto it = marks.rbegin(); it != marks.rend(); ++it) {
                         s32 idx = *it;
                         if (idx >= 0 && idx < (s32)g_dlfiles.size()) {
@@ -1712,16 +1707,16 @@ void MainApplication::HandleInput(u64 down, u64 held) {
                 // Single delete
                 s32 i = this->layout->Sel();
                 if (i >= 0 && i < (s32)g_dlfiles.size()) {
-                    std::string msg = "Delete '" + g_dlfiles[i].name + "'?";
+                    std::string msg = std::string(tr(S_DELETE)) + " '" + g_dlfiles[i].name + "'?";
                     bool in_queue = queue_cancel_by_part(g_dlfiles[i].name.c_str(), false) > 0;
                     if (in_queue)
-                        msg += "\n\nThis file is in the download queue and will be cancelled.";
-                    if (this->Confirm("Delete", msg)) {
+                        msg += tr(S_DL_QUEUE_WARN);
+                    if (this->Confirm(tr(S_DELETE), msg)) {
                         if (in_queue)
                             queue_cancel_by_part(g_dlfiles[i].name.c_str(), true);
                         std::string fp = std::string(DL_TMP_DIR) + "/" + g_dlfiles[i].name;
                         remove(fp.c_str());
-                        this->Toast("Deleted");
+                        this->Toast(tr(S_DELETED));
                         s32 keep = i;
                         this->GotoDownloads();
                         if (keep >= (s32)g_dlfiles.size()) keep = (s32)g_dlfiles.size() - 1;
@@ -1750,9 +1745,9 @@ void MainApplication::HandleInput(u64 down, u64 held) {
                     this->GotoInstalled(this->inst_path + "/" + g_inst[i].name);
                 } else {
                     this->CreateShowDialog(
-                        "File",
+                        tr(S_FILE),
                         g_inst[i].name + "\n" + human_size(g_inst[i].size),
-                        {"OK"}, true, {}, style_dialog);
+                        {tr(S_OK)}, true, {}, style_dialog);
                 }
             }
         } else if (down & HidNpadButton_Y) {
@@ -1764,13 +1759,13 @@ void MainApplication::HandleInput(u64 down, u64 held) {
             s32 i = this->layout->Sel();
             if (i >= 0 && i < (s32)g_inst.size()) {
                 char nm[256] = {0};
-                if (prompt("Rename to", g_inst[i].name.c_str(), nm, sizeof(nm))) {
+                if (prompt(tr(S_RENAME_PROMPT), g_inst[i].name.c_str(), nm, sizeof(nm))) {
                     std::string from = this->inst_path + "/" + g_inst[i].name;
                     std::string to = this->inst_path + "/" + nm;
                     if (rename(from.c_str(), to.c_str()) == 0) {
-                        this->Toast("Renamed");
+                        this->Toast(tr(S_RENAMED));
                     } else {
-                        this->ToastErr("Rename failed");
+                        this->ToastErr(tr(S_RENAME_FAILED));
                     }
                     this->GotoInstalled(this->inst_path);
                 }
@@ -1779,9 +1774,8 @@ void MainApplication::HandleInput(u64 down, u64 held) {
             int mc = this->layout->MarkedCount();
             if (mc > 0) {
                 char msg[64];
-                snprintf(msg, sizeof(msg), "Delete %d selected item%s?",
-                         mc, mc == 1 ? "" : "s");
-                if (this->Confirm("Delete", msg)) {
+                snprintf(msg, sizeof(msg), tr(S_DELETE_SELECTED), mc);
+                if (this->Confirm(tr(S_DELETE), msg)) {
                     // Delete in reverse order so indices stay valid
                     auto marks = this->layout->Marked();
                     for (auto it = marks.rbegin(); it != marks.rend(); ++it) {
@@ -1798,10 +1792,10 @@ void MainApplication::HandleInput(u64 down, u64 held) {
             } else {
                 s32 i = this->layout->Sel();
                 if (i >= 0 && i < (s32)g_inst.size()) {
-                    if (this->Confirm("Delete", std::string("Delete '") +
-                                                    g_inst[i].name + "'?")) {
+                    if (this->Confirm(tr(S_DELETE), std::string(tr(S_DELETE)) +
+                                                    " '" + g_inst[i].name + "'?")) {
                         fs_rm_rf((this->inst_path + "/" + g_inst[i].name).c_str());
-                        this->Toast("Deleted");
+                        this->Toast(tr(S_DELETED));
                         s32 keep = i;
                         this->GotoInstalled(this->inst_path);
                         if (keep >= (s32)g_inst.size()) keep = (s32)g_inst.size() - 1;
@@ -1851,11 +1845,11 @@ void MainApplication::HandleInput(u64 down, u64 held) {
                 config_save(&g_cfg);
                 break;
             case 4:
-                if (this->Confirm("Delete repo", "Delete this repo?")) {
+                if (this->Confirm(tr(S_DELETE_REPO), tr(S_DELETE_REPO_CONFIRM))) {
                     config_remove_repo(&g_cfg.consoles[this->sel_ci],
                                        this->sel_ri);
                     config_save(&g_cfg);
-                    this->Toast("Deleted");
+                    this->Toast(tr(S_DELETED));
                     if (g_prefs.group_consoles) {
                         this->GotoRepos(this->sel_ci);
                     } else {
@@ -1887,7 +1881,7 @@ void MainApplication::HandleInput(u64 down, u64 held) {
                         if (g && config_add_repo(g, nm, id)) {
                             config_sort(&g_cfg);
                             config_save(&g_cfg);
-                            this->Toast("Added");
+                            this->Toast(tr(S_ADDED));
                         }
                     }
                     this->GotoHome();
@@ -1916,10 +1910,10 @@ void MainApplication::HandleInput(u64 down, u64 held) {
                 this->GotoSettings();
             }
         } else if (down & HidNpadButton_X) {
-            if (this->Confirm("Clear log",
-                              "Clear all download history?")) {
+            if (this->Confirm(tr(S_CLEAR_LOG),
+                              tr(S_CLEAR_LOG_CONFIRM))) {
                 remove(DLLOG_PATH);
-                this->Toast("Log cleared");
+                this->Toast(tr(S_LOG_CLEARED));
                 this->GotoLog(); // refresh (stays in the Log view)
             }
         }
@@ -1948,26 +1942,26 @@ void MainApplication::HandleInput(u64 down, u64 held) {
             s32 i = this->layout->Sel();
             char v[1024] = {0};
             if (i == 0) {
-                if (prompt("Access Key", g_creds.access_key, v, sizeof(v))) {
+                if (prompt(tr(S_ACCESS_KEY), g_creds.access_key, v, sizeof(v))) {
                     snprintf(g_creds.access_key, sizeof(g_creds.access_key), "%s",
                              v);
                     creds_save(&g_creds);
-                    this->Toast("Saved");
+                    this->Toast(tr(S_SAVED));
                 }
             } else if (i == 1) {
                 // Pre-filled with the current secret so it's easy to edit.
-                if (prompt("Secret Key", g_creds.secret, v, sizeof(v))) {
+                if (prompt(tr(S_SECRET_KEY), g_creds.secret, v, sizeof(v))) {
                     snprintf(g_creds.secret, sizeof(g_creds.secret), "%s", v);
                     creds_save(&g_creds);
-                    this->Toast("Saved");
+                    this->Toast(tr(S_SAVED));
                 }
             } else if (i == 2) {
-                if (this->Confirm("Clear credentials",
-                                  "Remove the saved access key and secret?")) {
+                if (this->Confirm(tr(S_CLEAR_CREDS),
+                                  tr(S_CLEAR_CREDS_CONFIRM))) {
                     g_creds.access_key[0] = '\0';
                     g_creds.secret[0] = '\0';
                     creds_save(&g_creds);
-                    this->Toast("Cleared");
+                    this->Toast(tr(S_CLEARED));
                 }
             }
             s32 keep = this->layout->Sel();
@@ -2004,13 +1998,11 @@ void MainApplication::OnLoad() {
     this->LoadLayout(this->layout);
 
     if (!g_tico.installed) {
+        char tmsg[512];
+        snprintf(tmsg, sizeof(tmsg), tr(S_TICO_NOT_FOUND_MSG), roms_root(&g_tico));
         int opt = this->CreateShowDialog(
-            "TICO not detected",
-            "The TICO emulator was not found on this console.\n"
-            "Downloads will go to the default folder:\n" +
-                std::string(roms_root(&g_tico)) +
-                "\n\nContinue without TICO?",
-            {"Continue", "Exit"}, true, {}, style_dialog);
+            tr(S_TICO_NOT_FOUND), tmsg,
+            {tr(S_CONTINUE), tr(S_EXIT)}, true, {}, style_dialog);
         if (opt != 0) {
             this->Close();
             return;
@@ -2080,10 +2072,10 @@ void MainApplication::UpdStart(const std::string &url, const std::string &dl,
     this->upd_cancel = false;
     this->upd_running = true;
 
-    this->layout->SetTitle("Updating");
+    this->layout->SetTitle(tr(S_UPDATING));
     this->layout->SetSubtitle(std::string("Downloading ") + tag + "...  (B to cancel)");
     this->layout->ClearMenu();
-    this->layout->AddRow("Downloading update - press B to cancel");
+    this->layout->AddRow(tr(S_UPDATE_DL_CANCEL));
 
     Result rc = threadCreate(&this->upd_thread, &MainApplication::UpdThread, this,
                              NULL, 0x40000, 0x2C, -2);
@@ -2091,7 +2083,7 @@ void MainApplication::UpdStart(const std::string &url, const std::string &dl,
         return;
     }
     this->upd_running = false;
-    this->CreateShowDialog("Update", "Could not start the downloader.", {"OK"},
+    this->CreateShowDialog(tr(S_TITLE_UPDATE), tr(S_UPDATE_START_FAIL), {tr(S_OK)},
                            true, {}, style_dialog);
     this->GotoSettings();
 }
@@ -2102,7 +2094,7 @@ void MainApplication::UpdTick() {
         u64 now = this->upd_now, total = this->upd_total;
         int pct = total ? (int)((now * 100) / total) : 0;
         char s[160];
-        snprintf(s, sizeof(s), "Downloading %s: %d%%  (%s / %s)  -  please wait",
+        snprintf(s, sizeof(s), tr(S_UPDATE_DOWNLOADING),
                  this->upd_tag.c_str(), pct, human_size(now).c_str(),
                  total ? human_size(total).c_str() : "?");
         this->layout->SetSubtitle(s);
@@ -2133,19 +2125,18 @@ void MainApplication::UpdTick() {
         romfsInit();
         if (inst) {
             remove(dl.c_str());
-            this->CreateShowDialog("Update",
-                                   std::string("Updated to ") + tag +
-                                       ".\nInstalled to:\n" + selfp +
-                                       "\n\nClose and relaunch TicoDL+.",
-                                   {"OK"}, true, {}, style_dialog);
+            char umsg[512];
+            snprintf(umsg, sizeof(umsg), tr(S_UPDATE_OK), tag.c_str());
+            this->CreateShowDialog(tr(S_TITLE_UPDATE), umsg,
+                                   {tr(S_OK)}, true, {}, style_dialog);
         } else {
             this->CreateShowDialog(
-                "Update", std::string("Install failed. New build kept at:\n") + dl,
-                {"OK"}, true, {}, style_dialog);
+                tr(S_TITLE_UPDATE), std::string("Install failed. New build kept at:\n") + dl,
+                {tr(S_OK)}, true, {}, style_dialog);
         }
     } else {
         remove(dl.c_str());
-        this->CreateShowDialog("Update", "Download failed.", {"OK"}, true, {}, style_dialog);
+        this->CreateShowDialog(tr(S_TITLE_UPDATE), tr(S_UPDATE_FAIL), {tr(S_OK)}, true, {}, style_dialog);
     }
     this->GotoSettings();
 }
