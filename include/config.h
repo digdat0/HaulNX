@@ -22,9 +22,11 @@ extern "C" {
 #define SOURCES_PATH  "sdmc:/switch/ticodlplus/dl_sources.json"
 #define CREDS_PATH    "sdmc:/switch/ticodlplus/credentials.json"
 #define PREFS_PATH    "sdmc:/switch/ticodlplus/prefs.json"
+#define LANG_DIR      "sdmc:/switch/ticodlplus/lang"
 #define CACHE_DIR     "sdmc:/switch/ticodlplus/cache"
 #define LOG_PATH      "sdmc:/switch/ticodlplus/debug.log"
 #define DLLOG_PATH    "sdmc:/switch/ticodlplus/downloads.log"
+#define DLLOG_JSON    "sdmc:/switch/ticodlplus/downloads.jsonl"
 #define DL_TMP_DIR    "sdmc:/switch/ticodlplus/downloads"
 #define QUEUE_STATE_PATH "sdmc:/switch/ticodlplus/queue.json"
 #define TICO_DEFAULT_ROMS  "sdmc:/tico/roms"
@@ -36,6 +38,7 @@ typedef struct {
     char id[256];            /* archive.org item id */
     char download_base[512]; /* base URL; defaults to .../download/<id> */
     bool enabled;            /* "active" flag */
+    bool pinned;             /* pinned/favorite — sorted to top of browse */
 } Repo;
 
 /* A console (e.g. "snes") that groups one or more download repos. All of a
@@ -62,12 +65,20 @@ typedef struct {
     char secret[128];
 } Credentials;
 
+#define MAX_PINNED_DIRS 32
+
 typedef struct {
     bool use_cache;      /* true: load cached metadata if present; false: always refetch */
     bool prevent_sleep;  /* true: keep console awake while downloads are active */
     bool group_consoles; /* true: main list shows consoles (open to see repos);
                             false: flat list, one row per repo */
     int max_downloads;   /* 1–5; how many downloads run simultaneously (default 1) */
+    bool net_check;      /* true: warn on startup if no network (default true) */
+    char lang[16];       /* language code, e.g. "en", "es", "ja"; empty = English */
+    char theme[16];      /* "dark" (default) or "light" */
+    /* Top-level ROM folders pinned to the top of the Installed tab. */
+    char pinned_dirs[MAX_PINNED_DIRS][64];
+    int pinned_dir_count;
 } Prefs;
 
 /* Load dl_sources.json; seeds from romfs:/dl_sources.json on first run if the
@@ -105,6 +116,10 @@ bool creds_save(const Credentials *c);
 /* Preferences. Defaults to use_cache=true if no prefs file exists. */
 void prefs_load(Prefs *p);
 bool prefs_save(const Prefs *p);
+
+/* Pinned Installed-tab folders (by top-level folder name). */
+bool prefs_dir_pinned(const Prefs *p, const char *name);
+void prefs_dir_pin_toggle(Prefs *p, const char *name);
 
 /* Build an archive.org S3 auth header into out, or empty string if no key.
  * Form: "authorization: LOW <access>:<secret>". */

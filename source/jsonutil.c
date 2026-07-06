@@ -72,6 +72,85 @@ int json_obj_get(const char *js, const jsmntok_t *t, int obj, const char *key) {
     return -1;
 }
 
+static int hex4(const char *s) {
+    int v = 0;
+    for (int i = 0; i < 4; i++) {
+        char c = s[i];
+        v <<= 4;
+        if (c >= '0' && c <= '9')      v |= c - '0';
+        else if (c >= 'a' && c <= 'f') v |= c - 'a' + 10;
+        else if (c >= 'A' && c <= 'F') v |= c - 'A' + 10;
+        else return -1;
+    }
+    return v;
+}
+
+size_t json_unescape(const char *src, size_t len, char *out, size_t out_sz) {
+    size_t o = 0;
+    if (out_sz == 0) {
+        return 0;
+    }
+    for (size_t i = 0; i < len && o + 1 < out_sz;) {
+        char c = src[i];
+        if (c != '\\' || i + 1 >= len) {
+            out[o++] = c;
+            i++;
+            continue;
+        }
+        char e = src[i + 1];
+        i += 2;
+        switch (e) {
+        case 'n': out[o++] = '\n'; break;
+        case 't': out[o++] = '\t'; break;
+        case 'r': out[o++] = '\r'; break;
+        case 'b': out[o++] = '\b'; break;
+        case 'f': out[o++] = '\f'; break;
+        case 'u': {
+            if (i + 4 > len) {
+                i = len;
+                break;
+            }
+            int cp = hex4(src + i);
+            if (cp < 0) {
+                break; /* malformed: drop the escape, resume after \u */
+            }
+            i += 4;
+            /* Combine a UTF-16 surrogate pair into one code point. */
+            if (cp >= 0xD800 && cp <= 0xDBFF && i + 6 <= len &&
+                src[i] == '\\' && src[i + 1] == 'u') {
+                int lo = hex4(src + i + 2);
+                if (lo >= 0xDC00 && lo <= 0xDFFF) {
+                    cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00);
+                    i += 6;
+                }
+            }
+            if (cp < 0x80) {
+                out[o++] = (char)cp;
+            } else if (cp < 0x800) {
+                if (o + 2 >= out_sz) { i = len; break; }
+                out[o++] = (char)(0xC0 | (cp >> 6));
+                out[o++] = (char)(0x80 | (cp & 0x3F));
+            } else if (cp < 0x10000) {
+                if (o + 3 >= out_sz) { i = len; break; }
+                out[o++] = (char)(0xE0 | (cp >> 12));
+                out[o++] = (char)(0x80 | ((cp >> 6) & 0x3F));
+                out[o++] = (char)(0x80 | (cp & 0x3F));
+            } else {
+                if (o + 4 >= out_sz) { i = len; break; }
+                out[o++] = (char)(0xF0 | (cp >> 18));
+                out[o++] = (char)(0x80 | ((cp >> 12) & 0x3F));
+                out[o++] = (char)(0x80 | ((cp >> 6) & 0x3F));
+                out[o++] = (char)(0x80 | (cp & 0x3F));
+            }
+            break;
+        }
+        default: out[o++] = e; break; /* includes \" \\ \/ */
+        }
+    }
+    out[o] = '\0';
+    return o;
+}
+
 void json_copy(const char *js, const jsmntok_t *t, int idx, char *out,
                size_t out_sz) {
     out[0] = '\0';
@@ -81,6 +160,10 @@ void json_copy(const char *js, const jsmntok_t *t, int idx, char *out,
     int len = t[idx].end - t[idx].start;
     if (len < 0) {
         len = 0;
+    }
+    if (t[idx].type == JSMN_STRING) {
+        json_unescape(js + t[idx].start, (size_t)len, out, out_sz);
+        return;
     }
     if ((size_t)len >= out_sz) {
         len = (int)out_sz - 1;

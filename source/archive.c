@@ -159,31 +159,40 @@ bool ia_fetch(const char *identifier, ArchiveItem *item, bool use_cache,
 
     if (use_cache && cache_dir) {
         body = json_read_file(cpath, &len);
-    }
-    if (!body) {
-        char url[512];
-        snprintf(url, sizeof(url), "https://archive.org/metadata/%s",
-                 identifier);
-        long code = 0;
-        body = http_get(url, &code, &len);
-        if (!body) {
-            return false;
-        }
-        if (code != 200 || len < 2) {
-            free(body);
-            return false;
-        }
-        if (cache_dir) {
-            fs_mkdir_p(cache_dir);
-            FILE *f = fopen(cpath, "wb");
-            if (f) {
-                fwrite(body, 1, len, f);
-                fclose(f);
+        if (body) {
+            if (parse_metadata(body, len, item)) {
+                free(body);
+                return true;
             }
+            /* Corrupt/stale cache (bad write, error page): refetch instead of
+             * failing forever until the user manually clears the cache. */
+            free(body);
         }
     }
 
+    char url[512];
+    snprintf(url, sizeof(url), "https://archive.org/metadata/%s", identifier);
+    long code = 0;
+    body = http_get(url, &code, &len);
+    if (!body) {
+        return false;
+    }
+    if (code != 200 || len < 2) {
+        free(body);
+        return false;
+    }
+
     bool ok = parse_metadata(body, len, item);
+    /* Only cache metadata that actually parsed, so a bad response (item
+     * removed, error JSON) can't poison the cache. */
+    if (ok && cache_dir) {
+        fs_mkdir_p(cache_dir);
+        FILE *f = fopen(cpath, "wb");
+        if (f) {
+            fwrite(body, 1, len, f);
+            fclose(f);
+        }
+    }
     free(body);
     return ok;
 }

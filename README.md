@@ -17,39 +17,75 @@ but it works.**
 > **Disclaimer:** This project does not condone piracy or copyright infringement in any form.
 > The screenshots shown use placeholder file names for illustration only. Please do not discuss
 > piracy, ROM sources, or copyrighted content in issues, pull requests, or discussions —
-> such will be removed.  You are responsible for complying with the laws that apply to you.> 
+> such will be removed. You are responsible for complying with the laws that apply to you.
 
 ---
 
 ## Features
 
 - **Browse & organize**
+  - Consoles shown with their full names (e.g. "Super Nintendo Entertainment
+    System (SNES)"), grouped by console — or a flat repo list (Advanced toggle)
   - Multiple repos per console — add extra archive.org collections when one set is incomplete
+  - **Pin favorites** to the top (★) with **D-pad Right** — works the same on
+    consoles, repos, and installed folders
+  - **Global search** with **−** across every cached repo — results tagged with
+    their console, downloadable straight from the results
   - Show/hide consoles from **Settings → Manage consoles**
-  - On-screen name filter, `*` markers for already-installed files, ZL/ZR paging
+  - On-screen name filter (**Y**), sort by name/size (**X**), `*` markers for
+    already-installed files, ZL/ZR paging
 
 - **Download queue**
   - Queue files and keep browsing — downloads run in the background
-  - Up to **5 simultaneous downloads** (configurable), each with its own speed tracking
+  - Up to **5 simultaneous downloads** — change the limit in Advanced and it
+    applies immediately: raising it starts more queued items, lowering it
+    **pauses** the excess downloads, which auto-resume (from where they
+    stopped) as slots free up
+  - Transient server errors (HTTP 5xx / throttling) are retried automatically
+    with backoff, resuming the partial file
   - Pipelined extraction — the next download starts while the previous archive unpacks
   - Progress bar, speed, ETA, cancel, retry (resumes in place), reorder (ZL/ZR)
   - Queue the entire file list at once with **−** (free-space check included)
   - Queue persists across app restarts; interrupted downloads resume automatically
+  - **Network-loss aware**: if the connection drops, active downloads pause
+    (keeping their partial files) and the rest stay queued — everything
+    resumes automatically, in order, when the network comes back
+  - Stalled transfers time out instead of hanging, and resume from where they
+    stopped
+  - Download history with one-press **re-download from the log**
 
 - **Automatic extraction**
   - `.zip` / `.7z` / `.rar` / `.tar.*` unpacked into the console folder; plain files moved as-is
   - Integrity verified by size and MD5 — corrupt files are rejected
 
 - **Installed browser**
-  - Sorted alphabetically by full console name (e.g. "Nintendo Entertainment System (NES)")
+  - Sorted alphabetically by full console name, pinned folders first
   - Multi-select with **Y**, bulk-delete with **−**, rename with **X**
+
+- **25 languages & themes**
+  - Full UI translation (English, Español, Français, Deutsch, 日本語, 中文, and
+    20 more) from **Settings → Language**
+  - Light and dark themes (**Settings → Theme**)
+
+- **Status header**
+  - Live network indicator (Wi-Fi signal bars, full bars when docked on wired
+    LAN, red when offline), free SD space, battery level (+ while charging)
+  - Optional no-network warning at startup (Advanced toggle)
 
 - **TICO integration**
   - Auto-detects TICO and reads its ROM folder path
   - Falls back to the default path with a warning if TICO isn't found
 
+- **Data management**
+  - **Settings → Manage data**: clean up the temporary downloads folder and the
+    metadata cache (entries tagged by console), singly or all at once
+  - Unresumable leftover `.part` files are cleaned up automatically at startup
+
 - **In-app self-update**
-  - One-tap update from GitHub releases — press **B** to cancel
+  - One-tap update from GitHub releases — the version check runs in the
+    background with a retry counter; **B** dismisses the check or cancels the
+    download. Installs are validated and staged so a power loss can't corrupt
+    the app
 
 ---
 
@@ -83,7 +119,7 @@ Options - All those fun "Setting" type configuration things
 
 ---
 
-## Pre-Req
+## Prerequisites
 
 1. Download TICO from https://ticoverse.com/
 
@@ -142,7 +178,7 @@ for **restricted** items that require an archive.org account.
    current value so it's easy to change.
 
 Keys live only on your SD card (`sdmc:/switch/ticodlplus/credentials.json`) and
-are sent only to archive.org hosts.
+are sent only to archive.org hosts, and only over HTTPS.
 
 ### 3. Download
 
@@ -209,7 +245,8 @@ placeholders — substitute the archive.org item ids you choose to use):
 ```
 
 Optional archive.org S3 keys, sent as `authorization: LOW <access>:<secret>` for
-restricted items. Public collections download anonymously and need no keys.
+restricted items — only to archive.org hosts and only over HTTPS. Public
+collections download anonymously and need no keys.
 **Use your own keys — none are bundled.**
 
 ### Files on the SD card
@@ -218,11 +255,13 @@ restricted items. Public collections download anonymously and need no keys.
 |------|---------|
 | `sdmc:/switch/ticodlplus/dl_sources.json` | console groups + repos + supported list |
 | `sdmc:/switch/ticodlplus/credentials.json` | archive.org S3 keys (optional) |
-| `sdmc:/switch/ticodlplus/prefs.json` | settings |
+| `sdmc:/switch/ticodlplus/prefs.json` | settings (theme, language, pins, download limit, …) |
 | `sdmc:/switch/ticodlplus/queue.json` | saved download queue |
 | `sdmc:/switch/ticodlplus/cache/<id>.json` | cached metadata |
 | `sdmc:/switch/ticodlplus/downloads/` | temporary `.part` files |
-| `sdmc:/switch/ticodlplus/downloads.log` | download history |
+| `sdmc:/switch/ticodlplus/downloads.log` | download history (text) |
+| `sdmc:/switch/ticodlplus/downloads.jsonl` | download history (structured, powers re-download from the log) |
+| `sdmc:/switch/ticodlplus/lang/<code>.json` | optional language overrides (built-in translations ship in the app) |
 | `sdmc:/switch/ticodlplus/debug.log` | network/extraction diagnostics |
 | `sdmc:/tico/roms/<console>/` | default ROM destination (or custom path from TICO's config) |
 
@@ -230,11 +269,36 @@ restricted items. Public collections download anonymously and need no keys.
 
 ## Updating (in-app)
 
-Open **Settings → Check for updates**. TicoDL+ checks the GitHub releases for a
-newer version and, if found, downloads the new `.nro` (with a live progress
-indicator) and replaces itself (keeping a `.previous` backup). Press **B** to
+Open **Settings → Check for updates**. TicoDL+ checks the GitHub releases on a
+background thread — the UI stays responsive and shows the attempt counter
+(`(1/3)`) while transient errors are retried; press **B** to dismiss the check
+and keep using the app. If a newer version is found, it downloads the new
+`.nro` (with a live progress indicator), validates it's a real NRO, and
+replaces itself using a staged copy-then-rename (keeping a `.previous`
+backup), so an interrupted install can't corrupt the app. Press **B** to
 cancel the download at any time — the partial file is discarded and you're
 returned to Settings. Close and relaunch to run the new build.
+
+---
+
+## Translations
+
+TicoDL+ ships 25 languages. All translation files live in the repo as plain
+JSON — one file per language, keyed by English:
+
+- [`lang/`](lang/) — the source of truth (edit here)
+- [`romfs/lang/`](romfs/lang/) — the copy bundled into the app (keep in sync)
+
+Spotted a wrong or awkward translation? Please
+[open an issue](https://github.com/digdat0/ticodlplus/issues) naming the
+language, the key (or the on-screen text), and your suggested wording — or send
+a PR updating the file in **both** folders. For English (`en.json`) changes,
+`tools/gen_i18n.py` must be re-run afterwards (it regenerates the strings baked
+into the binary).
+
+You can also override any language locally without rebuilding: copy the file to
+`sdmc:/switch/ticodlplus/lang/<code>.json` and edit it — the SD copy takes
+priority over the bundled one.
 
 ---
 
@@ -342,11 +406,11 @@ attaches the `.nro`, and uses the matching `CHANGELOG.md` section as the notes.
 | `update.*` | GitHub release check + in-app self-update |
 | `md5.*` | MD5 for download verification |
 | `jsonutil.*`, `jsmn.*` | JSON parsing (vendored jsmn) |
+| `i18n.*`, `lang/`, `tools/gen_i18n.py` | translations — English strings are generated into the binary from `lang/en.json`; the other 24 languages load from romfs |
 | `Plutonium/` | UI library (git submodule) |
 
-The backend (`net`/`archive`/`queue`/`extract`/`config`/`fsutil`/`md5`/`json`) is
-plain C — shared unchanged from the original text-console version; only the UI
-layer is Plutonium C++.
+The backend (`net`/`archive`/`queue`/`extract`/`config`/`fsutil`/`md5`/`json`/
+`i18n`) is plain C; only the UI layer is Plutonium C++.
 
 ---
 

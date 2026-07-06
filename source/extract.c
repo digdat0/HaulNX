@@ -97,6 +97,7 @@ int extract_archive(const char *src, const char *dest_dir, extract_cb cb,
 
     int count = 0;
     int overwrites = 0;
+    bool disk_fail = false; /* couldn't write to SD (full?) — don't claim done */
     char last_dir[1280] = {0}; /* cache: skip mkdir_p when dir repeats */
     struct archive_entry *entry;
     for (;;) {
@@ -139,7 +140,8 @@ int extract_archive(const char *src, const char *dest_dir, extract_cb cb,
         FILE *f = fopen(out, "wb");
         if (!f) {
             ex_log("extract: cannot write %s", out);
-            continue;
+            disk_fail = true;
+            break;
         }
         /* 128KB write buffer: batches small fwrite calls into fewer SD card
          * writes, which is the single biggest extraction bottleneck. */
@@ -169,6 +171,7 @@ int extract_archive(const char *src, const char *dest_dir, extract_cb cb,
                 }
                 if (fwrite(buff, 1, size, f) != size) {
                     write_ok = false;
+                    disk_fail = true;
                     break;
                 }
                 pos = offset + (la_int64_t)size;
@@ -178,6 +181,9 @@ int extract_archive(const char *src, const char *dest_dir, extract_cb cb,
         free(wbuf);
         if (!write_ok) {
             remove(out);
+            if (disk_fail) {
+                break; /* SD write failed: the rest will fail too */
+            }
             continue;
         }
         count++;
@@ -192,8 +198,11 @@ int extract_archive(const char *src, const char *dest_dir, extract_cb cb,
     if (out_overwrites) {
         *out_overwrites = overwrites;
     }
-    ex_log("extract: %s -> %d file(s) (%d overwritten) into %s", src, count,
-           overwrites, dest_dir);
+    ex_log("extract: %s -> %d file(s) (%d overwritten) into %s%s", src, count,
+           overwrites, dest_dir, disk_fail ? " [DISK WRITE FAILED]" : "");
     archive_read_free(a);
-    return count;
+    /* A disk write failure means the extraction is incomplete even if some
+     * files landed: report failure so the caller keeps the archive instead of
+     * deleting it and claiming success. */
+    return disk_fail ? -1 : count;
 }

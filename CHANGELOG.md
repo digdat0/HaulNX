@@ -4,6 +4,59 @@ Notes for each release. `release.sh` pulls the section matching the version in
 `VERSION` and attaches it to the GitHub release. Add a `## <version>` section
 here before running a release.
 
+## 1.1.0-beta
+
+**Languages & themes**
+- Full UI translation in **25 languages** (Settings → Language) with correct
+  text everywhere (multi-line strings, CJK, accents). Translation files ship in
+  the repo — corrections welcome via issues/PRs (see README → Translations).
+- **Light and dark themes** (Settings → Theme).
+
+**Downloads**
+- **Network-loss aware queue**: if the connection drops, active downloads
+  pause (keeping their partial files) and everything resumes automatically, in
+  order, when the network returns — no more cascading failures offline.
+- **Max downloads applies instantly** (Advanced): raising it starts more
+  queued items; lowering it pauses the excess, which auto-resume as slots free.
+- Transient server errors (HTTP 5xx/429) retry automatically with backoff;
+  stalled transfers time out and resume instead of hanging forever.
+- Cancelling a queue item now asks for confirmation.
+- Same-named files headed to different consoles no longer share a temp file;
+  unresumable old-format `.part` leftovers are cleaned up at startup.
+
+**Browse & organize**
+- **Global search** (−) across all cached repos, results tagged by console.
+- **Pin favorites** (★) with D-pad Right — consoles, repos (grouped and flat
+  mode), and installed folders, all the same button.
+- Search results and metadata-cache entries show their console short code.
+
+**Settings & UI**
+- New **Manage data** submenu (downloads folder + metadata cache); Advanced
+  moved above Credits; Controls/Help removed.
+- Header status: network signal bars (full bars on wired LAN, red offline),
+  free SD space, battery with charge indicator.
+- Consistent buttons everywhere: A opens/inspects (never deletes), X carries
+  edit/sort/retry and confirmed bulk deletes, − deletes one/selected, Y marks.
+
+**Self-update**
+- Version check runs in the background with a retry counter; B dismisses it.
+- Downloads are validated as a real NRO and installed via a staged
+  copy-then-rename with a `.previous` backup — an interrupted update can no
+  longer corrupt the app.
+
+**Fixes**
+- Launching with no network (airplane mode) no longer shows a black screen,
+  and the no-network dialog's Exit button actually exits.
+- Non-English languages no longer show literal `\n` in dialogs.
+- Extraction failures from a full SD card are reported instead of being
+  counted as "done" (which used to delete the archive).
+- A corrupt metadata cache entry now refetches instead of breaking the repo
+  until the cache was cleared manually.
+- Wired-LAN (docked) connections show full signal bars instead of the weakest.
+- Renaming a file can no longer silently overwrite another file or move it to
+  a different folder.
+- archive.org credentials are only ever sent over HTTPS.
+
 ## 2.0.16
 - The queue's overwrite indicator is now a readable colour-coded tag instead of
   a symbol the Switch font couldn't render: orange **(repl)** when a download

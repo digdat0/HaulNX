@@ -189,6 +189,10 @@ bool http_download(const char *url, const char *dest_path,
     curl_easy_setopt(c, CURLOPT_XFERINFOFUNCTION, xfer_info);
     curl_easy_setopt(c, CURLOPT_XFERINFODATA, &d);
     curl_easy_setopt(c, CURLOPT_CONNECTTIMEOUT, 20L);
+    /* Abort a transfer that stalls (<30 B/s for 30s), e.g. Wi-Fi dropped
+     * mid-download; otherwise a dead connection hangs the worker forever. */
+    curl_easy_setopt(c, CURLOPT_LOW_SPEED_LIMIT, 30L);
+    curl_easy_setopt(c, CURLOPT_LOW_SPEED_TIME, 30L);
     curl_easy_setopt(c, CURLOPT_FAILONERROR, 1L); /* treat 4xx/5xx as errors */
     if (resume_from > 0) {
         curl_easy_setopt(c, CURLOPT_RESUME_FROM_LARGE,

@@ -62,7 +62,7 @@ static void asset_nro_url(const char *body, const jsmntok_t *tok, int rel,
 }
 
 bool update_fetch_latest(const char *repo, char *tag, size_t tag_sz, char *url,
-                         size_t url_sz) {
+                         size_t url_sz, volatile int *attempt) {
     tag[0] = '\0';
     url[0] = '\0';
 
@@ -78,7 +78,10 @@ bool update_fetch_latest(const char *repo, char *tag, size_t tag_sz, char *url,
     char *body = NULL;
     long code = 0;
     size_t len = 0;
-    for (int attempt = 0; attempt < 3; attempt++) {
+    for (int a = 0; a < 3; a++) {
+        if (attempt) {
+            *attempt = a + 1;
+        }
         body = http_get(api, &code, &len);
         if (body && code == 200 && len >= 2) {
             break;

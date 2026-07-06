@@ -7,6 +7,10 @@ $(error "Please set DEVKITPRO in your environment. export DEVKITPRO=<path to>/de
 endif
 
 TOPDIR ?= $(CURDIR)
+# Python for tools/gen_i18n.py (regenerates the baked English strings from
+# lang/en.json). Override with PYTHON=<path> if it isn't on your PATH; if no
+# python is available the committed source/i18n_strings.inc is used as-is.
+PYTHON ?= $(firstword $(wildcard /c/Users/Steve/AppData/Local/Programs/Python/Python310/python.exe) python)
 include $(DEVKITPRO)/libnx/switch_rules
 
 #---------------------------------------------------------------------------------
@@ -164,12 +168,12 @@ ifneq ($(ROMFS),)
 	export NROFLAGS += --romfsdir=$(CURDIR)/$(ROMFS)
 endif
 
-.PHONY: $(BUILD) clean all plutonium version_header
+.PHONY: $(BUILD) clean all plutonium version_header i18n_strings
 
 #---------------------------------------------------------------------------------
 all: $(BUILD)
 
-$(BUILD): plutonium version_header
+$(BUILD): plutonium version_header i18n_strings
 	@[ -d $@ ] || mkdir -p $@
 	@$(MAKE) --no-print-directory -C $(BUILD) -f $(CURDIR)/Makefile
 
@@ -179,6 +183,13 @@ version_header:
 	@printf '#ifndef VERSION_H\n#define VERSION_H\n#define APP_VERSION_STR "%s"\n#endif\n' "$(APP_VERSION)" > $(CURDIR)/include/version.h.tmp
 	@cmp -s $(CURDIR)/include/version.h.tmp $(CURDIR)/include/version.h 2>/dev/null || cp $(CURDIR)/include/version.h.tmp $(CURDIR)/include/version.h
 	@rm -f $(CURDIR)/include/version.h.tmp
+
+i18n_strings:
+	@if command -v $(PYTHON) >/dev/null 2>&1; then \
+		$(PYTHON) $(CURDIR)/tools/gen_i18n.py $(CURDIR); \
+	else \
+		echo "gen_i18n: no python found; using committed i18n_strings.inc"; \
+	fi
 
 plutonium:
 	@$(MAKE) --no-print-directory -C $(CURDIR)/Plutonium

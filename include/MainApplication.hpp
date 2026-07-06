@@ -14,6 +14,8 @@ class MainLayout : public pu::ui::Layout {
     pu::ui::elm::Rectangle::Ref footer;
     pu::ui::elm::TextBlock::Ref title;
     pu::ui::elm::TextBlock::Ref status;
+    pu::ui::elm::TextBlock::Ref net_icon;
+    pu::ui::elm::TextBlock::Ref bat_info;
     pu::ui::elm::TextBlock::Ref rom_info;
     std::vector<pu::ui::elm::TextBlock::Ref> footer_segs;
     TableList::Ref list;
@@ -26,9 +28,14 @@ class MainLayout : public pu::ui::Layout {
 
     void SetTitle(const std::string &t);
     void SetStatus(const std::string &t);
+    void SetNetColor(pu::ui::Color c);
+    void SetNetIcon(const std::string &text, pu::ui::Color c);
+    void SetBatInfo(const std::string &t);
     void SetSubtitle(const std::string &t);
     void SetRomInfo(const std::string &t);
     void SetActiveTab(int idx); // 0=Browse 1=Installed 2=Queue 3=Settings
+    void RefreshTabs();
+    void ApplyTheme();
     void ClearMenu();
     void AddRow(const std::string &name);
     void AddRow(const std::string &name, pu::ui::Color clr);
@@ -64,7 +71,11 @@ class MainApplication : public pu::ui::Application {
         Manage,   // show/hide consoles on the Browse page
         Creds,    // archive.org credentials editor
         Advanced, // advanced settings sub-menu
-        Downloads // manage downloads folder
+        Downloads, // manage downloads folder
+        Language,  // language selector
+        Search,    // global file search across cached repos
+        Cache,     // metadata cache management
+        ManageData // settings submenu: downloads folder + metadata cache
     };
     enum class Pending { None, AddRepo, Manual };
     enum class Tab { Browse = 0, Installed = 1, Queue = 2, Settings = 3 };
@@ -78,6 +89,10 @@ class MainApplication : public pu::ui::Application {
     std::string pending_id;  // archive id for a Manual-URL download
     std::string inst_path;   // current dir in the installed browser
     Screen log_origin;       // screen to return to from the log viewer
+
+    // One-shot startup dialogs (TICO missing / no network), run on the first
+    // frame of the UI loop — OnLoad is too early to render a dialog.
+    bool startup_checks = false;
 
     // Remembered list positions, so backing out and returning keeps your place.
     int home_sel = 0;
@@ -99,6 +114,17 @@ class MainApplication : public pu::ui::Application {
     std::string upd_url;
     std::string upd_dl;
     std::string upd_tag;
+
+    // Background update *check* (release-list fetch), so "Check for updates"
+    // doesn't freeze the UI during retries. Shows the attempt number (1/3).
+    Thread chk_thread;
+    volatile bool chk_running = false;
+    volatile bool chk_done = false;
+    volatile bool chk_ok = false;
+    volatile bool chk_discard = false; // B pressed: drop the result silently
+    volatile int chk_attempt = 1;
+    char chk_tag[64];
+    char chk_url[1024];
 
     // Background metadata (ia_fetch) load, so the file list doesn't freeze the
     // UI while a repo's metadata downloads. Shows an animated loading indicator.
@@ -134,6 +160,10 @@ class MainApplication : public pu::ui::Application {
     void GotoCreds();
     void GotoAdvanced();
     void GotoDownloads();
+    void GotoLanguage();
+    void GotoSearch(const std::string &query);
+    void GotoCache();
+    void GotoManageData();
 
     Tab CurrentTab();      // which tab the current screen belongs to
     void SwitchTab(int dir); // L/R: cycle to the prev/next tab
@@ -149,6 +179,12 @@ class MainApplication : public pu::ui::Application {
     void UpdTick(); // poll progress / finish; called each frame while running
     static void UpdThread(void *arg);
     static int UpdProgress(void *ud, u64 now, u64 total);
+
+    // Background update-check helpers.
+    void ChkStart();
+    void ChkTick();   // poll progress / finish; called each frame while running
+    void ChkFinish(); // handle the fetched (or failed) result on the UI thread
+    static void ChkThread(void *arg);
 
     // Background metadata load helpers.
     void StartMetaLoad(const std::string &id, const std::string &base,

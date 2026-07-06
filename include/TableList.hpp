@@ -126,6 +126,13 @@ class TableList : public pu::ui::elm::Element {
 
     ~TableList() { this->FreeCache(); }
 
+    void SetThemeColors(pu::ui::Color bg, pu::ui::Color alt, pu::ui::Color focus,
+                        pu::ui::Color scroll, pu::ui::Color mark) {
+        this->row_bg = bg; this->row_alt_bg = alt; this->focus_bg = focus;
+        this->scroll_clr = scroll; this->mark_bg = mark;
+        this->dirty = true;
+    }
+
     void Clear() {
         this->rows.clear();
         this->sel = 0;

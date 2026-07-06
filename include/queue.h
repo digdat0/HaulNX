@@ -14,6 +14,9 @@ extern "C" {
 typedef enum {
     Q_FREE = 0,       /* empty slot */
     Q_QUEUED,         /* waiting to start */
+    Q_PAUSED,         /* preempted (download limit lowered) or network lost;
+                         .part kept, auto-resumes in order when a slot frees
+                         up / the connection returns */
     Q_DOWNLOADING,    /* transferring */
     Q_VERIFYING,      /* checking md5 */
     Q_AWAIT_EXTRACT,  /* downloaded + verified, waiting for extract thread */
@@ -38,6 +41,7 @@ typedef struct {
     volatile uint64_t total;
     volatile uint64_t speed; /* bytes/sec, while downloading */
     volatile bool cancel;
+    volatile bool pause; /* ask the worker to preempt this download (keep .part) */
     long http_code;
     char fail_reason[24]; /* short reason shown on a failed item, e.g. "HTTP 404" */
     int overwrote;        /* # existing files this install replaced (0 = all new) */
@@ -55,6 +59,12 @@ typedef struct {
  * download threads (1–5, clamped). */
 void queue_init(const char *roms_root, int max_dl);
 void queue_exit(void);
+
+/* Change the concurrent-download limit (1–5, clamped) at runtime. Takes effect
+ * immediately in both directions: raising it starts more queued items; lowering
+ * it pauses the newest in-flight downloads (keeping their .part), which resume
+ * automatically, in order, as slots free up. */
+void queue_set_max_dl(int n);
 
 /* Enqueue a download. Returns false if the queue is full. md5 may be "" or NULL
  * when no checksum is known. */

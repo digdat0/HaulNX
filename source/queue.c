@@ -20,9 +20,48 @@ static Mutex g_mtx;
 #define MAX_DL_THREADS 5
 static Thread g_dl_threads[MAX_DL_THREADS];
 static int g_dl_count = 0;
+/* How many downloads may run at once. All MAX_DL_THREADS workers are always
+ * started; idle ones just don't pick work. That way changing the setting
+ * takes effect immediately instead of on the next launch. */
+static volatile int g_max_dl = 1;
 static Thread g_ex_thread;
 static volatile bool g_run = false;
 static const char *g_roms_root = "sdmc:/tico/roms";
+
+/* ---- network state --------------------------------------------------- */
+
+/* Cached connectivity check (nifm polled at most every ~2s) so the workers can
+ * pause downloads when the connection drops and resume when it returns,
+ * instead of failing item after item while offline. */
+static Mutex g_net_mtx;
+static bool g_net_up = true;
+static u64 g_net_last = 0;
+
+static bool net_is_up(void) {
+    mutexLock(&g_net_mtx);
+    u64 now = armGetSystemTick();
+    if (g_net_last == 0 || armTicksToNs(now - g_net_last) >= 2000000000ULL) {
+        NifmInternetConnectionType t = (NifmInternetConnectionType)0;
+        u32 w = 0;
+        NifmInternetConnectionStatus st = (NifmInternetConnectionStatus)0;
+        g_net_up = R_SUCCEEDED(nifmGetInternetConnectionStatus(&t, &w, &st)) &&
+                   st == NifmInternetConnectionStatus_Connected;
+        g_net_last = now;
+    }
+    bool up = g_net_up;
+    mutexUnlock(&g_net_mtx);
+    return up;
+}
+
+/* Failure-path check: force a fresh nifm query. The cached result can be up
+ * to ~2s stale, which would misclassify an abrupt network drop (sockets die
+ * instantly in airplane mode) as a download failure. */
+static bool net_is_up_fresh(void) {
+    mutexLock(&g_net_mtx);
+    g_net_last = 0;
+    mutexUnlock(&g_net_mtx);
+    return net_is_up();
+}
 
 /* ---- worker-side processing ----------------------------------------- */
 
@@ -45,7 +84,7 @@ static int dl_progress(void *ud, uint64_t now, uint64_t total) {
         ctx->last_now = now;
         ctx->last_tick = tick;
     }
-    return (it->cancel || !g_run) ? 1 : 0;
+    return (it->cancel || it->pause || !g_run) ? 1 : 0;
 }
 
 static bool ex_progress(void *ud, const char *entry, int done) {
@@ -58,27 +97,40 @@ static bool ex_progress(void *ud, const char *entry, int done) {
 /* Append a download outcome to the history log shown in Settings. */
 static void log_download(const QueueItem *it, const char *status) {
     fs_mkdir_p(CONFIG_DIR);
-    FILE *f = fopen(DLLOG_PATH, "a");
-    if (!f) {
-        return;
-    }
     char ts[32] = "";
     time_t t = time(NULL);
     struct tm tmv;
-    /* localtime_r: log_download is reached from both the worker and UI threads. */
     struct tm *tm = localtime_r(&t, &tmv);
     if (tm) {
         strftime(ts, sizeof(ts), "%Y-%m-%d %H:%M", tm);
     }
-    fprintf(f, "%s  %-9s  [%s]  %s", ts, status, it->target, it->name);
-    /* Note overwrites so the history is a clear audit of replaced files. */
-    if (it->overwrote == 1) {
-        fputs("  (overwrote existing)", f);
-    } else if (it->overwrote > 1) {
-        fprintf(f, "  (overwrote %d files)", it->overwrote);
+
+    /* Human-readable text log. */
+    FILE *f = fopen(DLLOG_PATH, "a");
+    if (f) {
+        fprintf(f, "%s  %-9s  [%s]  %s", ts, status, it->target, it->name);
+        if (it->overwrote == 1) {
+            fputs("  (overwrote existing)", f);
+        } else if (it->overwrote > 1) {
+            fprintf(f, "  (overwrote %d files)", it->overwrote);
+        }
+        fputc('\n', f);
+        fclose(f);
     }
-    fputc('\n', f);
-    fclose(f);
+
+    /* Structured JSON-lines log for re-download. */
+    FILE *jf = fopen(DLLOG_JSON, "a");
+    if (jf) {
+        fputs("{\"ts\":", jf); json_write_escaped(jf, ts);
+        fputs(",\"st\":", jf); json_write_escaped(jf, status);
+        fputs(",\"name\":", jf); json_write_escaped(jf, it->name);
+        fputs(",\"target\":", jf); json_write_escaped(jf, it->target);
+        fputs(",\"url\":", jf); json_write_escaped(jf, it->url);
+        fprintf(jf, ",\"size\":%llu", (unsigned long long)it->size);
+        fputs(",\"md5\":", jf); json_write_escaped(jf, it->md5);
+        fprintf(jf, ",\"arc\":%s}\n", it->is_archive ? "true" : "false");
+        fclose(jf);
+    }
 }
 
 /* Turn a remote filename into a safe relative path under our own folders:
@@ -151,8 +203,8 @@ static void save_locked(void) {
     bool first = true;
     for (int i = 0; i < QUEUE_MAX; i++) {
         QStatus s = g_items[i].status;
-        if (s != Q_QUEUED && s != Q_DOWNLOADING && s != Q_VERIFYING &&
-            s != Q_AWAIT_EXTRACT && s != Q_EXTRACTING) {
+        if (s != Q_QUEUED && s != Q_PAUSED && s != Q_DOWNLOADING &&
+            s != Q_VERIFYING && s != Q_AWAIT_EXTRACT && s != Q_EXTRACTING) {
             continue; /* only persist outstanding work */
         }
         QueueItem *it = &g_items[i];
@@ -269,8 +321,10 @@ static void process_item(QueueItem *it) {
         return;
     }
 
+    /* Key the temp file by target too, so two same-named files headed to
+     * different consoles can download concurrently without sharing a .part. */
     char tmp[1200];
-    snprintf(tmp, sizeof(tmp), "%s/%s.part", DL_TMP_DIR, safe);
+    snprintf(tmp, sizeof(tmp), "%s/%s_%s.part", DL_TMP_DIR, it->target, safe);
     fs_ensure_parent(tmp);
 
     char destdir[1200];
@@ -300,12 +354,46 @@ static void process_item(QueueItem *it) {
         return;
     }
 
-    /* Only send archive.org S3 credentials to archive.org hosts. */
+    /* Only send archive.org S3 credentials to archive.org hosts, and only
+     * over HTTPS — never leak the secret in cleartext. */
     const char *auth =
-        (it->auth[0] && is_archive_org_url(it->url)) ? it->auth : NULL;
+        (it->auth[0] && strncasecmp(it->url, "https://", 8) == 0 &&
+         is_archive_org_url(it->url))
+            ? it->auth
+            : NULL;
     long code = 0;
-    bool ok = http_download(it->url, tmp, auth, dl_progress, &ctx, have, &code);
-    it->http_code = code;
+    bool ok = false;
+    /* Transient server errors (5xx/429, e.g. archive.org throttling a burst of
+     * new connections) and transport drops get a couple of automatic retries
+     * with a short backoff, resuming from the .part instead of failing. */
+    for (int attempt = 0;; attempt++) {
+        ok = http_download(it->url, tmp, auth, dl_progress, &ctx, have, &code);
+        it->http_code = code;
+        if (ok || it->cancel || it->pause || !g_run) {
+            break;
+        }
+        if (!net_is_up_fresh()) {
+            break; /* connection is down: park instead of burning retries */
+        }
+        bool transient = (code == 0 || code == 429 || code >= 500);
+        if (!transient || attempt >= 2) {
+            break;
+        }
+        svcSleepThread(2000000000ULL); /* 2s backoff */
+        if (it->cancel || it->pause || !g_run) {
+            break; /* state changed during the backoff: don't re-attempt */
+        }
+        /* Resume from whatever the failed attempt managed to write. */
+        struct stat rst;
+        have = (stat(tmp, &rst) == 0) ? (uint64_t)rst.st_size : 0;
+        if (it->size > 0 && have > it->size) {
+            remove(tmp);
+            have = 0;
+        }
+        it->now = have;
+        ctx.last_now = have;
+        ctx.last_tick = armGetSystemTick();
+    }
 
     if (!g_run) {
         /* Shutting down: keep the .part and leave the item pending (status
@@ -318,7 +406,31 @@ static void process_item(QueueItem *it) {
         log_download(it, "cancelled");
         return;
     }
+    if (it->pause) {
+        it->pause = false;
+        /* Preempted (download limit lowered): keep the .part and park the item
+         * as PAUSED — the picker resumes it, in seq order, when a slot frees.
+         * If the download managed to finish before the pause took effect,
+         * ignore the request and continue to verify/install as normal. */
+        if (!ok) {
+            mutexLock(&g_mtx);
+            it->status = Q_PAUSED;
+            mutexUnlock(&g_mtx);
+            return;
+        }
+    }
     if (!ok) {
+        /* A failure while the connection is down isn't the item's fault —
+         * curl reports the *last* HTTP code (e.g. 200 when the transfer died
+         * mid-download), so don't try to classify by code: if the network is
+         * gone, park the item as PAUSED (keeping the .part). It — and
+         * everything still queued — resumes when the connection returns. */
+        if (!net_is_up_fresh()) {
+            mutexLock(&g_mtx);
+            it->status = Q_PAUSED;
+            mutexUnlock(&g_mtx);
+            return;
+        }
         /* Keep the .part so a retry or relaunch can resume from here. */
         char rb[20];
         if (it->http_code >= 400 && it->http_code <= 999) {
@@ -388,7 +500,7 @@ static void install_item(QueueItem *it) {
         return;
     }
     char tmp[1200];
-    snprintf(tmp, sizeof(tmp), "%s/%s.part", DL_TMP_DIR, safe);
+    snprintf(tmp, sizeof(tmp), "%s/%s_%s.part", DL_TMP_DIR, it->target, safe);
     char destdir[1200];
     snprintf(destdir, sizeof(destdir), "%s/%s", g_roms_root, it->target);
 
@@ -428,14 +540,30 @@ static void dl_worker(void *arg) {
     while (g_run) {
         int pick = -1;
         uint32_t best = 0xFFFFFFFFu;
+        /* No network: start nothing. Queued/paused items wait and resume
+         * automatically (checked every ~2s) once the connection returns. */
+        bool online = net_is_up();
         mutexLock(&g_mtx);
+        /* Respect the (live) concurrent-download limit: only pick new work
+         * while fewer than g_max_dl items are being downloaded/verified. */
+        int active = 0;
         for (int i = 0; i < QUEUE_MAX; i++) {
-            if (g_items[i].status == Q_QUEUED && g_items[i].seq < best) {
-                best = g_items[i].seq;
-                pick = i;
+            QStatus s = g_items[i].status;
+            if (s == Q_DOWNLOADING || s == Q_VERIFYING) {
+                active++;
+            }
+        }
+        if (online && active < g_max_dl) {
+            for (int i = 0; i < QUEUE_MAX; i++) {
+                QStatus s = g_items[i].status;
+                if ((s == Q_QUEUED || s == Q_PAUSED) && g_items[i].seq < best) {
+                    best = g_items[i].seq;
+                    pick = i;
+                }
             }
         }
         if (pick >= 0) {
+            g_items[pick].pause = false;
             g_items[pick].status = Q_DOWNLOADING;
         }
         mutexUnlock(&g_mtx);
@@ -481,17 +609,51 @@ static void ex_worker(void *arg) {
 
 /* ---- public API ------------------------------------------------------ */
 
+void queue_set_max_dl(int n) {
+    if (n < 1) n = 1;
+    if (n > MAX_DL_THREADS) n = MAX_DL_THREADS;
+    g_max_dl = n;
+
+    /* Apply the new limit to in-flight downloads: keep the n oldest (by seq)
+     * running and ask the rest to pause (they keep their .part and resume in
+     * order when a slot frees). Raising the limit clears any pending pause
+     * requests that haven't been acted on yet. */
+    mutexLock(&g_mtx);
+    int order[QUEUE_MAX];
+    int cnt = 0;
+    for (int i = 0; i < QUEUE_MAX; i++) {
+        if (g_items[i].status == Q_DOWNLOADING) {
+            order[cnt++] = i;
+        }
+    }
+    /* insertion sort by seq (cnt <= 5) */
+    for (int a = 1; a < cnt; a++) {
+        int key = order[a];
+        uint32_t ks = g_items[key].seq;
+        int b = a - 1;
+        while (b >= 0 && g_items[order[b]].seq > ks) {
+            order[b + 1] = order[b];
+            b--;
+        }
+        order[b + 1] = key;
+    }
+    for (int a = 0; a < cnt; a++) {
+        g_items[order[a]].pause = (a >= n);
+    }
+    mutexUnlock(&g_mtx);
+}
+
 void queue_init(const char *roms_root, int max_dl) {
     if (roms_root && roms_root[0]) g_roms_root = roms_root;
     memset(g_items, 0, sizeof(g_items));
     mutexInit(&g_mtx);
+    mutexInit(&g_net_mtx);
     queue_load(); /* restore any downloads pending from a previous session */
     g_run = true;
-    if (max_dl < 1) max_dl = 1;
-    if (max_dl > MAX_DL_THREADS) max_dl = MAX_DL_THREADS;
+    queue_set_max_dl(max_dl);
     /* cpuid -2 = default core (–1 is invalid for svcCreateThread). */
     g_dl_count = 0;
-    for (int i = 0; i < max_dl; i++) {
+    for (int i = 0; i < MAX_DL_THREADS; i++) {
         Result rc = threadCreate(&g_dl_threads[i], dl_worker, NULL, NULL, 0x40000, 0x2C, -2);
         if (R_SUCCEEDED(rc)) {
             if (R_SUCCEEDED(threadStart(&g_dl_threads[i]))) {
@@ -516,8 +678,9 @@ void queue_init(const char *roms_root, int max_dl) {
     fs_mkdir_p(CONFIG_DIR);
     FILE *f = fopen(LOG_PATH, "a");
     if (f) {
-        fprintf(f, "queue: %d/%d dl_workers started, ex_worker %s\n",
-                g_dl_count, max_dl, ex_ok ? "started" : "FAILED");
+        fprintf(f, "queue: %d/%d dl_workers started (limit %d), ex_worker %s\n",
+                g_dl_count, MAX_DL_THREADS, (int)g_max_dl,
+                ex_ok ? "started" : "FAILED");
         fclose(f);
     }
 }
@@ -607,10 +770,10 @@ void queue_cancel(int slot) {
     QueueItem snap;
     mutexLock(&g_mtx);
     QStatus s = g_items[slot].status;
-    if (s == Q_QUEUED) {
+    if (s == Q_QUEUED || s == Q_PAUSED) {
         g_items[slot].status = Q_CANCELLED;
         snap = g_items[slot];
-        log_cxl = true; /* never started, so the worker won't log it */
+        log_cxl = true; /* no worker owns it, so the worker won't log it */
         save_locked(); /* drop it from the persisted pending set */
     } else if (s == Q_DOWNLOADING || s == Q_VERIFYING || s == Q_EXTRACTING) {
         g_items[slot].cancel = true; /* worker marks + logs it CANCELLED */
@@ -632,6 +795,7 @@ void queue_retry(int slot) {
     if (s == Q_FAILED || s == Q_CANCELLED) {
         QueueItem *it = &g_items[slot];
         it->cancel = false;
+        it->pause = false;
         it->now = 0;
         it->total = 0;
         it->speed = 0;
@@ -768,8 +932,8 @@ int queue_active_count(void) {
     mutexLock(&g_mtx);
     for (int i = 0; i < QUEUE_MAX; i++) {
         QStatus s = g_items[i].status;
-        if (s == Q_QUEUED || s == Q_DOWNLOADING || s == Q_VERIFYING ||
-            s == Q_AWAIT_EXTRACT || s == Q_EXTRACTING) {
+        if (s == Q_QUEUED || s == Q_PAUSED || s == Q_DOWNLOADING ||
+            s == Q_VERIFYING || s == Q_AWAIT_EXTRACT || s == Q_EXTRACTING) {
             c++;
         }
     }
@@ -789,11 +953,11 @@ int queue_cancel_by_part(const char *partname, bool do_cancel) {
         if (!safe_rel(g_items[i].name, safe, sizeof(safe)))
             continue;
         char expect[700];
-        snprintf(expect, sizeof(expect), "%s.part", safe);
+        snprintf(expect, sizeof(expect), "%s_%s.part", g_items[i].target, safe);
         if (strcasecmp(expect, partname) == 0) {
             hits++;
             if (do_cancel) {
-                if (s == Q_QUEUED) {
+                if (s == Q_QUEUED || s == Q_PAUSED) {
                     g_items[i].status = Q_CANCELLED;
                 } else {
                     g_items[i].cancel = true;

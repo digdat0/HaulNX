@@ -148,6 +148,8 @@ static bool parse_repo(const char *js, jsmntok_t *tok, int obj, Repo *r) {
     json_copy(js, tok, json_obj_get(js, tok, obj, "URL"), r->download_base,
               sizeof(r->download_base));
     r->enabled = json_bool(js, tok, json_obj_get(js, tok, obj, "active"));
+    int pi = json_obj_get(js, tok, obj, "pinned");
+    r->pinned = (pi >= 0) ? json_bool(js, tok, pi) : false;
     if (!r->label[0]) {
         sset(r->label, sizeof(r->label), r->id);
     }
@@ -319,7 +321,9 @@ bool config_save(const SourcesConfig *cfg) {
             json_write_escaped(f, rp->id);
             fputs(", \"URL\": ", f);
             json_write_escaped(f, rp->download_base);
-            fprintf(f, ", \"active\": %s }", rp->enabled ? "true" : "false");
+            fprintf(f, ", \"active\": %s, \"pinned\": %s }",
+                    rp->enabled ? "true" : "false",
+                    rp->pinned ? "true" : "false");
             fputs(r + 1 < g->repo_count ? ",\n" : "\n", f);
         }
         fputs("      ]\n    }", f);
@@ -380,6 +384,10 @@ void prefs_load(Prefs *p) {
     p->prevent_sleep = true;
     p->group_consoles = true;
     p->max_downloads = 1;
+    p->net_check = true;
+    p->lang[0] = '\0';
+    strcpy(p->theme, "dark");
+    p->pinned_dir_count = 0;
     size_t len = 0;
     char *js = json_read_file(PREFS_PATH, &len);
     if (!js) {
@@ -405,6 +413,34 @@ void prefs_load(Prefs *p) {
             int v = (int)json_u64(js, tok, idx);
             if (v >= 1 && v <= 5) p->max_downloads = v;
         }
+        idx = json_obj_get(js, tok, 0, "netCheck");
+        if (idx >= 0) {
+            p->net_check = json_bool(js, tok, idx);
+        }
+        idx = json_obj_get(js, tok, 0, "lang");
+        if (idx >= 0 && tok[idx].type == JSMN_STRING) {
+            json_copy(js, tok, idx, p->lang, sizeof(p->lang));
+        }
+        idx = json_obj_get(js, tok, 0, "theme");
+        if (idx >= 0 && tok[idx].type == JSMN_STRING) {
+            json_copy(js, tok, idx, p->theme, sizeof(p->theme));
+        }
+        idx = json_obj_get(js, tok, 0, "pinnedDirs");
+        if (idx >= 0 && tok[idx].type == JSMN_ARRAY) {
+            int n = tok[idx].size;
+            int child = idx + 1;
+            for (int i = 0; i < n && p->pinned_dir_count < MAX_PINNED_DIRS; i++) {
+                if (tok[child].type == JSMN_STRING) {
+                    json_copy(js, tok, child,
+                              p->pinned_dirs[p->pinned_dir_count],
+                              sizeof(p->pinned_dirs[0]));
+                    if (p->pinned_dirs[p->pinned_dir_count][0]) {
+                        p->pinned_dir_count++;
+                    }
+                }
+                child = json_tok_skip(tok, child);
+            }
+        }
     }
     free(tok);
     free(js);
@@ -418,13 +454,55 @@ bool prefs_save(const Prefs *p) {
     }
     fprintf(f,
             "{\n  \"useCache\": %s,\n  \"preventSleep\": %s,\n"
-            "  \"groupConsoles\": %s,\n  \"maxDownloads\": %d\n}\n",
+            "  \"groupConsoles\": %s,\n  \"maxDownloads\": %d,\n"
+            "  \"netCheck\": %s,\n"
+            "  \"lang\": ",
             p->use_cache ? "true" : "false",
             p->prevent_sleep ? "true" : "false",
             p->group_consoles ? "true" : "false",
-            p->max_downloads);
+            p->max_downloads,
+            p->net_check ? "true" : "false");
+    json_write_escaped(f, p->lang);
+    fputs(",\n  \"theme\": ", f);
+    json_write_escaped(f, p->theme);
+    fputs(",\n  \"pinnedDirs\": [", f);
+    for (int i = 0; i < p->pinned_dir_count; i++) {
+        if (i) {
+            fputs(", ", f);
+        }
+        json_write_escaped(f, p->pinned_dirs[i]);
+    }
+    fputs("]\n}\n", f);
     fclose(f);
     return true;
+}
+
+bool prefs_dir_pinned(const Prefs *p, const char *name) {
+    for (int i = 0; i < p->pinned_dir_count; i++) {
+        if (strcasecmp(p->pinned_dirs[i], name) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void prefs_dir_pin_toggle(Prefs *p, const char *name) {
+    for (int i = 0; i < p->pinned_dir_count; i++) {
+        if (strcasecmp(p->pinned_dirs[i], name) == 0) {
+            /* unpin: shift the rest down */
+            for (int j = i; j < p->pinned_dir_count - 1; j++) {
+                memcpy(p->pinned_dirs[j], p->pinned_dirs[j + 1],
+                       sizeof(p->pinned_dirs[0]));
+            }
+            p->pinned_dir_count--;
+            return;
+        }
+    }
+    if (p->pinned_dir_count < MAX_PINNED_DIRS) {
+        snprintf(p->pinned_dirs[p->pinned_dir_count],
+                 sizeof(p->pinned_dirs[0]), "%s", name);
+        p->pinned_dir_count++;
+    }
 }
 
 void creds_auth_header(const Credentials *c, char *out, size_t out_sz) {

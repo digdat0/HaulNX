@@ -10,9 +10,11 @@ extern "C" {
 /*
  * Query https://api.github.com/repos/<repo>/releases/latest and return the tag
  * name and the download URL of the first ".nro" asset. Returns true on success.
+ * Retries transient failures (3 attempts); if `attempt` is non-NULL it is set
+ * to the current attempt number (1-based) so a UI can display progress.
  */
 bool update_fetch_latest(const char *repo, char *tag, size_t tag_sz, char *url,
-                         size_t url_sz);
+                         size_t url_sz, volatile int *attempt);
 
 /* Compare dotted versions ("1.2.3", optionally "v"-prefixed).
  * Returns <0 if a<b, 0 if equal, >0 if a>b. */

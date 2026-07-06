@@ -24,9 +24,14 @@ int json_tok_skip(const jsmntok_t *t, int i);
 /* Value-token index for key in the object token at `obj`, or -1. */
 int json_obj_get(const char *js, const jsmntok_t *t, int obj, const char *key);
 
-/* Copy a token's raw text into out (NUL-terminated, truncated to fit). */
+/* Copy a token's text into out (NUL-terminated, truncated to fit). String
+ * tokens have their JSON escapes (\n, \", \\, \uXXXX, ...) decoded to UTF-8. */
 void json_copy(const char *js, const jsmntok_t *t, int idx, char *out,
                size_t out_sz);
+
+/* Decode `len` bytes of raw JSON string content (escapes included) into out
+ * as UTF-8. Returns the decoded length. Output never exceeds the input. */
+size_t json_unescape(const char *src, size_t len, char *out, size_t out_sz);
 
 uint64_t json_u64(const char *js, const jsmntok_t *t, int idx);
 bool json_bool(const char *js, const jsmntok_t *t, int idx);
