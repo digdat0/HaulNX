@@ -43,6 +43,7 @@ class MainLayout : public pu::ui::Layout {
                  pu::ui::Color lclr, pu::ui::Color rclr, float progress = -1.0f);
     s32 Sel();
     void SetSel(s32 i);
+    bool ConsumeTouchActivate(); // selected row tapped again (touch "A")
     s32 RowCount();
     void MoveBy(s32 delta);
     void Step(s32 delta); // wrap-around single step
@@ -75,7 +76,9 @@ class MainApplication : public pu::ui::Application {
         Language,  // language selector
         Search,    // global file search across cached repos
         Cache,     // metadata cache management
-        ManageData // settings submenu: downloads folder + metadata cache
+        ManageData, // settings submenu: downloads folder + metadata cache
+        ViewLogs,  // settings submenu: download log + debug log
+        DebugLog   // debug.log viewer
     };
     enum class Pending { None, AddRepo, Manual };
     enum class Tab { Browse = 0, Installed = 1, Queue = 2, Settings = 3 };
@@ -164,6 +167,8 @@ class MainApplication : public pu::ui::Application {
     void GotoSearch(const std::string &query);
     void GotoCache();
     void GotoManageData();
+    void GotoViewLogs();
+    void GotoDebugLog();
 
     Tab CurrentTab();      // which tab the current screen belongs to
     void SwitchTab(int dir); // L/R: cycle to the prev/next tab
@@ -171,7 +176,7 @@ class MainApplication : public pu::ui::Application {
     void SyncTab();        // highlight the tab bar for the current screen
 
     void RefreshStatus();
-    void HandleInput(u64 down, u64 held);
+    void HandleInput(u64 down, u64 held, const pu::ui::TouchPoint &touch);
 
     // Self-update download helpers.
     void UpdStart(const std::string &url, const std::string &dl,

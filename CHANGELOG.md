@@ -4,6 +4,39 @@ Notes for each release. `release.sh` pulls the section matching the version in
 `VERSION` and attaches it to the GitHub release. Add a `## <version>` section
 here before running a release.
 
+## 1.1.1-beta
+
+**Touch support**
+- The whole app now works by touch in handheld mode: tap a tab to switch to
+  it, tap a list row to select it (tap again to activate), drag up/down to
+  scroll.
+
+**Queue & downloads**
+- **Live extraction progress**: archives show a percent bar while unpacking —
+  it moves even inside one huge file — plus a count of files extracted so far.
+- Cancelling an extraction now takes effect mid-file instead of waiting for
+  the current file to finish.
+- When the connection is down, the Queue screen now says so: "Offline -
+  downloads resume when the network returns".
+
+**Settings reorganised**
+- New **View logs** submenu: the download history moved here, joined by a new
+  **debug log viewer** (newest first) — both can be cleared in-app.
+- **Manage consoles** moved under **Advanced settings** (renamed from
+  "Advanced").
+- New order: Check for updates · Advanced settings · View logs · Manage data ·
+  Language · Theme · Credits.
+
+**Browse & search**
+- The Files screen now shows a persistent indicator for an active sort and/or
+  filter (with the match count), so a filtered list can't silently "lose"
+  files.
+- Global search says "%d+ results - refine your search" when it hits the
+  result cap instead of showing a misleading flat count.
+
+**Polish**
+- Better spacing in the update-download progress text.
+
 ## 1.1.0-beta
 
 **Languages & themes**

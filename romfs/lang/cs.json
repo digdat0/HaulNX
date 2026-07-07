@@ -50,11 +50,11 @@
   "view_log": "Zobrazit protokol stahování",
   "manage_consoles": "Spravovat konzole (zobrazit/skrýt)",
   "manage_downloads": "Spravovat složku stahování",
-  "advanced": "Pokročilé",
+  "advanced": "Pokročilá nastavení",
   "controls_help": "Ovládání / Nápověda",
   "credits": "Autoři",
   "rom_folder": "Složka ROM: %s",
-  "title_advanced": "Pokročilé",
+  "title_advanced": "Pokročilá nastavení",
   "sub_advanced": "A přepnout/upravit  B zpět",
   "stay_awake": "Neuspávat při stahování: %s",
   "group_consoles": "Seskupit konzole: %s",
@@ -104,7 +104,7 @@
   "update_up_to_date": "Máte nejnovější verzi (v%s).",
   "update_confirm": "Aktualizovat na %s? Nahradí aplikaci.",
   "updating": "Aktualizace",
-  "update_downloading": "Stahování %s: %d%%  (%s / %s)  -  čekejte prosím",
+  "update_downloading": "Stahování %s: %d%%   (%s / %s)  -  čekejte prosím",
   "update_dl_cancel": "Stahování aktualizace - stiskněte B pro zrušení",
   "update_start_fail": "Nepodařilo se zahájit stahování.",
   "update_fail": "Stahování aktualizace selhalo.",
@@ -161,5 +161,15 @@
 
   "manage_data": "Správa dat",
   "title_manage_data": "Správa dat",
-  "sub_manage_data": "A vybrat  B zpět"
+  "sub_manage_data": "A vybrat  B zpět",
+
+  "waiting_network": "Offline - stahování se obnoví po návratu sítě",
+
+  "search_capped": "%d+ výsledků - upřesni hledání",
+  "view_logs": "Zobrazit protokoly",
+  "title_view_logs": "Zobrazit protokoly",
+  "sub_view_logs": "A vybrat  B zpět",
+  "debug_log": "Zobrazit ladicí protokol",
+  "title_debug_log": "Ladicí protokol",
+  "sub_debug_log": "X vymazat protokol  B zpět"
 }

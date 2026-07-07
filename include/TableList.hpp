@@ -45,7 +45,18 @@ class TableList : public pu::ui::elm::Element {
     s32 cache_top;
     bool dirty;
 
+    // Touch: tap selects a row (tap the selected row again to activate it,
+    // surfaced via ConsumeTouchActivate); vertical drag scrolls the list.
+    bool tch_active = false;
+    bool tch_dragged = false;
+    s32 tch_start_y = 0;
+    s32 tch_last_y = 0;
+    s32 tch_acc = 0;
+    s32 tch_row = -1;
+    bool tch_activate = false;
+
     static constexpr s32 PadX = 26;
+    static constexpr s32 DragThreshold = 16; // px before a touch counts as a drag
 
     void EnsureVisible() {
         if (this->sel < this->scroll_top) {
@@ -139,6 +150,11 @@ class TableList : public pu::ui::elm::Element {
         this->scroll_top = 0;
         this->marked.clear();
         this->dirty = true;
+        // Content changed under the finger: drop any in-progress touch so a
+        // stale tap can't select/activate a row of the new list.
+        this->tch_active = false;
+        this->tch_row = -1;
+        this->tch_activate = false;
     }
     void AddRow(const std::string &left, const pu::ui::Color lclr) {
         this->rows.push_back(Row{left, "", lclr, lclr, false, -1.0f});
@@ -259,8 +275,71 @@ class TableList : public pu::ui::elm::Element {
         }
     }
 
+    // True once when the selected row was tapped again (touch "A press").
+    // The app polls this each frame and synthesizes an A press from it.
+    bool ConsumeTouchActivate() {
+        bool v = this->tch_activate;
+        this->tch_activate = false;
+        return v;
+    }
+
     void OnInput(const u64, const u64, const u64,
-                 const pu::ui::TouchPoint) override {
-        // Navigation is driven by the application (single source of truth).
+                 const pu::ui::TouchPoint tch) override {
+        // Button navigation is driven by the application (single source of
+        // truth); this handles touch only.
+        const s32 h = this->row_h * this->rows_visible;
+        if (!tch.IsEmpty()) {
+            if (!this->tch_active) {
+                if (!tch.HitsRegion(this->x, this->y, this->w, h)) {
+                    return; // touch began outside the list
+                }
+                this->tch_active = true;
+                this->tch_dragged = false;
+                this->tch_start_y = tch.y;
+                this->tch_last_y = tch.y;
+                this->tch_acc = 0;
+                s32 row = this->scroll_top + (tch.y - this->y) / this->row_h;
+                this->tch_row =
+                    (row >= 0 && row < (s32)this->rows.size()) ? row : -1;
+            } else {
+                // Finger moving: past the threshold it's a drag-scroll.
+                if (!this->tch_dragged &&
+                    (tch.y - this->tch_start_y > DragThreshold ||
+                     this->tch_start_y - tch.y > DragThreshold)) {
+                    this->tch_dragged = true;
+                }
+                if (this->tch_dragged) {
+                    this->tch_acc += this->tch_last_y - tch.y;
+                    s32 maxtop = (s32)this->rows.size() - this->rows_visible;
+                    if (maxtop < 0) {
+                        maxtop = 0;
+                    }
+                    while (this->tch_acc >= this->row_h) {
+                        if (this->scroll_top < maxtop) {
+                            this->scroll_top++;
+                        }
+                        this->tch_acc -= this->row_h;
+                    }
+                    while (this->tch_acc <= -this->row_h) {
+                        if (this->scroll_top > 0) {
+                            this->scroll_top--;
+                        }
+                        this->tch_acc += this->row_h;
+                    }
+                }
+                this->tch_last_y = tch.y;
+            }
+        } else if (this->tch_active) {
+            // Finger lifted: a short touch is a tap.
+            this->tch_active = false;
+            if (!this->tch_dragged && this->tch_row >= 0 &&
+                this->tch_row < (s32)this->rows.size()) {
+                if (this->tch_row == this->sel) {
+                    this->tch_activate = true; // second tap = activate
+                } else {
+                    this->SetSelected(this->tch_row);
+                }
+            }
+        }
     }
 };

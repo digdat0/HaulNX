@@ -50,11 +50,11 @@
   "view_log": "Downloadlogboek bekijken",
   "manage_consoles": "Consoles beheren (tonen/verbergen)",
   "manage_downloads": "Downloadmap beheren",
-  "advanced": "Geavanceerd",
+  "advanced": "Geavanceerde instellingen",
   "controls_help": "Bediening / Help",
   "credits": "Credits",
   "rom_folder": "ROM-map: %s",
-  "title_advanced": "Geavanceerd",
+  "title_advanced": "Geavanceerde instellingen",
   "sub_advanced": "A schakelen/bewerken  B terug",
   "stay_awake": "Actief blijven tijdens download: %s",
   "group_consoles": "Consoles groeperen: %s",
@@ -104,7 +104,7 @@
   "update_up_to_date": "Je bent up-to-date (v%s).",
   "update_confirm": "Updaten naar %s? Vervangt de app.",
   "updating": "Bijwerken",
-  "update_downloading": "Downloaden van %s: %d%%  (%s / %s)  -  even geduld",
+  "update_downloading": "Downloaden van %s: %d%%   (%s / %s)  -  even geduld",
   "update_dl_cancel": "Update downloaden - druk B om te annuleren",
   "update_start_fail": "Kan download niet starten.",
   "update_fail": "Update-download mislukt.",
@@ -161,5 +161,15 @@
 
   "manage_data": "Gegevens beheren",
   "title_manage_data": "Gegevens beheren",
-  "sub_manage_data": "A selecteren  B terug"
+  "sub_manage_data": "A selecteren  B terug",
+
+  "waiting_network": "Offline - downloads hervatten zodra het netwerk terug is",
+
+  "search_capped": "%d+ resultaten - verfijn je zoekopdracht",
+  "view_logs": "Logboeken bekijken",
+  "title_view_logs": "Logboeken bekijken",
+  "sub_view_logs": "A selecteren  B terug",
+  "debug_log": "Debuglogboek bekijken",
+  "title_debug_log": "Debuglogboek",
+  "sub_debug_log": "X logboek wissen  B terug"
 }

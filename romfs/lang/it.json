@@ -50,11 +50,11 @@
   "view_log": "Visualizza registro download",
   "manage_consoles": "Gestisci console (mostra/nascondi)",
   "manage_downloads": "Gestisci cartella download",
-  "advanced": "Avanzate",
+  "advanced": "Impostazioni avanzate",
   "controls_help": "Controlli / Aiuto",
   "credits": "Crediti",
   "rom_folder": "Cartella ROM: %s",
-  "title_advanced": "Avanzate",
+  "title_advanced": "Impostazioni avanzate",
   "sub_advanced": "A attiva/modifica  B indietro",
   "stay_awake": "Mantieni attivo durante il download: %s",
   "group_consoles": "Raggruppa console: %s",
@@ -104,7 +104,7 @@
   "update_up_to_date": "Sei aggiornato (v%s).",
   "update_confirm": "Aggiornare a %s? Sostituisce l'app.",
   "updating": "Aggiornamento in corso",
-  "update_downloading": "Download di %s: %d%%  (%s / %s)  -  attendere",
+  "update_downloading": "Download di %s: %d%%   (%s / %s)  -  attendere",
   "update_dl_cancel": "Download aggiornamento in corso - premi B per annullare",
   "update_start_fail": "Impossibile avviare il download.",
   "update_fail": "Download dell'aggiornamento fallito.",
@@ -161,5 +161,15 @@
 
   "manage_data": "Gestione dati",
   "title_manage_data": "Gestione dati",
-  "sub_manage_data": "A seleziona  B indietro"
+  "sub_manage_data": "A seleziona  B indietro",
+
+  "waiting_network": "Offline - i download riprenderanno al ritorno della rete",
+
+  "search_capped": "%d+ risultati - affina la ricerca",
+  "view_logs": "Visualizza log",
+  "title_view_logs": "Visualizza log",
+  "sub_view_logs": "A seleziona  B indietro",
+  "debug_log": "Visualizza log di debug",
+  "title_debug_log": "Log di debug",
+  "sub_debug_log": "X cancella registro  B indietro"
 }

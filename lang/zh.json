@@ -50,11 +50,11 @@
   "view_log": "查看下载日志",
   "manage_consoles": "管理主机（显示/隐藏）",
   "manage_downloads": "管理下载文件夹",
-  "advanced": "高级",
+  "advanced": "高级设置",
   "controls_help": "操作说明 / 帮助",
   "credits": "致谢",
   "rom_folder": "ROM 文件夹：%s",
-  "title_advanced": "高级",
+  "title_advanced": "高级设置",
   "sub_advanced": "A 切换/编辑  B 返回",
   "stay_awake": "下载时保持唤醒：%s",
   "group_consoles": "分组主机：%s",
@@ -104,7 +104,7 @@
   "update_up_to_date": "已是最新版本 (v%s)。",
   "update_confirm": "更新到 %s？将替换当前应用。",
   "updating": "更新中",
-  "update_downloading": "正在下载 %s：%d%%  (%s / %s)  -  请稍候",
+  "update_downloading": "正在下载 %s：%d%%   (%s / %s)  -  请稍候",
   "update_dl_cancel": "正在下载更新 - 按 B 取消",
   "update_start_fail": "无法开始下载。",
   "update_fail": "更新下载失败。",
@@ -161,5 +161,15 @@
 
   "manage_data": "数据管理",
   "title_manage_data": "数据管理",
-  "sub_manage_data": "A 选择  B 返回"
+  "sub_manage_data": "A 选择  B 返回",
+
+  "waiting_network": "离线 - 网络恢复后下载将自动继续",
+
+  "search_capped": "超过 %d 条结果 - 请细化搜索",
+  "view_logs": "查看日志",
+  "title_view_logs": "查看日志",
+  "sub_view_logs": "A 选择  B 返回",
+  "debug_log": "查看调试日志",
+  "title_debug_log": "调试日志",
+  "sub_debug_log": "X 清除日志  B 返回"
 }

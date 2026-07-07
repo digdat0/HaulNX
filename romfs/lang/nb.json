@@ -50,11 +50,11 @@
   "view_log": "Vis nedlastingslogg",
   "manage_consoles": "Administrer konsoller (vis/skjul)",
   "manage_downloads": "Administrer nedlastingsmappe",
-  "advanced": "Avansert",
+  "advanced": "Avanserte innstillinger",
   "controls_help": "Kontroller / Hjelp",
   "credits": "Takk til",
   "rom_folder": "ROM-mappe: %s",
-  "title_advanced": "Avansert",
+  "title_advanced": "Avanserte innstillinger",
   "sub_advanced": "A veksle/rediger  B tilbake",
   "stay_awake": "Hold våken under nedlasting: %s",
   "group_consoles": "Grupper konsoller: %s",
@@ -104,7 +104,7 @@
   "update_up_to_date": "Du er oppdatert (v%s).",
   "update_confirm": "Oppdatere til %s? Erstatter appen.",
   "updating": "Oppdaterer",
-  "update_downloading": "Laster ned %s: %d%%  (%s / %s)  -  vennligst vent",
+  "update_downloading": "Laster ned %s: %d%%   (%s / %s)  -  vennligst vent",
   "update_dl_cancel": "Laster ned oppdatering - trykk B for å avbryte",
   "update_start_fail": "Kunne ikke starte nedlasting.",
   "update_fail": "Nedlasting av oppdatering mislyktes.",
@@ -161,5 +161,15 @@
 
   "manage_data": "Administrer data",
   "title_manage_data": "Administrer data",
-  "sub_manage_data": "A velg  B tilbake"
+  "sub_manage_data": "A velg  B tilbake",
+
+  "waiting_network": "Frakoblet - nedlastinger gjenopptas når nettverket er tilbake",
+
+  "search_capped": "%d+ treff - avgrens søket",
+  "view_logs": "Vis logger",
+  "title_view_logs": "Vis logger",
+  "sub_view_logs": "A velg  B tilbake",
+  "debug_log": "Vis feilsøkingslogg",
+  "title_debug_log": "Feilsøkingslogg",
+  "sub_debug_log": "X tøm logg  B tilbake"
 }

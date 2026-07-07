@@ -50,11 +50,11 @@
   "view_log": "Ver registro de downloads",
   "manage_consoles": "Gerenciar consoles (mostrar/ocultar)",
   "manage_downloads": "Gerenciar pasta de downloads",
-  "advanced": "Avançado",
+  "advanced": "Configurações avançadas",
   "controls_help": "Controles / Ajuda",
   "credits": "Créditos",
   "rom_folder": "Pasta de ROMs: %s",
-  "title_advanced": "Avançado",
+  "title_advanced": "Configurações avançadas",
   "sub_advanced": "A alternar/editar  B voltar",
   "stay_awake": "Manter ativo durante download: %s",
   "group_consoles": "Agrupar consoles: %s",
@@ -104,7 +104,7 @@
   "update_up_to_date": "Você está atualizado (v%s).",
   "update_confirm": "Atualizar para %s? Substitui o aplicativo.",
   "updating": "Atualizando",
-  "update_downloading": "Baixando %s: %d%%  (%s / %s)  -  por favor aguarde",
+  "update_downloading": "Baixando %s: %d%%   (%s / %s)  -  por favor aguarde",
   "update_dl_cancel": "Baixando atualização - pressione B para cancelar",
   "update_start_fail": "Não foi possível iniciar o download.",
   "update_fail": "Falha no download da atualização.",
@@ -161,5 +161,15 @@
 
   "manage_data": "Gerenciar dados",
   "title_manage_data": "Gerenciar dados",
-  "sub_manage_data": "A selecionar  B voltar"
+  "sub_manage_data": "A selecionar  B voltar",
+
+  "waiting_network": "Offline - os downloads serão retomados quando a rede voltar",
+
+  "search_capped": "%d+ resultados - refine sua busca",
+  "view_logs": "Ver registros",
+  "title_view_logs": "Ver registros",
+  "sub_view_logs": "A selecionar  B voltar",
+  "debug_log": "Ver registro de depuração",
+  "title_debug_log": "Registro de depuração",
+  "sub_debug_log": "X limpar registro  B voltar"
 }

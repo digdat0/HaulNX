@@ -50,11 +50,11 @@
   "view_log": "Letöltési napló megtekintése",
   "manage_consoles": "Konzolok kezelése (mutat/elrejt)",
   "manage_downloads": "Letöltési mappa kezelése",
-  "advanced": "Haladó",
+  "advanced": "Speciális beállítások",
   "controls_help": "Vezérlés / Súgó",
   "credits": "Készítők",
   "rom_folder": "ROM mappa: %s",
-  "title_advanced": "Haladó",
+  "title_advanced": "Speciális beállítások",
   "sub_advanced": "A váltás/szerkesztés  B vissza",
   "stay_awake": "Ébren marad letöltés közben: %s",
   "group_consoles": "Konzolok csoportosítása: %s",
@@ -104,7 +104,7 @@
   "update_up_to_date": "Naprakész vagy (v%s).",
   "update_confirm": "Frissítés erre: %s? Lecseréli az alkalmazást.",
   "updating": "Frissítés",
-  "update_downloading": "Letöltés %s: %d%%  (%s / %s)  -  kérlek várj",
+  "update_downloading": "Letöltés %s: %d%%   (%s / %s)  -  kérlek várj",
   "update_dl_cancel": "Frissítés letöltése - nyomd meg a B-t a megszakításhoz",
   "update_start_fail": "Nem sikerült elindítani a letöltést.",
   "update_fail": "A frissítés letöltése sikertelen.",
@@ -161,5 +161,15 @@
 
   "manage_data": "Adatok kezelése",
   "title_manage_data": "Adatok kezelése",
-  "sub_manage_data": "A kiválaszt  B vissza"
+  "sub_manage_data": "A kiválaszt  B vissza",
+
+  "waiting_network": "Offline - a letöltések folytatódnak, ha a hálózat visszatér",
+
+  "search_capped": "%d+ találat - pontosítsd a keresést",
+  "view_logs": "Naplók megtekintése",
+  "title_view_logs": "Naplók megtekintése",
+  "sub_view_logs": "A kiválaszt  B vissza",
+  "debug_log": "Hibakeresési napló megtekintése",
+  "title_debug_log": "Hibakeresési napló",
+  "sub_debug_log": "X napló törlése  B vissza"
 }

@@ -87,10 +87,15 @@ static int dl_progress(void *ud, uint64_t now, uint64_t total) {
     return (it->cancel || it->pause || !g_run) ? 1 : 0;
 }
 
-static bool ex_progress(void *ud, const char *entry, int done) {
+static bool ex_progress(void *ud, const char *entry, int done,
+                        uint64_t bytes_read) {
     QueueItem *it = (QueueItem *)ud;
     (void)entry;
-    (void)done;
+    /* Live progress for the UI: archive bytes consumed (vs it->total, the
+     * archive size, for a percent bar) and entries completed. The byte-based
+     * bar moves even inside one huge entry. */
+    it->now = bytes_read;
+    it->ex_files = done;
     return !it->cancel && g_run;
 }
 
@@ -505,6 +510,11 @@ static void install_item(QueueItem *it) {
     snprintf(destdir, sizeof(destdir), "%s/%s", g_roms_root, it->target);
 
     fs_mkdir_p(destdir);
+    /* it->now switches meaning here: downloaded bytes -> archive bytes
+     * consumed by the extractor (it->total stays the archive size, so the
+     * UI's percent bar works for both phases). */
+    it->now = 0;
+    it->ex_files = 0;
     int ow = 0;
     int n = extract_archive(tmp, destdir, ex_progress, it, &ow);
     if (it->cancel || !g_run) {
@@ -799,6 +809,7 @@ void queue_retry(int slot) {
         it->now = 0;
         it->total = 0;
         it->speed = 0;
+        it->ex_files = 0;
         it->http_code = 0;
         it->fail_reason[0] = '\0';
         /* Keep the original seq so the item resumes in its current list

@@ -31,7 +31,7 @@ but it works.**
     consoles, repos, and installed folders
   - **Global search** with **−** across every cached repo — results tagged with
     their console, downloadable straight from the results
-  - Show/hide consoles from **Settings → Manage consoles**
+  - Show/hide consoles from **Settings → Advanced settings → Manage consoles**
   - On-screen name filter (**Y**), sort by name/size (**X**), `*` markers for
     already-installed files, ZL/ZR paging
 
@@ -61,6 +61,11 @@ but it works.**
 - **Installed browser**
   - Sorted alphabetically by full console name, pinned folders first
   - Multi-select with **Y**, bulk-delete with **−**, rename with **X**
+
+- **Touch support**
+  - Tap a tab to switch to it; tap a list row to select it, tap it again to
+    activate; drag up/down to scroll — the whole app works in handheld mode
+    without buttons
 
 - **25 languages & themes**
   - Full UI translation (English, Español, Français, Deutsch, 日本語, 中文, and
@@ -262,7 +267,7 @@ collections download anonymously and need no keys.
 | `sdmc:/switch/ticodlplus/downloads.log` | download history (text) |
 | `sdmc:/switch/ticodlplus/downloads.jsonl` | download history (structured, powers re-download from the log) |
 | `sdmc:/switch/ticodlplus/lang/<code>.json` | optional language overrides (built-in translations ship in the app) |
-| `sdmc:/switch/ticodlplus/debug.log` | network/extraction diagnostics |
+| `sdmc:/switch/ticodlplus/debug.log` | network/extraction diagnostics (viewable + clearable in Settings → View logs) |
 | `sdmc:/tico/roms/<console>/` | default ROM destination (or custom path from TICO's config) |
 
 ---
@@ -308,7 +313,7 @@ Most archives extract automatically. A known limitation: some **RAR3-compressed
 `.rar` files that use RAR's programmable filters cannot be decompressed** by the
 bundled library — for those, the raw `.rar` is saved into the console folder and
 you'll need to extract it on a PC. If a specific archive won't unpack, check
-`debug.log` for the exact reason.
+the debug log (**Settings → View logs → View debug log**) for the exact reason.
 
 ---
 
@@ -324,7 +329,7 @@ in a file list is informational only — it does **not** block re-downloading.
 It is never hidden, though:
 
 - **Logged for audit.** Every completed download is recorded in the download
-  history (`downloads.log`, viewable in Settings → View download log), and the
+  history (`downloads.log`, viewable in Settings → View logs), and the
   entry notes when it **`(overwrote existing)`** or `(overwrote N files)` for an
   archive.
 - **Shown in the queue.** A finished item's result column shows a colour-coded

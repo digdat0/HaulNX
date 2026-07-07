@@ -50,11 +50,11 @@
   "view_log": "Vezi jurnalul descărcărilor",
   "manage_consoles": "Gestionează consolele (arată/ascunde)",
   "manage_downloads": "Gestionează folderul descărcărilor",
-  "advanced": "Avansat",
+  "advanced": "Setări avansate",
   "controls_help": "Comenzi / Ajutor",
   "credits": "Mulțumiri",
   "rom_folder": "Folder ROM: %s",
-  "title_advanced": "Avansat",
+  "title_advanced": "Setări avansate",
   "sub_advanced": "A comută/editează  B înapoi",
   "stay_awake": "Rămâi treaz la descărcare: %s",
   "group_consoles": "Grupează consolele: %s",
@@ -104,7 +104,7 @@
   "update_up_to_date": "Ești la zi (v%s).",
   "update_confirm": "Actualizezi la %s? Înlocuiește aplicația.",
   "updating": "Se actualizează",
-  "update_downloading": "Se descarcă %s: %d%%  (%s / %s)  -  te rog așteaptă",
+  "update_downloading": "Se descarcă %s: %d%%   (%s / %s)  -  te rog așteaptă",
   "update_dl_cancel": "Se descarcă actualizarea - apasă B pentru a anula",
   "update_start_fail": "Nu s-a putut începe descărcarea.",
   "update_fail": "Descărcarea actualizării a eșuat.",
@@ -161,5 +161,15 @@
 
   "manage_data": "Gestionare date",
   "title_manage_data": "Gestionare date",
-  "sub_manage_data": "A selectează  B înapoi"
+  "sub_manage_data": "A selectează  B înapoi",
+
+  "waiting_network": "Offline - descărcările se reiau când revine rețeaua",
+
+  "search_capped": "%d+ rezultate - rafinează căutarea",
+  "view_logs": "Vezi jurnalele",
+  "title_view_logs": "Vezi jurnalele",
+  "sub_view_logs": "A selectează  B înapoi",
+  "debug_log": "Vezi jurnalul de depanare",
+  "title_debug_log": "Jurnal de depanare",
+  "sub_debug_log": "X șterge jurnal  B înapoi"
 }

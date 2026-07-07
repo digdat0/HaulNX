@@ -55,12 +55,12 @@
   "view_log": "View download log",
   "manage_consoles": "Manage consoles (show/hide)",
   "manage_downloads": "Manage downloads folder",
-  "advanced": "Advanced",
+  "advanced": "Advanced settings",
   "controls_help": "Controls / Help",
   "credits": "Credits",
   "rom_folder": "ROM folder: %s",
 
-  "title_advanced": "Advanced",
+  "title_advanced": "Advanced settings",
   "sub_advanced": "A toggle/edit  B back",
   "stay_awake": "Stay awake while downloading: %s",
   "group_consoles": "Group consoles: %s",
@@ -118,7 +118,7 @@
   "update_up_to_date": "You are up to date (v%s).",
   "update_confirm": "Update to %s?  Replaces the app.",
   "updating": "Updating",
-  "update_downloading": "Downloading %s: %d%%  (%s / %s)  -  please wait",
+  "update_downloading": "Downloading %s: %d%%   (%s / %s)  -  please wait",
   "update_dl_cancel": "Downloading update - press B to cancel",
   "update_start_fail": "Could not start the downloader.",
   "update_fail": "Update download failed.",
@@ -187,5 +187,15 @@
 
   "manage_data": "Manage data",
   "title_manage_data": "Manage data",
-  "sub_manage_data": "A select  B back"
+  "sub_manage_data": "A select  B back",
+
+  "waiting_network": "Offline - downloads resume when the network returns",
+
+  "search_capped": "%d+ results - refine your search",
+  "view_logs": "View logs",
+  "title_view_logs": "View logs",
+  "sub_view_logs": "A select  B back",
+  "debug_log": "View debug log",
+  "title_debug_log": "Debug log",
+  "sub_debug_log": "X clear log  B back"
 }

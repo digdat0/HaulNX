@@ -154,6 +154,7 @@ int extract_archive(const char *src, const char *dest_dir, extract_cb cb,
         la_int64_t offset;
         la_int64_t pos = 0;
         bool write_ok = true;
+        bool cancelled = false;
         for (;;) {
             int r = archive_read_data_block(a, &buff, &size, &offset);
             if (r == ARCHIVE_EOF) {
@@ -176,13 +177,21 @@ int extract_archive(const char *src, const char *dest_dir, extract_cb cb,
                 }
                 pos = offset + (la_int64_t)size;
             }
+            /* Per-block progress so one huge entry still visibly moves (and
+             * a cancel takes effect mid-file, not only between entries). */
+            if (cb && !cb(userdata, rel, count,
+                          (uint64_t)archive_filter_bytes(a, -1))) {
+                write_ok = false;
+                cancelled = true;
+                break;
+            }
         }
         fclose(f);
         free(wbuf);
         if (!write_ok) {
             remove(out);
-            if (disk_fail) {
-                break; /* SD write failed: the rest will fail too */
+            if (cancelled || disk_fail) {
+                break; /* cancelled, or SD failed: the rest would fail too */
             }
             continue;
         }
@@ -190,7 +199,8 @@ int extract_archive(const char *src, const char *dest_dir, extract_cb cb,
         if (existed) {
             overwrites++;
         }
-        if (cb && !cb(userdata, rel, count)) {
+        if (cb && !cb(userdata, rel, count,
+                      (uint64_t)archive_filter_bytes(a, -1))) {
             break;
         }
     }

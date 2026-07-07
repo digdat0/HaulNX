@@ -50,11 +50,11 @@
   "view_log": "Zobacz dziennik pobierania",
   "manage_consoles": "Zarządzaj konsolami (pokaż/ukryj)",
   "manage_downloads": "Zarządzaj folderem pobierania",
-  "advanced": "Zaawansowane",
+  "advanced": "Ustawienia zaawansowane",
   "controls_help": "Sterowanie / Pomoc",
   "credits": "Twórcy",
   "rom_folder": "Folder ROM: %s",
-  "title_advanced": "Zaawansowane",
+  "title_advanced": "Ustawienia zaawansowane",
   "sub_advanced": "A przełącz/edytuj  B wstecz",
   "stay_awake": "Nie usypiaj podczas pobierania: %s",
   "group_consoles": "Grupuj konsole: %s",
@@ -104,7 +104,7 @@
   "update_up_to_date": "Masz najnowszą wersję (v%s).",
   "update_confirm": "Zaktualizować do %s? Zastąpi aplikację.",
   "updating": "Aktualizowanie",
-  "update_downloading": "Pobieranie %s: %d%%  (%s / %s)  -  proszę czekać",
+  "update_downloading": "Pobieranie %s: %d%%   (%s / %s)  -  proszę czekać",
   "update_dl_cancel": "Pobieranie aktualizacji - naciśnij B aby anulować",
   "update_start_fail": "Nie udało się rozpocząć pobierania.",
   "update_fail": "Pobieranie aktualizacji nieudane.",
@@ -161,5 +161,15 @@
 
   "manage_data": "Zarządzaj danymi",
   "title_manage_data": "Zarządzaj danymi",
-  "sub_manage_data": "A wybierz  B wstecz"
+  "sub_manage_data": "A wybierz  B wstecz",
+
+  "waiting_network": "Offline - pobieranie wznowi się po powrocie sieci",
+
+  "search_capped": "%d+ wyników - doprecyzuj wyszukiwanie",
+  "view_logs": "Pokaż dzienniki",
+  "title_view_logs": "Pokaż dzienniki",
+  "sub_view_logs": "A wybierz  B wstecz",
+  "debug_log": "Pokaż dziennik debugowania",
+  "title_debug_log": "Dziennik debugowania",
+  "sub_debug_log": "X wyczyść dziennik  B wstecz"
 }

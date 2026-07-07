@@ -2,6 +2,7 @@
 #define EXTRACT_H
 
 #include <stdbool.h>
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -11,8 +12,13 @@ extern "C" {
  * .zip .7z .rar .tar .tgz .tbz .tbz2 .txz .tar.gz .tar.bz2 .tar.xz */
 bool is_archive_name(const char *filename);
 
-/* Per-entry callback during extraction. Return false to cancel. */
-typedef bool (*extract_cb)(void *userdata, const char *entry_name, int done);
+/* Progress callback during extraction: called per data block and per finished
+ * entry. `done` = entries completed so far; `bytes_read` = raw bytes consumed
+ * from the archive file so far (compare against the archive's file size for a
+ * percentage — meaningful even mid-way through one huge entry). Return false
+ * to cancel. */
+typedef bool (*extract_cb)(void *userdata, const char *entry_name, int done,
+                           uint64_t bytes_read);
 
 /* Extract every regular file in `src` into `dest_dir`, preserving the archive's
  * internal directory structure. Returns the number of files extracted, or -1 if

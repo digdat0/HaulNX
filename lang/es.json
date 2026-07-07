@@ -50,11 +50,11 @@
   "view_log": "Ver registro de descargas",
   "manage_consoles": "Gestionar consolas (mostrar/ocultar)",
   "manage_downloads": "Gestionar carpeta de descargas",
-  "advanced": "Avanzado",
+  "advanced": "Configuración avanzada",
   "controls_help": "Controles / Ayuda",
   "credits": "Créditos",
   "rom_folder": "Carpeta de ROMs: %s",
-  "title_advanced": "Avanzado",
+  "title_advanced": "Configuración avanzada",
   "sub_advanced": "A alternar/editar  B volver",
   "stay_awake": "Mantener activo durante descarga: %s",
   "group_consoles": "Agrupar consolas: %s",
@@ -103,7 +103,7 @@
   "update_fetch_fail": "No se pudo obtener la información de la versión.",
   "update_up_to_date": "Estás al día (v%s).",
   "update_confirm": "¿Actualizar a %s? Reemplaza la aplicación.",
-  "update_downloading": "Descargando %s: %d%%  (%s / %s)  -  por favor espera",
+  "update_downloading": "Descargando %s: %d%%   (%s / %s)  -  por favor espera",
   "update_dl_cancel": "Descargando actualización - pulsa B para cancelar",
   "update_start_fail": "No se pudo iniciar la descarga.",
   "update_fail": "La descarga de la actualización falló.",
@@ -161,5 +161,15 @@
 
   "manage_data": "Gestionar datos",
   "title_manage_data": "Gestionar datos",
-  "sub_manage_data": "A seleccionar  B volver"
+  "sub_manage_data": "A seleccionar  B volver",
+
+  "waiting_network": "Sin conexión - las descargas se reanudarán cuando vuelva la red",
+
+  "search_capped": "%d+ resultados - afina tu búsqueda",
+  "view_logs": "Ver registros",
+  "title_view_logs": "Ver registros",
+  "sub_view_logs": "A seleccionar  B volver",
+  "debug_log": "Ver registro de depuración",
+  "title_debug_log": "Registro de depuración",
+  "sub_debug_log": "X borrar registro  B atrás"
 }

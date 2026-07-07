@@ -51,6 +51,7 @@ static std::vector<DirEnt> g_dlfiles; // files in the downloads temp folder
 static std::vector<std::string> g_picker; // sorted supported consoles for the picker
 static std::vector<int> g_home_map; // grouped Browse: visible row -> console index
 static std::string g_launch_path;   // argv[0] from main(), for self-update
+static bool g_net_ok = true;        // last connectivity poll (RefreshStatus)
 
 // ---- theme ----------------------------------------------------------------
 struct AppTheme {
@@ -373,6 +374,10 @@ static bool file_installed(const char *target, const char *fname) {
 
 enum { SORT_DEFAULT, SORT_NAME_AZ, SORT_NAME_ZA, SORT_SIZE_DESC, SORT_SIZE_ASC, SORT__COUNT };
 static int g_sort_mode = SORT_DEFAULT;
+static const int g_sort_keys[] = {
+    S_SORT_DEFAULT, S_SORT_NAME_AZ, S_SORT_NAME_ZA,
+    S_SORT_SIZE_DESC, S_SORT_SIZE_ASC
+};
 
 static void rebuild_files(MainLayout *lay, const char *target) {
     lay->ClearMenu();
@@ -413,6 +418,21 @@ static void rebuild_files(MainLayout *lay, const char *target) {
     if (g_files.empty()) {
         lay->AddRow(tr(S_NO_FILES_MATCH));
     }
+    // Persistent indicator for a non-default sort and/or an active filter —
+    // the toast announcing them vanishes, and an active filter is otherwise
+    // invisible ("where did my files go?").
+    std::string info;
+    if (g_sort_mode != SORT_DEFAULT) {
+        info = tr(g_sort_keys[g_sort_mode]);
+    }
+    if (!g_filter.empty()) {
+        char fb[120];
+        snprintf(fb, sizeof(fb), "%s\"%s\" (%d)",
+                 info.empty() ? "" : "  ·  ", g_filter.c_str(),
+                 (int)g_files.size());
+        info += fb;
+    }
+    lay->SetRomInfo(info);
 }
 
 // Background metadata load: ia_fetch runs on its own thread so the file
@@ -849,6 +869,9 @@ void MainLayout::AddRow2(const std::string &left, const std::string &right,
 }
 s32 MainLayout::Sel() { return this->list->GetSelected(); }
 void MainLayout::SetSel(s32 i) { this->list->SetSelected(i); }
+bool MainLayout::ConsumeTouchActivate() {
+    return this->list->ConsumeTouchActivate();
+}
 s32 MainLayout::RowCount() { return this->list->Count(); }
 void MainLayout::MoveBy(s32 delta) { this->list->MoveBy(delta); }
 void MainLayout::Step(s32 delta) { this->list->Step(delta); }
@@ -909,6 +932,7 @@ void MainApplication::RefreshStatus() {
     NifmInternetConnectionStatus nst = (NifmInternetConnectionStatus)0;
     bool net = R_SUCCEEDED(nifmGetInternetConnectionStatus(&ntype, &wstr, &nst)) &&
                nst == NifmInternetConnectionStatus_Connected;
+    g_net_ok = net;
     if (net) {
         const char *bars[] = {"▂__", "▂▄_", "▂▄▆", "▂▄█"};
         // Wired (LAN adapter) reports wireless strength 0; show full bars.
@@ -1057,7 +1081,9 @@ MainApplication::Tab MainApplication::CurrentTab() {
     case Screen::Downloads:
     case Screen::Language:
     case Screen::Cache:
-    case Screen::ManageData: return Tab::Settings;
+    case Screen::ManageData:
+    case Screen::ViewLogs:
+    case Screen::DebugLog: return Tab::Settings;
     default:                return Tab::Browse; // Home/Repos/Files/RepoEdit/Picker/Search
     }
 }
@@ -1131,8 +1157,8 @@ void MainApplication::GotoSettings() {
     this->layout->SetSubtitle(tr(S_SUB_SETTINGS));
     this->layout->ClearMenu();
     this->layout->AddRow(tr(S_CHECK_UPDATES));          // 0
-    this->layout->AddRow(tr(S_VIEW_LOG));               // 1
-    this->layout->AddRow(tr(S_MANAGE_CONSOLES));        // 2
+    this->layout->AddRow(tr(S_ADVANCED));               // 1
+    this->layout->AddRow(tr(S_VIEW_LOGS));              // 2
     this->layout->AddRow(tr(S_MANAGE_DATA));            // 3
     {
         char lb[64];
@@ -1146,8 +1172,7 @@ void MainApplication::GotoSettings() {
                  is_light_theme() ? tr(S_THEME_LIGHT) : tr(S_THEME_DARK));
         this->layout->AddRow(tb);                       // 5
     }
-    this->layout->AddRow(tr(S_ADVANCED));               // 6
-    this->layout->AddRow(tr(S_CREDITS));                // 7
+    this->layout->AddRow(tr(S_CREDITS));                // 6
     char ri[600];
     snprintf(ri, sizeof(ri), tr(S_ROM_FOLDER), roms_root(&g_tico));
     this->layout->SetRomInfo(ri);
@@ -1158,23 +1183,24 @@ void MainApplication::GotoAdvanced() {
     this->layout->SetTitle(tr(S_TITLE_ADVANCED));
     this->layout->SetSubtitle(tr(S_SUB_ADVANCED));
     this->layout->ClearMenu();
+    this->layout->AddRow(tr(S_MANAGE_CONSOLES));  // 0
     char r[96];
     snprintf(r, sizeof(r), tr(S_STAY_AWAKE),
              g_prefs.prevent_sleep ? tr(S_ON) : tr(S_OFF));
-    this->layout->AddRow(r);                      // 0
+    this->layout->AddRow(r);                      // 1
     snprintf(r, sizeof(r), tr(S_GROUP_CONSOLES),
              g_prefs.group_consoles ? tr(S_ON) : tr(S_OFF));
-    this->layout->AddRow(r);                      // 1
+    this->layout->AddRow(r);                      // 2
     snprintf(r, sizeof(r), tr(S_ARCHIVE_CREDS),
              g_creds.access_key[0] ? tr(S_SET) : tr(S_UNSET));
-    this->layout->AddRow(r);                      // 2
-    snprintf(r, sizeof(r), tr(S_META_CACHE), g_prefs.use_cache ? tr(S_ON) : tr(S_OFF));
     this->layout->AddRow(r);                      // 3
-    snprintf(r, sizeof(r), tr(S_MAX_DOWNLOADS), g_prefs.max_downloads);
+    snprintf(r, sizeof(r), tr(S_META_CACHE), g_prefs.use_cache ? tr(S_ON) : tr(S_OFF));
     this->layout->AddRow(r);                      // 4
+    snprintf(r, sizeof(r), tr(S_MAX_DOWNLOADS), g_prefs.max_downloads);
+    this->layout->AddRow(r);                      // 5
     snprintf(r, sizeof(r), tr(S_NET_CHECK_STARTUP),
              g_prefs.net_check ? tr(S_ON) : tr(S_OFF));
-    this->layout->AddRow(r);                      // 5
+    this->layout->AddRow(r);                      // 6
 }
 
 void MainApplication::GotoDownloads() {
@@ -1260,6 +1286,44 @@ void MainApplication::GotoManageData() {
     this->layout->AddRow(tr(S_MANAGE_CACHE));     // 1
 }
 
+void MainApplication::GotoViewLogs() {
+    this->screen = Screen::ViewLogs;
+    this->layout->SetTitle(tr(S_TITLE_VIEW_LOGS));
+    this->layout->SetSubtitle(tr(S_SUB_VIEW_LOGS));
+    this->layout->ClearMenu();
+    this->layout->AddRow(tr(S_VIEW_LOG));  // 0: download history
+    this->layout->AddRow(tr(S_DEBUG_LOG)); // 1: debug.log
+}
+
+void MainApplication::GotoDebugLog() {
+    this->screen = Screen::DebugLog;
+    this->layout->SetTitle(tr(S_TITLE_DEBUG_LOG));
+    this->layout->SetSubtitle(tr(S_SUB_DEBUG_LOG));
+    this->layout->ClearMenu();
+    // Newest first, capped so a huge log doesn't stall the UI.
+    std::ifstream f(LOG_PATH);
+    std::string line;
+    std::vector<std::string> lines;
+    while (std::getline(f, line)) {
+        if (!line.empty()) {
+            lines.push_back(line);
+        }
+    }
+    const int max_lines = 500;
+    int shown = 0;
+    for (int i = (int)lines.size() - 1; i >= 0 && shown < max_lines; i--) {
+        this->layout->AddRow(lines[i]);
+        shown++;
+    }
+    if (shown == 0) {
+        this->layout->AddRow(tr(S_NO_LOG));
+    } else if ((int)lines.size() > shown) {
+        char info[64];
+        snprintf(info, sizeof(info), "%d / %d", shown, (int)lines.size());
+        this->layout->SetRomInfo(info);
+    }
+}
+
 struct SearchHit {
     std::string name;
     std::string url;
@@ -1291,11 +1355,14 @@ void MainApplication::GotoSearch(const std::string &query) {
         }
     }
 
-    // Scan all cached metadata files.
+    // Scan all cached metadata files. Results are capped; keep scanning just
+    // far enough past the cap to know it was hit, then tell the user.
+    const int max_results = 200;
+    bool capped = false;
     DIR *d = opendir(CACHE_DIR);
     if (d) {
         struct dirent *e;
-        while ((e = readdir(d)) != NULL) {
+        while ((e = readdir(d)) != NULL && !capped) {
             const char *dot = strrchr(e->d_name, '.');
             if (!dot || strcmp(dot, ".json") != 0) continue;
 
@@ -1350,13 +1417,17 @@ void MainApplication::GotoSearch(const std::string &query) {
             int fi = json_obj_get(body, tok, 0, "files");
             if (fi >= 0 && tok[fi].type == JSMN_ARRAY) {
                 int n = tok[fi].size, ch = fi + 1;
-                for (int i = 0; i < n && g_search_results.size() < 200; i++) {
+                for (int i = 0; i < n && !capped; i++) {
                     if (tok[ch].type == JSMN_OBJECT) {
                         char fname[512];
                         json_copy(body, tok,
                                   json_obj_get(body, tok, ch, "name"),
                                   fname, sizeof(fname));
                         if (fname[0] && ci_contains(fname, query.c_str())) {
+                            if ((int)g_search_results.size() >= max_results) {
+                                capped = true; // one more match proves it
+                                break;
+                            }
                             SearchHit h;
                             h.name = fname;
                             h.target = target;
@@ -1402,9 +1473,13 @@ void MainApplication::GotoSearch(const std::string &query) {
     if (g_search_results.empty()) {
         this->layout->AddRow(tr(S_SEARCH_NO_RESULTS));
     } else {
-        char info[64];
-        snprintf(info, sizeof(info), tr(S_SEARCH_N_RESULTS),
-                 (int)g_search_results.size());
+        char info[128];
+        if (capped) {
+            snprintf(info, sizeof(info), tr(S_SEARCH_CAPPED), max_results);
+        } else {
+            snprintf(info, sizeof(info), tr(S_SEARCH_N_RESULTS),
+                     (int)g_search_results.size());
+        }
         this->layout->SetRomInfo(info);
     }
 }
@@ -1674,7 +1749,8 @@ void MainApplication::GotoLog() {
 }
 
 // ---- input ----------------------------------------------------------------
-void MainApplication::HandleInput(u64 down, u64 held) {
+void MainApplication::HandleInput(u64 down, u64 held,
+                                  const pu::ui::TouchPoint &touch) {
     // One-shot startup dialogs, deferred from OnLoad so they render over a
     // live frame instead of a black screen.
     if (this->startup_checks) {
@@ -1757,6 +1833,27 @@ void MainApplication::HandleInput(u64 down, u64 held) {
         (void)held;
         this->MetaTick();
         return;
+    }
+
+    // Touch: tapping a tab in the top strip switches to it, and tapping the
+    // already-selected list row acts as an A press (TableList handles row
+    // selection and drag-scrolling itself).
+    {
+        static bool tch_prev = false;
+        bool tch_now = !touch.IsEmpty();
+        if (tch_now && !tch_prev && touch.y >= 80 && touch.y < 150) {
+            s32 seg = (s32)pu::ui::render::ScreenWidth / 4;
+            s32 idx = touch.x / (seg > 0 ? seg : 1);
+            if (idx >= 0 && idx < 4) {
+                this->GotoTab((Tab)idx);
+                tch_prev = tch_now;
+                return;
+            }
+        }
+        tch_prev = tch_now;
+    }
+    if (this->layout->ConsumeTouchActivate()) {
+        down |= HidNpadButton_A;
     }
 
     // Keep the tab bar highlight in sync with whatever screen we're on.
@@ -1856,6 +1953,15 @@ void MainApplication::HandleInput(u64 down, u64 held) {
                 snprintf(info, sizeof(info), "%s / %s",
                          human_size(it->now).c_str(),
                          human_size(it->total).c_str());
+            } else if (it->status == Q_EXTRACTING) {
+                // Percent bar from archive bytes consumed (moves even inside
+                // one huge file) + count of entries finished so far.
+                if (it->total) {
+                    prog = (float)it->now / (float)it->total;
+                }
+                if (it->ex_files > 0) {
+                    snprintf(info, sizeof(info), "(%d)", it->ex_files);
+                }
             } else if (it->status == Q_FAILED && it->fail_reason[0]) {
                 snprintf(info, sizeof(info), "%s", it->fail_reason);
             } else if (it->status == Q_DONE || it->status == Q_SAVED) {
@@ -1896,6 +2002,17 @@ void MainApplication::HandleInput(u64 down, u64 held) {
             this->layout->AddRow(tr(S_QUEUE_EMPTY));
         }
         this->layout->SetSel(keep);
+        // Offline with work pending: say why nothing is moving (items sit at
+        // "pause"/"wait" and resume automatically when the network returns).
+        if (!g_net_ok) {
+            for (int i = 0; i < n; i++) {
+                QStatus s = qv[i].item.status;
+                if (s == Q_QUEUED || s == Q_PAUSED || s == Q_DOWNLOADING) {
+                    this->layout->SetRomInfo(tr(S_WAITING_NETWORK));
+                    break;
+                }
+            }
+        }
     }
 
     // SD/battery/network refresh at most ~every 10s (psm/statvfs aren't free,
@@ -2188,11 +2305,7 @@ void MainApplication::HandleInput(u64 down, u64 held) {
             }
         } else if (down & HidNpadButton_X) {
             g_sort_mode = (g_sort_mode + 1) % SORT__COUNT;
-            static const int sort_keys[] = {
-                S_SORT_DEFAULT, S_SORT_NAME_AZ, S_SORT_NAME_ZA,
-                S_SORT_SIZE_DESC, S_SORT_SIZE_ASC
-            };
-            this->Toast(tr(sort_keys[g_sort_mode]));
+            this->Toast(tr(g_sort_keys[g_sort_mode]));
             s32 keep = this->layout->Sel();
             rebuild_files(this->layout.get(), g_files_target);
             if (keep >= 0 && keep < this->layout->RowCount())
@@ -2264,11 +2377,11 @@ void MainApplication::HandleInput(u64 down, u64 held) {
                     // fetch retries transient errors and would freeze the UI)
                 this->ChkStart();
                 return;
-            case 1: // View download log
-                this->GotoLog();
+            case 1: // Advanced settings (incl. manage consoles)
+                this->GotoAdvanced();
                 return;
-            case 2: // Manage consoles
-                this->GotoManage();
+            case 2: // View logs (download history + debug log)
+                this->GotoViewLogs();
                 return;
             case 3: // Manage data (downloads folder + metadata cache)
                 this->GotoManageData();
@@ -2288,10 +2401,7 @@ void MainApplication::HandleInput(u64 down, u64 held) {
                 this->SyncTab();
                 break;
             }
-            case 6: // Advanced
-                this->GotoAdvanced();
-                return;
-            case 7: // Credits
+            case 6: // Credits
                 this->CreateShowDialog(
                     tr(S_CREDITS),
                     std::string("TicoDL+ v") + APP_VERSION_STR + " by digdat0\n\n"
@@ -2316,26 +2426,29 @@ void MainApplication::HandleInput(u64 down, u64 held) {
             s32 i = this->layout->Sel();
             switch (i) {
             case 0:
+                this->GotoManage();
+                return;
+            case 1:
                 g_prefs.prevent_sleep = !g_prefs.prevent_sleep;
                 prefs_save(&g_prefs);
                 break;
-            case 1:
+            case 2:
                 g_prefs.group_consoles = !g_prefs.group_consoles;
                 prefs_save(&g_prefs);
                 break;
-            case 2:
+            case 3:
                 this->GotoCreds();
                 return;
-            case 3:
+            case 4:
                 g_prefs.use_cache = !g_prefs.use_cache;
                 prefs_save(&g_prefs);
                 break;
-            case 4:
+            case 5:
                 g_prefs.max_downloads = (g_prefs.max_downloads % 5) + 1;
                 queue_set_max_dl(g_prefs.max_downloads);
                 prefs_save(&g_prefs);
                 break;
-            case 5:
+            case 6:
                 g_prefs.net_check = !g_prefs.net_check;
                 prefs_save(&g_prefs);
                 break;
@@ -2349,7 +2462,7 @@ void MainApplication::HandleInput(u64 down, u64 held) {
             }
         } else if (down & (HidNpadButton_Left | HidNpadButton_Right)) {
             s32 i = this->layout->Sel();
-            if (i == 4) {
+            if (i == 5) {
                 if (down & HidNpadButton_Right) {
                     g_prefs.max_downloads = (g_prefs.max_downloads % 5) + 1;
                 } else {
@@ -2401,6 +2514,32 @@ void MainApplication::HandleInput(u64 down, u64 held) {
             case 0: this->GotoDownloads(); return;
             case 1: this->GotoCache(); return;
             default: break;
+            }
+        }
+        break;
+    }
+
+    case Screen::ViewLogs: {
+        if (down & HidNpadButton_B) {
+            this->GotoSettings();
+        } else if (down & HidNpadButton_A) {
+            switch (this->layout->Sel()) {
+            case 0: this->GotoLog(); return;      // download history
+            case 1: this->GotoDebugLog(); return; // debug.log
+            default: break;
+            }
+        }
+        break;
+    }
+
+    case Screen::DebugLog: {
+        if (down & HidNpadButton_B) {
+            this->GotoViewLogs();
+        } else if (down & HidNpadButton_X) {
+            if (this->Confirm(tr(S_CLEAR_LOG), tr(S_CLEAR_LOG_CONFIRM))) {
+                remove(LOG_PATH);
+                this->Toast(tr(S_LOG_CLEARED));
+                this->GotoDebugLog();
             }
         }
         break;
@@ -2761,7 +2900,7 @@ void MainApplication::HandleInput(u64 down, u64 held) {
             if (this->log_origin == Screen::Queue) {
                 this->GotoQueue();
             } else {
-                this->GotoSettings();
+                this->GotoViewLogs(); // opened from Settings > View logs
             }
         } else if (down & HidNpadButton_A) {
             s32 i = this->layout->Sel();
@@ -2792,7 +2931,7 @@ void MainApplication::HandleInput(u64 down, u64 held) {
 
     case Screen::Manage: {
         if (down & HidNpadButton_B) {
-            this->GotoSettings();
+            this->GotoAdvanced(); // manage consoles now lives under Advanced
         } else if (down & HidNpadButton_A) {
             s32 i = this->layout->Sel();
             if (i >= 0 && i < g_cfg.console_count) {
@@ -2917,8 +3056,7 @@ void MainApplication::OnLoad() {
     this->SetOnInput([&](const u64 down, const u64 up, const u64 held,
                          const pu::ui::TouchPoint touch) {
         (void)up;
-        (void)touch;
-        this->HandleInput(down, held);
+        this->HandleInput(down, held, touch);
     });
 }
 

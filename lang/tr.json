@@ -50,11 +50,11 @@
   "view_log": "İndirme günlüğünü görüntüle",
   "manage_consoles": "Konsolları yönet (göster/gizle)",
   "manage_downloads": "İndirme klasörünü yönet",
-  "advanced": "Gelişmiş",
+  "advanced": "Gelişmiş ayarlar",
   "controls_help": "Kontroller / Yardım",
   "credits": "Katkıda Bulunanlar",
   "rom_folder": "ROM klasörü: %s",
-  "title_advanced": "Gelişmiş",
+  "title_advanced": "Gelişmiş ayarlar",
   "sub_advanced": "A değiştir/düzenle  B geri",
   "stay_awake": "İndirme sırasında uyanık kal: %s",
   "group_consoles": "Konsolları grupla: %s",
@@ -104,7 +104,7 @@
   "update_up_to_date": "Güncelsiniz (v%s).",
   "update_confirm": "%s sürümüne güncellensin mi? Uygulamayı değiştirir.",
   "updating": "Güncelleniyor",
-  "update_downloading": "%s indiriliyor: %d%%  (%s / %s)  -  lütfen bekleyin",
+  "update_downloading": "%s indiriliyor: %d%%   (%s / %s)  -  lütfen bekleyin",
   "update_dl_cancel": "Güncelleme indiriliyor - iptal için B'ye basın",
   "update_start_fail": "İndirme başlatılamadı.",
   "update_fail": "Güncelleme indirmesi başarısız.",
@@ -161,5 +161,15 @@
 
   "manage_data": "Verileri yönet",
   "title_manage_data": "Verileri yönet",
-  "sub_manage_data": "A seç  B geri"
+  "sub_manage_data": "A seç  B geri",
+
+  "waiting_network": "Çevrimdışı - ağ geri gelince indirmeler devam eder",
+
+  "search_capped": "%d+ sonuç - aramayı daralt",
+  "view_logs": "Günlükleri görüntüle",
+  "title_view_logs": "Günlükleri görüntüle",
+  "sub_view_logs": "A seç  B geri",
+  "debug_log": "Hata ayıklama günlüğünü görüntüle",
+  "title_debug_log": "Hata ayıklama günlüğü",
+  "sub_debug_log": "X günlüğü temizle  B geri"
 }

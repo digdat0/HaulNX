@@ -39,7 +39,8 @@ typedef struct {
     volatile QStatus status;
     volatile uint64_t now;
     volatile uint64_t total;
-    volatile uint64_t speed; /* bytes/sec, while downloading */
+    volatile uint64_t speed;   /* bytes/sec, while downloading */
+    volatile int ex_files;     /* files extracted so far, while extracting */
     volatile bool cancel;
     volatile bool pause; /* ask the worker to preempt this download (keep .part) */
     long http_code;

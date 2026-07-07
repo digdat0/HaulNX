@@ -224,6 +224,20 @@ enum {
     S_TITLE_MANAGE_DATA,
     S_SUB_MANAGE_DATA,
 
+    /* ---- queue offline banner ---- */
+    S_WAITING_NETWORK,
+
+    /* ---- search result cap notice ---- */
+    S_SEARCH_CAPPED,
+
+    /* ---- view logs submenu + debug log viewer ---- */
+    S_VIEW_LOGS,
+    S_TITLE_VIEW_LOGS,
+    S_SUB_VIEW_LOGS,
+    S_DEBUG_LOG,
+    S_TITLE_DEBUG_LOG,
+    S_SUB_DEBUG_LOG,
+
     S__COUNT
 };
 

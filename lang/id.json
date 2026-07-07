@@ -50,11 +50,11 @@
   "view_log": "Lihat log unduhan",
   "manage_consoles": "Kelola konsol (tampil/sembunyikan)",
   "manage_downloads": "Kelola folder unduhan",
-  "advanced": "Lanjutan",
+  "advanced": "Pengaturan lanjutan",
   "controls_help": "Kontrol / Bantuan",
   "credits": "Kredit",
   "rom_folder": "Folder ROM: %s",
-  "title_advanced": "Lanjutan",
+  "title_advanced": "Pengaturan lanjutan",
   "sub_advanced": "A alihkan/edit  B kembali",
   "stay_awake": "Tetap terjaga saat mengunduh: %s",
   "group_consoles": "Kelompokkan konsol: %s",
@@ -104,7 +104,7 @@
   "update_up_to_date": "Anda sudah terbaru (v%s).",
   "update_confirm": "Perbarui ke %s? Mengganti aplikasi.",
   "updating": "Memperbarui",
-  "update_downloading": "Mengunduh %s: %d%%  (%s / %s)  -  mohon tunggu",
+  "update_downloading": "Mengunduh %s: %d%%   (%s / %s)  -  mohon tunggu",
   "update_dl_cancel": "Mengunduh pembaruan - tekan B untuk membatalkan",
   "update_start_fail": "Gagal memulai unduhan.",
   "update_fail": "Unduhan pembaruan gagal.",
@@ -161,5 +161,15 @@
 
   "manage_data": "Kelola data",
   "title_manage_data": "Kelola data",
-  "sub_manage_data": "A pilih  B kembali"
+  "sub_manage_data": "A pilih  B kembali",
+
+  "waiting_network": "Offline - unduhan dilanjutkan saat jaringan kembali",
+
+  "search_capped": "%d+ hasil - persempit pencarian",
+  "view_logs": "Lihat log",
+  "title_view_logs": "Lihat log",
+  "sub_view_logs": "A pilih  B kembali",
+  "debug_log": "Lihat log debug",
+  "title_debug_log": "Log debug",
+  "sub_debug_log": "X hapus log  B kembali"
 }

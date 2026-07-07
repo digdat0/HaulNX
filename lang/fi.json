@@ -104,7 +104,7 @@
   "update_up_to_date": "Sinulla on uusin versio (v%s).",
   "update_confirm": "Päivitä versioon %s? Korvaa sovelluksen.",
   "updating": "Päivitetään",
-  "update_downloading": "Ladataan %s: %d%%  (%s / %s)  -  odota",
+  "update_downloading": "Ladataan %s: %d%%   (%s / %s)  -  odota",
   "update_dl_cancel": "Ladataan päivitystä - paina B peruuttaaksesi",
   "update_start_fail": "Latauksen aloitus epäonnistui.",
   "update_fail": "Päivityksen lataus epäonnistui.",
@@ -161,5 +161,15 @@
 
   "manage_data": "Hallitse tietoja",
   "title_manage_data": "Hallitse tietoja",
-  "sub_manage_data": "A valitse  B takaisin"
+  "sub_manage_data": "A valitse  B takaisin",
+
+  "waiting_network": "Offline - lataukset jatkuvat, kun verkko palaa",
+
+  "search_capped": "%d+ tulosta - tarkenna hakua",
+  "view_logs": "Näytä lokit",
+  "title_view_logs": "Näytä lokit",
+  "sub_view_logs": "A valitse  B takaisin",
+  "debug_log": "Näytä virheenkorjausloki",
+  "title_debug_log": "Virheenkorjausloki",
+  "sub_debug_log": "X tyhjennä loki  B takaisin"
 }

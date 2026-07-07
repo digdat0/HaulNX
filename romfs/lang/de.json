@@ -50,11 +50,11 @@
   "view_log": "Download-Protokoll anzeigen",
   "manage_consoles": "Konsolen verwalten (ein-/ausblenden)",
   "manage_downloads": "Download-Ordner verwalten",
-  "advanced": "Erweitert",
+  "advanced": "Erweiterte Einstellungen",
   "controls_help": "Steuerung / Hilfe",
   "credits": "Danksagungen",
   "rom_folder": "ROM-Ordner: %s",
-  "title_advanced": "Erweitert",
+  "title_advanced": "Erweiterte Einstellungen",
   "sub_advanced": "A umschalten/bearbeiten  B zurück",
   "stay_awake": "Aktiv bleiben beim Download: %s",
   "group_consoles": "Konsolen gruppieren: %s",
@@ -104,7 +104,7 @@
   "update_up_to_date": "Du bist auf dem neuesten Stand (v%s).",
   "update_confirm": "Auf %s aktualisieren? Ersetzt die App.",
   "updating": "Aktualisiere",
-  "update_downloading": "Lade %s herunter: %d%%  (%s / %s)  -  bitte warten",
+  "update_downloading": "Lade %s herunter: %d%%   (%s / %s)  -  bitte warten",
   "update_dl_cancel": "Update wird heruntergeladen - B drücken zum Abbrechen",
   "update_start_fail": "Download konnte nicht gestartet werden.",
   "update_fail": "Update-Download fehlgeschlagen.",
@@ -161,5 +161,15 @@
 
   "manage_data": "Daten verwalten",
   "title_manage_data": "Daten verwalten",
-  "sub_manage_data": "A auswählen  B zurück"
+  "sub_manage_data": "A auswählen  B zurück",
+
+  "waiting_network": "Offline - Downloads werden fortgesetzt, sobald das Netzwerk zurück ist",
+
+  "search_capped": "%d+ Treffer - Suche verfeinern",
+  "view_logs": "Protokolle anzeigen",
+  "title_view_logs": "Protokolle anzeigen",
+  "sub_view_logs": "A auswählen  B zurück",
+  "debug_log": "Debug-Protokoll anzeigen",
+  "title_debug_log": "Debug-Protokoll",
+  "sub_debug_log": "X Protokoll löschen  B zurück"
 }

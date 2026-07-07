@@ -50,11 +50,11 @@
   "view_log": "Xem nhật ký tải xuống",
   "manage_consoles": "Quản lý máy chơi game (hiện/ẩn)",
   "manage_downloads": "Quản lý thư mục tải xuống",
-  "advanced": "Nâng cao",
+  "advanced": "Cài đặt nâng cao",
   "controls_help": "Điều khiển / Trợ giúp",
   "credits": "Ghi công",
   "rom_folder": "Thư mục ROM: %s",
-  "title_advanced": "Nâng cao",
+  "title_advanced": "Cài đặt nâng cao",
   "sub_advanced": "A bật tắt/sửa  B quay lại",
   "stay_awake": "Giữ thức khi tải: %s",
   "group_consoles": "Nhóm máy chơi game: %s",
@@ -104,7 +104,7 @@
   "update_up_to_date": "Bạn đang dùng bản mới nhất (v%s).",
   "update_confirm": "Cập nhật lên %s? Thay thế ứng dụng.",
   "updating": "Đang cập nhật",
-  "update_downloading": "Đang tải %s: %d%%  (%s / %s)  -  vui lòng chờ",
+  "update_downloading": "Đang tải %s: %d%%   (%s / %s)  -  vui lòng chờ",
   "update_dl_cancel": "Đang tải cập nhật - nhấn B để hủy",
   "update_start_fail": "Không thể bắt đầu tải xuống.",
   "update_fail": "Tải cập nhật thất bại.",
@@ -161,5 +161,15 @@
 
   "manage_data": "Quản lý dữ liệu",
   "title_manage_data": "Quản lý dữ liệu",
-  "sub_manage_data": "A chọn  B quay lại"
+  "sub_manage_data": "A chọn  B quay lại",
+
+  "waiting_network": "Ngoại tuyến - tải xuống sẽ tiếp tục khi có mạng trở lại",
+
+  "search_capped": "Hơn %d kết quả - hãy thu hẹp tìm kiếm",
+  "view_logs": "Xem nhật ký",
+  "title_view_logs": "Xem nhật ký",
+  "sub_view_logs": "A chọn  B quay lại",
+  "debug_log": "Xem nhật ký gỡ lỗi",
+  "title_debug_log": "Nhật ký gỡ lỗi",
+  "sub_debug_log": "X xóa nhật ký  B quay lại"
 }

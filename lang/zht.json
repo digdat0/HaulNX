@@ -50,11 +50,11 @@
   "view_log": "檢視下載記錄",
   "manage_consoles": "管理主機（顯示/隱藏）",
   "manage_downloads": "管理下載資料夾",
-  "advanced": "進階",
+  "advanced": "進階設定",
   "controls_help": "操作說明 / 說明",
   "credits": "致謝",
   "rom_folder": "ROM 資料夾：%s",
-  "title_advanced": "進階",
+  "title_advanced": "進階設定",
   "sub_advanced": "A 切換/編輯  B 返回",
   "stay_awake": "下載時保持喚醒：%s",
   "group_consoles": "分組主機：%s",
@@ -104,7 +104,7 @@
   "update_up_to_date": "已是最新版本 (v%s)。",
   "update_confirm": "更新到 %s？將取代目前的應用程式。",
   "updating": "更新中",
-  "update_downloading": "正在下載 %s：%d%%  (%s / %s)  -  請稍候",
+  "update_downloading": "正在下載 %s：%d%%   (%s / %s)  -  請稍候",
   "update_dl_cancel": "正在下載更新 - 按 B 取消",
   "update_start_fail": "無法開始下載。",
   "update_fail": "更新下載失敗。",
@@ -161,5 +161,15 @@
 
   "manage_data": "資料管理",
   "title_manage_data": "資料管理",
-  "sub_manage_data": "A 選擇  B 返回"
+  "sub_manage_data": "A 選擇  B 返回",
+
+  "waiting_network": "離線 - 網路恢復後下載將自動繼續",
+
+  "search_capped": "超過 %d 條結果 - 請細化搜尋",
+  "view_logs": "檢視日誌",
+  "title_view_logs": "檢視日誌",
+  "sub_view_logs": "A 選擇  B 返回",
+  "debug_log": "檢視除錯日誌",
+  "title_debug_log": "除錯日誌",
+  "sub_debug_log": "X 清除日誌  B 返回"
 }
