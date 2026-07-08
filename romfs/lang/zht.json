@@ -36,7 +36,7 @@
   "queued_n": "已將 %d 個檔案加入佇列",
   "already_have": "已有 %d 個 — 將 %d 個新檔案 (%s) 加入佇列？",
   "title_queue": "下載佇列",
-  "sub_queue": "A 取消  X 重試  ZL/ZR 移動  Y 選單  - 記錄  B 返回",
+  "sub_queue": "A 取消  X 重試  ZL/ZR 移動  Dpad< 置頂 >置底  Y 選單  - 記錄  B 返回",
   "queue_empty": "(佇列為空)",
   "cancelled": "已取消",
   "retrying": "重試中",
@@ -73,7 +73,7 @@
   "dl_queue_warn": "\n\n部分檔案在佇列中，將被取消。",
   "dl_cleared": "下載已清除",
   "title_installed": "已安裝",
-  "sub_installed": "A 開啟  Y 選擇  X 重新命名  Dpad< 排序  Dpad> 置頂  - 刪除  L/R 分頁  B 返回",
+  "sub_installed": "A 開啟  Y 選擇  X 重新命名  Dpad< 排序  Dpad> 置頂  - 搜尋  L/R 分頁  B 返回",
   "dir_prefix": "[DIR] ",
   "delete_selected": "刪除選取的 %d 個項目？",
   "title_edit_repo": "編輯儲存庫",
@@ -179,5 +179,7 @@
   "retry_all": "重試所有失敗項",
   "clear_finished": "清除已完成",
   "retried_n": "%d 項已重新排隊",
-  "toast_all_done": "佇列完成：%d 成功，%d 失敗"
+  "toast_all_done": "佇列完成：%d 成功，%d 失敗",
+  "title_inst_search": "搜尋已安裝",
+  "sub_inst_search": "A 開啟  Y 新搜尋  B 返回"
 }

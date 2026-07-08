@@ -30,7 +30,8 @@ but it works.**
   - **Pin favorites** to the top (★) with **D-pad Right** — works the same on
     consoles, repos, and installed folders
   - **Global search** with **−** across every cached repo — results tagged with
-    their console, downloadable straight from the results
+    their console (and a `*` if already installed), downloadable straight from
+    the results
   - Show/hide consoles from **Settings → Advanced settings → Manage consoles**
   - On-screen name filter (**Y**), sort by name/size (**X**), `*` markers for
     already-installed files, ZL/ZR paging
@@ -44,7 +45,8 @@ but it works.**
   - Transient server errors (HTTP 5xx / throttling) are retried automatically
     with backoff, resuming the partial file
   - Pipelined extraction — the next download starts while the previous archive unpacks
-  - Progress bar, speed, ETA, cancel, retry (resumes in place), reorder (ZL/ZR)
+  - Progress bar, speed, ETA, cancel, retry (resumes in place), reorder one row
+    (ZL/ZR) or jump to top/bottom (D-pad ◀/▶) — the active download stays put
   - Queue actions menu (**Y**): retry every failed item or clear finished ones
     at once; a summary toast reports the tally when a batch finishes
   - Queue the entire file list at once with **−** (free-space check included)
@@ -64,7 +66,10 @@ but it works.**
   - Sorted alphabetically by full console name, pinned folders first
   - Re-sort with **D-pad Left** (name A–Z / Z–A / size); folders stay grouped
     and pinned ones stay on top
-  - Multi-select with **Y**, bulk-delete with **−**, rename with **X**
+  - **Search installed games** with **−** — a recursive scan of the ROM
+    folders; open a result to jump straight to its folder
+  - Multi-select with **Y**, then **−** to delete the marked items; rename
+    with **X**
 
 - **Touch support**
   - Tap a tab to switch to it; tap a list row to select it, tap it again to

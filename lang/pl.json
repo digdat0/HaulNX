@@ -36,7 +36,7 @@
   "queued_n": "%d plik(ów) w kolejce",
   "already_have": "Masz już %d — dodać %d nowych (%s) do kolejki?",
   "title_queue": "Kolejka pobierania",
-  "sub_queue": "A anuluj  X ponów  ZL/ZR przesuń  Y menu  - dziennik  B wstecz",
+  "sub_queue": "A anuluj  X ponów  ZL/ZR przesuń  Dpad< góra >dół  Y menu  - dziennik  B wstecz",
   "queue_empty": "(kolejka pusta)",
   "cancelled": "Anulowano",
   "retrying": "Ponawianie",
@@ -73,7 +73,7 @@
   "dl_queue_warn": "\n\nNiektóre są w kolejce pobierania i zostaną anulowane.",
   "dl_cleared": "Pobrane pliki usunięte",
   "title_installed": "Zainstalowane",
-  "sub_installed": "A otwórz  Y wybierz  X zmień nazwę  Dpad< Sortowanie  Dpad> przypnij  - usuń  L/R karty  B wstecz",
+  "sub_installed": "A otwórz  Y wybierz  X zmień nazwę  Dpad< Sortowanie  Dpad> przypnij  - szukaj  L/R karty  B wstecz",
   "dir_prefix": "[DIR] ",
   "delete_selected": "Usunąć %d wybranych elementów?",
   "title_edit_repo": "Edytuj repozytorium",
@@ -179,5 +179,7 @@
   "retry_all": "Ponów wszystkie nieudane",
   "clear_finished": "Wyczyść ukończone",
   "retried_n": "%d ponownie w kolejce",
-  "toast_all_done": "Kolejka gotowa: %d ok, %d nieudanych"
+  "toast_all_done": "Kolejka gotowa: %d ok, %d nieudanych",
+  "title_inst_search": "Szukaj zainstalowanych",
+  "sub_inst_search": "A otwórz  Y nowe wyszukiwanie  B wstecz"
 }

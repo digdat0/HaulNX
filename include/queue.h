@@ -92,6 +92,11 @@ int queue_retry_all(void);
  * order actually changed. */
 bool queue_move(int slot, int dir);
 
+/* Jump an item to the top of the waiting section (just below any active
+ * downloads) when to_bottom is false, or to the very bottom when true. The
+ * active download itself can't be moved. Returns true if the order changed. */
+bool queue_move_end(int slot, bool to_bottom);
+
 /* If a download/verify/extract is currently in progress, fill the out params
  * with its summary and return true; otherwise return false. `index` gets the
  * 1-based position of the active item among all queued items (by FIFO order) and

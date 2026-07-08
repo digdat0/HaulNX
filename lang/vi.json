@@ -36,7 +36,7 @@
   "queued_n": "%d tệp đã xếp hàng",
   "already_have": "Đã có %d — thêm %d mới (%s) vào hàng đợi?",
   "title_queue": "Hàng đợi tải xuống",
-  "sub_queue": "A hủy  X thử lại  ZL/ZR di chuyển  Y menu  - nhật ký  B quay lại",
+  "sub_queue": "A hủy  X thử lại  ZL/ZR di chuyển  Dpad< đầu >cuối  Y menu  - nhật ký  B quay lại",
   "queue_empty": "(hàng đợi trống)",
   "cancelled": "Đã hủy",
   "retrying": "Đang thử lại",
@@ -73,7 +73,7 @@
   "dl_queue_warn": "\n\nMột số đang trong hàng đợi và sẽ bị hủy.",
   "dl_cleared": "Đã xóa tải xuống",
   "title_installed": "Đã cài",
-  "sub_installed": "A mở  Y chọn  X đổi tên  Dpad< Sắp xếp  Dpad> ghim  - xóa  L/R tab  B quay lại",
+  "sub_installed": "A mở  Y chọn  X đổi tên  Dpad< Sắp xếp  Dpad> ghim  - tìm kiếm  L/R tab  B quay lại",
   "dir_prefix": "[DIR] ",
   "delete_selected": "Xóa %d mục đã chọn?",
   "title_edit_repo": "Sửa kho",
@@ -179,5 +179,7 @@
   "retry_all": "Thử lại tất cả thất bại",
   "clear_finished": "Xóa mục đã xong",
   "retried_n": "%d đưa lại vào hàng đợi",
-  "toast_all_done": "Hàng đợi xong: %d ok, %d lỗi"
+  "toast_all_done": "Hàng đợi xong: %d ok, %d lỗi",
+  "title_inst_search": "Tìm đã cài",
+  "sub_inst_search": "A mở  Y tìm mới  B quay lại"
 }

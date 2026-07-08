@@ -21,6 +21,9 @@ class TableList : public pu::ui::elm::Element {
         pu::ui::Color rclr;
         bool has_right;
         float progress; // 0..1 draws a progress bar; <0 = none
+        // Optional left icon (e.g. a console icon), BORROWED — owned by a
+        // shared cache elsewhere, never freed by this list.
+        pu::sdl2::Texture icon;
     };
 
   private:
@@ -57,6 +60,10 @@ class TableList : public pu::ui::elm::Element {
 
     static constexpr s32 PadX = 26;
     static constexpr s32 DragThreshold = 16; // px before a touch counts as a drag
+    static constexpr s32 IconGap = 12;       // gap between a row icon and its text
+
+    // Square draw size for a row icon (fits within the row height).
+    s32 IconPx() const { return this->row_h - 28; }
 
     void EnsureVisible() {
         if (this->sel < this->scroll_top) {
@@ -106,7 +113,9 @@ class TableList : public pu::ui::elm::Element {
                     rc.w = pu::ui::render::GetTextureWidth(rc.tex);
                     rc.h = pu::ui::render::GetTextureHeight(rc.tex);
                 }
-                s32 left_max = this->w - 2 * PadX - (rc.tex ? rc.w + PadX : 0);
+                s32 icon_inset = r.icon ? (this->IconPx() + IconGap) : 0;
+                s32 left_max = this->w - 2 * PadX - icon_inset -
+                               (rc.tex ? rc.w + PadX : 0);
                 if (left_max < 60) {
                     left_max = 60;
                 }
@@ -156,14 +165,16 @@ class TableList : public pu::ui::elm::Element {
         this->tch_row = -1;
         this->tch_activate = false;
     }
-    void AddRow(const std::string &left, const pu::ui::Color lclr) {
-        this->rows.push_back(Row{left, "", lclr, lclr, false, -1.0f});
+    void AddRow(const std::string &left, const pu::ui::Color lclr,
+                pu::sdl2::Texture icon = nullptr) {
+        this->rows.push_back(Row{left, "", lclr, lclr, false, -1.0f, icon});
         this->dirty = true;
     }
     void AddRow2(const std::string &left, const std::string &right,
                  const pu::ui::Color lclr, const pu::ui::Color rclr,
-                 const float progress = -1.0f) {
-        this->rows.push_back(Row{left, right, lclr, rclr, true, progress});
+                 const float progress = -1.0f,
+                 pu::sdl2::Texture icon = nullptr) {
+        this->rows.push_back(Row{left, right, lclr, rclr, true, progress, icon});
         this->dirty = true;
     }
 
@@ -250,8 +261,19 @@ class TableList : public pu::ui::elm::Element {
                 drawer->RenderTexture(rc.tex, rx + this->w - PadX - rc.w,
                                       rowy + (this->row_h - rc.h) / 2);
             }
+            // Optional left icon, then shift the left text past it.
+            s32 tx = rx + PadX;
+            if (this->rows[ridx].icon) {
+                s32 isz = this->IconPx();
+                pu::ui::render::TextureRenderOptions o;
+                o.width = isz;
+                o.height = isz;
+                drawer->RenderTexture(this->rows[ridx].icon, rx + PadX,
+                                      rowy + (this->row_h - isz) / 2, o);
+                tx += isz + IconGap;
+            }
             if (lc.tex) {
-                drawer->RenderTexture(lc.tex, rx + PadX,
+                drawer->RenderTexture(lc.tex, tx,
                                       rowy + (this->row_h - lc.h) / 2);
             }
         }

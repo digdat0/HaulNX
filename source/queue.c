@@ -943,6 +943,72 @@ bool queue_move(int slot, int dir) {
     return moved;
 }
 
+bool queue_move_end(int slot, bool to_bottom) {
+    if (slot < 0 || slot >= QUEUE_MAX) {
+        return false;
+    }
+    bool moved = false;
+    mutexLock(&g_mtx);
+    if (g_items[slot].status != Q_FREE &&
+        !q_is_active(g_items[slot].status)) {
+        /* On-screen order: non-FREE items sorted by seq. */
+        int order[QUEUE_MAX], cnt = 0;
+        for (int i = 0; i < QUEUE_MAX; i++) {
+            if (g_items[i].status != Q_FREE) {
+                order[cnt++] = i;
+            }
+        }
+        for (int a = 1; a < cnt; a++) {
+            int key = order[a];
+            uint32_t ks = g_items[key].seq;
+            int b = a - 1;
+            while (b >= 0 && g_items[order[b]].seq > ks) {
+                order[b + 1] = order[b];
+                b--;
+            }
+            order[b + 1] = key;
+        }
+        /* boundary = first non-active slot (top of the waiting section, so a
+         * move-to-top lands just below the active download, never above it). */
+        int boundary = 0;
+        while (boundary < cnt && q_is_active(g_items[order[boundary]].status)) {
+            boundary++;
+        }
+        int pos = -1;
+        for (int a = 0; a < cnt; a++) {
+            if (order[a] == slot) {
+                pos = a;
+                break;
+            }
+        }
+        int target = to_bottom ? cnt - 1 : boundary;
+        if (pos >= 0 && pos != target) {
+            int rest[QUEUE_MAX], r = 0;
+            for (int a = 0; a < cnt; a++) {
+                if (order[a] != slot) rest[r++] = order[a];
+            }
+            int fin[QUEUE_MAX], f = 0;
+            for (int a = 0; a < r; a++) {
+                if (f == target) fin[f++] = slot;
+                fin[f++] = rest[a];
+            }
+            if (f == target) fin[f++] = slot;
+            /* Renumber in the new order; keep g_seq above these so later adds
+             * still append to the bottom. */
+            for (int a = 0; a < cnt; a++) {
+                g_items[fin[a]].seq = (uint32_t)(a + 1);
+            }
+            if (g_seq <= (uint32_t)cnt) {
+                g_seq = (uint32_t)cnt + 1;
+            }
+            save_locked();
+            moved = true;
+        }
+    }
+    mutexUnlock(&g_mtx);
+    return moved;
+}
+
 bool queue_active_info(char *name, size_t name_sz, QStatus *status,
                        uint64_t *now, uint64_t *total, uint64_t *speed,
                        int *index, int *count) {

@@ -250,6 +250,10 @@ enum {
     S_RETRIED_N,
     S_TOAST_ALL_DONE,
 
+    /* ---- installed search ---- */
+    S_TITLE_INST_SEARCH,
+    S_SUB_INST_SEARCH,
+
     S__COUNT
 };
 

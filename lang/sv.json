@@ -36,7 +36,7 @@
   "queued_n": "%d fil(er) i kö",
   "already_have": "Har redan %d — köa %d nya (%s)?",
   "title_queue": "Nedladdningskö",
-  "sub_queue": "A avbryt  X försök igen  ZL/ZR flytta  Y meny  - logg  B tillbaka",
+  "sub_queue": "A avbryt  X försök igen  ZL/ZR flytta  Dpad< topp >botten  Y meny  - logg  B tillbaka",
   "queue_empty": "(kön är tom)",
   "cancelled": "Avbruten",
   "retrying": "Försöker igen",
@@ -73,7 +73,7 @@
   "dl_queue_warn": "\n\nNågra finns i nedladdningskön och kommer att avbrytas.",
   "dl_cleared": "Nedladdningar borttagna",
   "title_installed": "Installerat",
-  "sub_installed": "A öppna  Y välj  X döp om  Dpad< Sortering  Dpad> fäst  - ta bort  L/R flikar  B tillbaka",
+  "sub_installed": "A öppna  Y välj  X döp om  Dpad< Sortering  Dpad> fäst  - sök  L/R flikar  B tillbaka",
   "dir_prefix": "[DIR] ",
   "delete_selected": "Ta bort %d valda objekt?",
   "title_edit_repo": "Redigera repo",
@@ -179,5 +179,7 @@
   "retry_all": "Försök igen alla misslyckade",
   "clear_finished": "Rensa färdiga",
   "retried_n": "%d köade igen",
-  "toast_all_done": "Kön klar: %d klara, %d misslyckade"
+  "toast_all_done": "Kön klar: %d klara, %d misslyckade",
+  "title_inst_search": "Sök installerade",
+  "sub_inst_search": "A öppna  Y ny sökning  B tillbaka"
 }

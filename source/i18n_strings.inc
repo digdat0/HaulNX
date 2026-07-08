@@ -39,7 +39,7 @@ static const char *const g_en[S__COUNT] = {
     /* S_QUEUED_N */ "Queued %d file(s)",
     /* S_ALREADY_HAVE */ "Already have %d — queue %d new (%s)?",
     /* S_TITLE_QUEUE */ "Download Queue",
-    /* S_SUB_QUEUE */ "A cancel  X retry  ZL/ZR move  Y menu  - log  B back",
+    /* S_SUB_QUEUE */ "A cancel  X retry  ZL/ZR move  Dpad< top >bottom  Y menu  - log  B back",
     /* S_QUEUE_EMPTY */ "(queue empty)",
     /* S_CANCELLED */ "Cancelled",
     /* S_RETRYING */ "Retrying",
@@ -76,7 +76,7 @@ static const char *const g_en[S__COUNT] = {
     /* S_DL_QUEUE_WARN */ "\n\nSome are in the download queue and will be cancelled.",
     /* S_DL_CLEARED */ "Downloads cleared",
     /* S_TITLE_INSTALLED */ "Installed",
-    /* S_SUB_INSTALLED */ "A open  Y select  X rename  Dpad< Sort  Dpad> pin  - delete  L/R tabs  B back",
+    /* S_SUB_INSTALLED */ "A open  Y select  X rename  Dpad< Sort  Dpad> pin  - search  L/R tabs  B back",
     /* S_DIR_PREFIX */ "[DIR] ",
     /* S_DELETE_SELECTED */ "Delete %d selected item(s)?",
     /* S_TITLE_EDIT_REPO */ "Edit repo",
@@ -180,6 +180,8 @@ static const char *const g_en[S__COUNT] = {
     /* S_CLEAR_FINISHED */ "Clear finished",
     /* S_RETRIED_N */ "%d re-queued",
     /* S_TOAST_ALL_DONE */ "Queue finished: %d done, %d failed",
+    /* S_TITLE_INST_SEARCH */ "Search installed",
+    /* S_SUB_INST_SEARCH */ "A open  Y new search  B back",
 };
 
 static const char *const g_key_names[S__COUNT] = {
@@ -361,4 +363,6 @@ static const char *const g_key_names[S__COUNT] = {
     [S_CLEAR_FINISHED] = "clear_finished",
     [S_RETRIED_N] = "retried_n",
     [S_TOAST_ALL_DONE] = "toast_all_done",
+    [S_TITLE_INST_SEARCH] = "title_inst_search",
+    [S_SUB_INST_SEARCH] = "sub_inst_search",
 };

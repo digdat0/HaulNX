@@ -36,7 +36,7 @@
   "queued_n": "%d file in coda",
   "already_have": "Già presenti %d — aggiungere %d nuovi (%s) alla coda?",
   "title_queue": "Coda di download",
-  "sub_queue": "A annulla  X riprova  ZL/ZR sposta  Y menu  - registro  B indietro",
+  "sub_queue": "A annulla  X riprova  ZL/ZR sposta  Dpad< su >giù  Y menu  - registro  B indietro",
   "queue_empty": "(coda vuota)",
   "cancelled": "Annullato",
   "retrying": "Nuovo tentativo",
@@ -73,7 +73,7 @@
   "dl_queue_warn": "\n\nAlcuni sono nella coda di download e verranno annullati.",
   "dl_cleared": "Download eliminati",
   "title_installed": "Installati",
-  "sub_installed": "A apri  Y seleziona  X rinomina  Dpad< Ordine  Dpad> fissa  - elimina  L/R schede  B indietro",
+  "sub_installed": "A apri  Y seleziona  X rinomina  Dpad< Ordine  Dpad> fissa  - cerca  L/R schede  B indietro",
   "dir_prefix": "[DIR] ",
   "delete_selected": "Eliminare %d elementi selezionati?",
   "title_edit_repo": "Modifica repository",
@@ -179,5 +179,7 @@
   "retry_all": "Riprova tutti i falliti",
   "clear_finished": "Rimuovi completati",
   "retried_n": "%d rimessi in coda",
-  "toast_all_done": "Coda finita: %d ok, %d falliti"
+  "toast_all_done": "Coda finita: %d ok, %d falliti",
+  "title_inst_search": "Cerca installati",
+  "sub_inst_search": "A apri  Y nuova ricerca  B indietro"
 }

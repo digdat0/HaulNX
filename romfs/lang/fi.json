@@ -36,7 +36,7 @@
   "queued_n": "%d tiedosto(a) jonossa",
   "already_have": "Sinulla on jo %d — lisää %d uutta (%s) jonoon?",
   "title_queue": "Latausjono",
-  "sub_queue": "A peruuta  X yritä uudelleen  ZL/ZR siirrä  Y valikko  - loki  B takaisin",
+  "sub_queue": "A peruuta  X yritä uudelleen  ZL/ZR siirrä  Dpad< ylös >alas  Y valikko  - loki  B takaisin",
   "queue_empty": "(jono on tyhjä)",
   "cancelled": "Peruutettu",
   "retrying": "Yritetään uudelleen",
@@ -73,7 +73,7 @@
   "dl_queue_warn": "\n\nOsa on latausjonossa ja peruutetaan.",
   "dl_cleared": "Lataukset poistettu",
   "title_installed": "Asennettu",
-  "sub_installed": "A avaa  Y valitse  X nimeä uudelleen  Dpad< Lajittelu  Dpad> kiinnitä  - poista  L/R välilehdet  B takaisin",
+  "sub_installed": "A avaa  Y valitse  X nimeä uudelleen  Dpad< Lajittelu  Dpad> kiinnitä  - hae  L/R välilehdet  B takaisin",
   "dir_prefix": "[DIR] ",
   "delete_selected": "Poista %d valittua kohdetta?",
   "title_edit_repo": "Muokkaa repoa",
@@ -179,5 +179,7 @@
   "retry_all": "Yritä kaikkia epäonnistuneita",
   "clear_finished": "Tyhjennä valmiit",
   "retried_n": "%d jonoon uudelleen",
-  "toast_all_done": "Jono valmis: %d ok, %d epäonnistui"
+  "toast_all_done": "Jono valmis: %d ok, %d epäonnistui",
+  "title_inst_search": "Hae asennettuja",
+  "sub_inst_search": "A avaa  Y uusi haku  B takaisin"
 }

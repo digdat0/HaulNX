@@ -36,7 +36,7 @@
   "queued_n": "%d archivo(s) en cola",
   "already_have": "Ya tienes %d — ¿añadir %d nuevos (%s) a la cola?",
   "title_queue": "Cola de descargas",
-  "sub_queue": "A cancelar  X reintentar  ZL/ZR mover  Y menú  - registro  B volver",
+  "sub_queue": "A cancelar  X reintentar  ZL/ZR mover  Dpad< arriba >abajo  Y menú  - registro  B volver",
   "queue_empty": "(cola vacía)",
   "cancelled": "Cancelado",
   "retrying": "Reintentando",
@@ -73,7 +73,7 @@
   "dl_queue_warn": "\n\nAlgunos están en la cola de descargas y serán cancelados.",
   "dl_cleared": "Descargas eliminadas",
   "title_installed": "Instalados",
-  "sub_installed": "A abrir  Y seleccionar  X renombrar  Dpad< Orden  Dpad> fijar  - eliminar  L/R pestañas  B volver",
+  "sub_installed": "A abrir  Y seleccionar  X renombrar  Dpad< Orden  Dpad> fijar  - buscar  L/R pestañas  B volver",
   "dir_prefix": "[DIR] ",
   "delete_selected": "¿Eliminar %d elemento(s) seleccionado(s)?",
   "title_edit_repo": "Editar repositorio",
@@ -179,5 +179,7 @@
   "retry_all": "Reintentar todos los fallidos",
   "clear_finished": "Limpiar completados",
   "retried_n": "%d en cola de nuevo",
-  "toast_all_done": "Cola terminada: %d hechos, %d fallidos"
+  "toast_all_done": "Cola terminada: %d hechos, %d fallidos",
+  "title_inst_search": "Buscar instalados",
+  "sub_inst_search": "A abrir  Y nueva búsqueda  B atrás"
 }

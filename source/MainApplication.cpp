@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <fstream>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -105,6 +106,46 @@ static const AppTheme g_theme_light = {
 static const AppTheme *g_theme = &g_theme_dark;
 
 static bool is_light_theme() { return strcmp(g_prefs.theme, "light") == 0; }
+
+// ---- console icons --------------------------------------------------------
+// Loaded once from romfs at startup and shared (borrowed) into list rows.
+static std::map<std::string, pu::sdl2::Texture> g_console_icons;
+
+static std::string icon_key(const char *s) {
+    std::string r;
+    for (; s && *s; s++) {
+        r += (*s >= 'A' && *s <= 'Z') ? (char)(*s + 32) : *s;
+    }
+    return r;
+}
+
+static void load_console_icons() {
+    static const char *keys[] = {
+        "nes", "snes", "n64", "gb", "gbc", "gba", "gc", "wii", "genesis",
+        "master-system", "game-gear", "sega-cd", "saturn", "dc", "atomiswave",
+        "naomi", "psx", "psp", "default"};
+    for (const char *k : keys) {
+        auto tex = pu::ui::render::LoadImageFromFile(std::string("romfs:/icons/") +
+                                                     k + ".png");
+        if (tex) {
+            g_console_icons[k] = tex;
+        }
+    }
+}
+
+// Icon for a console folder key (e.g. "snes"); the generic "default" icon for
+// custom/unknown folders, or nullptr if icons failed to load.
+static pu::sdl2::Texture console_icon(const char *key) {
+    if (!key || !key[0]) {
+        return nullptr;
+    }
+    auto it = g_console_icons.find(icon_key(key));
+    if (it != g_console_icons.end()) {
+        return it->second;
+    }
+    auto d = g_console_icons.find("default");
+    return d != g_console_icons.end() ? d->second : nullptr;
+}
 
 static void select_theme() {
     g_theme = is_light_theme() ? &g_theme_light : &g_theme_dark;
@@ -296,10 +337,14 @@ static pu::ui::Color qstatus_color(QStatus s) {
                                      : pu::ui::Color(150, 205, 255, 255);
     case Q_VERIFYING:
     case Q_AWAIT_EXTRACT:
-    case Q_EXTRACTING:  return pu::ui::Color(210, 185, 120, 255);
-    case Q_DONE:        return pu::ui::Color(130, 225, 150, 255);
-    case Q_SAVED:       return pu::ui::Color(190, 205, 130, 255);
-    case Q_FAILED:      return pu::ui::Color(240, 110, 110, 255);
+    case Q_EXTRACTING:  return light ? pu::ui::Color(150, 100, 15, 255)
+                                     : pu::ui::Color(210, 185, 120, 255);
+    case Q_DONE:        return light ? pu::ui::Color(16, 95, 44, 255)
+                                     : pu::ui::Color(130, 225, 150, 255);
+    case Q_SAVED:       return light ? pu::ui::Color(95, 110, 25, 255)
+                                     : pu::ui::Color(190, 205, 130, 255);
+    case Q_FAILED:      return light ? pu::ui::Color(185, 35, 35, 255)
+                                     : pu::ui::Color(240, 110, 110, 255);
     case Q_CANCELLED:   return light ? pu::ui::Color(40, 44, 52, 255)
                                      : pu::ui::Color(150, 150, 162, 255);
     case Q_QUEUED:
@@ -872,12 +917,14 @@ void MainLayout::ClearMenu() { this->list->Clear(); this->rom_info->SetText("");
 void MainLayout::AddRow(const std::string &name) {
     this->AddRow(name, g_theme->row_text);
 }
-void MainLayout::AddRow(const std::string &name, pu::ui::Color clr) {
-    this->list->AddRow(name, clr);
+void MainLayout::AddRow(const std::string &name, pu::ui::Color clr,
+                        pu::sdl2::Texture icon) {
+    this->list->AddRow(name, clr, icon);
 }
 void MainLayout::AddRow2(const std::string &left, const std::string &right,
-                         pu::ui::Color lclr, pu::ui::Color rclr, float progress) {
-    this->list->AddRow2(left, right, lclr, rclr, progress);
+                         pu::ui::Color lclr, pu::ui::Color rclr, float progress,
+                         pu::sdl2::Texture icon) {
+    this->list->AddRow2(left, right, lclr, rclr, progress, icon);
 }
 s32 MainLayout::Sel() { return this->list->GetSelected(); }
 void MainLayout::SetSel(s32 i) { this->list->SetSelected(i); }
@@ -1012,7 +1059,8 @@ void MainApplication::GotoHome() {
                 ? std::string("★ ") + row.label : row.label;
             this->layout->AddRow2(display, cnt,
                                   g_theme->row_text,
-                                  count_color());
+                                  count_color(), -1.0f,
+                                  console_icon(g_cfg.consoles[row.idx].console));
             g_home_map.push_back(row.idx);
         }
         if (g_home_map.empty()) {
@@ -1021,7 +1069,7 @@ void MainApplication::GotoHome() {
     } else {
         this->layout->SetTitle(tr(S_TITLE_REPOS));
         this->layout->SetSubtitle(tr(S_SUB_HOME_FLAT));
-        struct FlatRow { std::string label; bool pinned; };
+        struct FlatRow { std::string label; std::string key; bool pinned; };
         std::vector<FlatRow> flat_rows;
         for (int c = 0; c < g_cfg.console_count; c++) {
             if (!g_cfg.consoles[c].shown) continue;
@@ -1032,11 +1080,12 @@ void MainApplication::GotoHome() {
                          rp->pinned ? "★ " : "",
                          rp->enabled ? tr(S_ON) : tr(S_OFF),
                          g_cfg.consoles[c].target, rp->label);
-                flat_rows.push_back({row, rp->pinned});
+                flat_rows.push_back({row, g_cfg.consoles[c].console, rp->pinned});
             }
         }
         for (const auto &fr : flat_rows)
-            this->layout->AddRow(fr.label);
+            this->layout->AddRow(fr.label, g_theme->row_text,
+                                 console_icon(fr.key.c_str()));
         if (flat_count() == 0) {
             this->layout->AddRow(tr(S_NO_REPOS));
         }
@@ -1083,7 +1132,8 @@ void MainApplication::GotoFiles(int ci, int ri, bool force) {
 // ---- tabs -----------------------------------------------------------------
 MainApplication::Tab MainApplication::CurrentTab() {
     switch (this->screen) {
-    case Screen::Installed: return Tab::Installed;
+    case Screen::Installed:
+    case Screen::InstSearch: return Tab::Installed;
     case Screen::Queue:     return Tab::Queue;
     case Screen::Settings:
     case Screen::Log:
@@ -1566,7 +1616,11 @@ void MainApplication::GotoSearch(const std::string &query) {
               });
 
     for (const auto &h : g_search_results) {
-        std::string label = "[" + h.target + "] " + h.name;
+        // "* " marks a file already present in its console folder, so you can
+        // avoid re-downloading (same cue the file list uses).
+        bool inst = file_installed(h.target.c_str(), h.name.c_str());
+        std::string label = std::string(inst ? "* " : "") + "[" + h.target +
+                            "] " + h.name;
         this->layout->AddRow2(label, human_size(h.size),
                               g_theme->row_text, size_color(h.size));
     }
@@ -1595,7 +1649,8 @@ void MainApplication::GotoLanguage() {
         this->layout->AddRow2(
             g_langs[i].label, active ? "◀" : "",
             g_theme->row_text,
-            pu::ui::Color(100, 210, 255, 255));
+            is_light_theme() ? pu::ui::Color(20, 115, 165, 255)
+                             : pu::ui::Color(100, 210, 255, 255));
     }
 }
 
@@ -1606,11 +1661,15 @@ void MainApplication::GotoManage() {
     this->layout->ClearMenu();
     for (int i = 0; i < g_cfg.console_count; i++) {
         bool sh = g_cfg.consoles[i].shown;
+        bool lt = is_light_theme();
+        pu::ui::Color shown_c = lt ? pu::ui::Color(16, 95, 44, 255)
+                                   : pu::ui::Color(130, 225, 150, 255);
+        pu::ui::Color hidden_c = lt ? pu::ui::Color(95, 95, 105, 255)
+                                    : pu::ui::Color(150, 150, 162, 255);
         this->layout->AddRow2(
             g_cfg.consoles[i].console, sh ? tr(S_SHOWN) : tr(S_HIDDEN),
-            g_theme->row_text,
-            sh ? pu::ui::Color(130, 225, 150, 255)   // green = shown
-               : pu::ui::Color(150, 150, 162, 255)); // gray = hidden
+            g_theme->row_text, sh ? shown_c : hidden_c,
+            -1.0f, console_icon(g_cfg.consoles[i].console));
     }
     if (g_cfg.console_count == 0) {
         this->layout->AddRow(tr(S_NO_CONSOLES));
@@ -1695,9 +1754,12 @@ void MainApplication::GotoInstalled(const std::string &path) {
             } else {
                 label += e.name;
             }
+            pu::sdl2::Texture ic = (path == roms_root(&g_tico))
+                                       ? console_icon(e.name.c_str())
+                                       : nullptr;
             this->layout->AddRow2(label, cnt,
                                   g_theme->row_text,
-                                  count_color());
+                                  count_color(), -1.0f, ic);
         } else {
             // File: right column is the size, tinted by magnitude.
             this->layout->AddRow2(e.name, human_size(e.size),
@@ -1710,6 +1772,105 @@ void MainApplication::GotoInstalled(const std::string &path) {
     }
     if (g_inst_sort != SORT_DEFAULT) {
         this->layout->SetRomInfo(tr(g_sort_keys[g_inst_sort]));
+    }
+}
+
+// ---- installed search (recursive scan of the roms folder) -----------------
+struct InstHit {
+    std::string name; // file name
+    std::string dir;  // absolute folder holding it
+    std::string console; // top-level roms subfolder (for the [tag])
+    uint64_t size;
+};
+static std::vector<InstHit> g_inst_hits;
+static std::string g_inst_query;
+static const int INST_SEARCH_MAX = 300;
+
+// Collect files under `dir` whose name matches `query`. Bounded by depth and
+// the result cap so a huge library can't stall the UI.
+static void inst_search_walk(const std::string &dir, const std::string &console,
+                             const std::string &query, int depth) {
+    if (depth > 8 || (int)g_inst_hits.size() >= INST_SEARCH_MAX) {
+        return;
+    }
+    DIR *d = opendir(dir.c_str());
+    if (!d) {
+        return;
+    }
+    struct dirent *e;
+    while ((e = readdir(d)) != NULL &&
+           (int)g_inst_hits.size() < INST_SEARCH_MAX) {
+        if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..")) {
+            continue;
+        }
+        std::string full = dir + "/" + e->d_name;
+        struct stat st;
+        if (stat(full.c_str(), &st) != 0) {
+            continue;
+        }
+        if (S_ISDIR(st.st_mode)) {
+            inst_search_walk(full, console, query, depth + 1);
+        } else if (ci_contains(e->d_name, query.c_str())) {
+            g_inst_hits.push_back(
+                {e->d_name, dir, console, (uint64_t)st.st_size});
+        }
+    }
+    closedir(d);
+}
+
+void MainApplication::GotoInstSearch(const std::string &query) {
+    this->screen = Screen::InstSearch;
+    g_inst_query = query;
+    g_inst_hits.clear();
+    this->layout->SetTitle(tr(S_TITLE_INST_SEARCH));
+    this->layout->SetSubtitle(tr(S_SUB_INST_SEARCH));
+    this->layout->ClearMenu();
+
+    const char *root = roms_root(&g_tico);
+    DIR *d = opendir(root);
+    if (d) {
+        struct dirent *e;
+        while ((e = readdir(d)) != NULL) {
+            if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..")) {
+                continue;
+            }
+            std::string full = std::string(root) + "/" + e->d_name;
+            struct stat st;
+            if (stat(full.c_str(), &st) != 0) {
+                continue;
+            }
+            if (S_ISDIR(st.st_mode)) {
+                inst_search_walk(full, e->d_name, query, 0);
+            } else if (ci_contains(e->d_name, query.c_str())) {
+                g_inst_hits.push_back(
+                    {e->d_name, root, "", (uint64_t)st.st_size});
+            }
+        }
+        closedir(d);
+    }
+
+    std::sort(g_inst_hits.begin(), g_inst_hits.end(),
+              [](const InstHit &a, const InstHit &b) {
+                  return strcasecmp(a.name.c_str(), b.name.c_str()) < 0;
+              });
+    bool capped = (int)g_inst_hits.size() >= INST_SEARCH_MAX;
+    for (const auto &h : g_inst_hits) {
+        std::string label =
+            h.console.empty() ? h.name : "[" + h.console + "] " + h.name;
+        this->layout->AddRow2(label, human_size(h.size), g_theme->row_text,
+                              size_color(h.size));
+    }
+    if (g_inst_hits.empty()) {
+        this->layout->AddRow(tr(S_SEARCH_NO_RESULTS));
+    } else {
+        char info[64];
+        if (capped) {
+            snprintf(info, sizeof(info), tr(S_SEARCH_CAPPED), INST_SEARCH_MAX);
+        } else {
+            snprintf(info, sizeof(info), tr(S_SEARCH_N_RESULTS),
+                     (int)g_inst_hits.size());
+        }
+        this->layout->SetRomInfo(info);
     }
 }
 
@@ -1766,7 +1927,7 @@ void MainApplication::GotoPicker(Pending what) {
         char label[160];
         console_label(name.c_str(), label, sizeof(label));
         this->layout->AddRow2(label, cnt, g_theme->row_text,
-                              count_color());
+                              count_color(), -1.0f, console_icon(name.c_str()));
     }
     if (g_picker.empty()) {
         this->layout->AddRow(tr(S_NO_CONSOLES));
@@ -2150,10 +2311,13 @@ void MainApplication::HandleInput(u64 down, u64 held,
             pu::ui::Color rc = c;
             // Colour the result column by outcome: orange = replaced, green = new.
             if (it->status == Q_DONE || it->status == Q_SAVED) {
-                rc = it->overwrote > 0 ? pu::ui::Color(245, 170, 90, 255)
-                                       : pu::ui::Color(130, 225, 150, 255);
+                pu::ui::Color newc = is_light_theme()
+                                         ? pu::ui::Color(16, 95, 44, 255)
+                                         : pu::ui::Color(130, 225, 150, 255);
+                rc = it->overwrote > 0 ? pu::ui::Color(245, 170, 90, 255) : newc;
             }
-            this->layout->AddRow2(left, info, c, rc, prog);
+            this->layout->AddRow2(left, info, c, rc, prog,
+                                  console_icon(it->target));
         }
         if (n == 0) {
             this->layout->AddRow(tr(S_QUEUE_EMPTY));
@@ -2529,6 +2693,20 @@ void MainApplication::HandleInput(u64 down, u64 held,
                 } else if (down & HidNpadButton_ZR) {
                     if (queue_move(qv[i].slot, 1)) {
                         this->layout->SetSel(i + 1);
+                    }
+                } else if (down & (HidNpadButton_Left | HidNpadButton_Right)) {
+                    // Jump to top (just below the active download) / bottom,
+                    // then follow the item to its new row.
+                    bool to_bottom = (down & HidNpadButton_Right) != 0;
+                    if (queue_move_end(qv[i].slot, to_bottom)) {
+                        static QueueView qv2[QUEUE_MAX];
+                        int n2 = queue_snapshot(qv2, QUEUE_MAX);
+                        for (int k = 0; k < n2; k++) {
+                            if (qv2[k].slot == qv[i].slot) {
+                                this->layout->SetSel(k);
+                                break;
+                            }
+                        }
                     }
                 }
             }
@@ -2944,6 +3122,7 @@ void MainApplication::HandleInput(u64 down, u64 held,
         } else if (down & HidNpadButton_Minus) {
             int mc = this->layout->MarkedCount();
             if (mc > 0) {
+                // Marked items: delete them (mark with Y first for a single).
                 char msg[64];
                 snprintf(msg, sizeof(msg), tr(S_DELETE_SELECTED), mc);
                 if (this->Confirm(tr(S_DELETE), msg)) {
@@ -2961,18 +3140,40 @@ void MainApplication::HandleInput(u64 down, u64 held,
                     this->GotoInstalled(this->inst_path);
                 }
             } else {
-                s32 i = this->layout->Sel();
-                if (i >= 0 && i < (s32)g_inst.size()) {
-                    if (this->Confirm(tr(S_DELETE), std::string(tr(S_DELETE)) +
-                                                    " '" + g_inst[i].name + "'?")) {
-                        fs_rm_rf((this->inst_path + "/" + g_inst[i].name).c_str());
-                        this->Toast(tr(S_DELETED));
-                        s32 keep = i;
-                        this->GotoInstalled(this->inst_path);
-                        if (keep >= (s32)g_inst.size()) keep = (s32)g_inst.size() - 1;
-                        if (keep >= 0) this->layout->SetSel(keep);
+                // Nothing marked: search installed games (like the Browse tab).
+                char q[256] = {0};
+                if (prompt_raw(tr(S_SEARCH_PROMPT), g_inst_query.c_str(), q,
+                               sizeof(q)) && q[0]) {
+                    this->GotoInstSearch(q);
+                    return;
+                }
+            }
+        }
+        break;
+    }
+
+    case Screen::InstSearch: {
+        if (down & HidNpadButton_B) {
+            this->GotoInstalled(roms_root(&g_tico));
+        } else if (down & HidNpadButton_A) {
+            // Open the folder holding the hit, with the file selected, so it
+            // can be inspected / renamed / deleted from there.
+            s32 i = this->layout->Sel();
+            if (i >= 0 && i < (s32)g_inst_hits.size()) {
+                std::string dir = g_inst_hits[i].dir, name = g_inst_hits[i].name;
+                this->GotoInstalled(dir);
+                for (s32 k = 0; k < (s32)g_inst.size(); k++) {
+                    if (g_inst[k].name == name) {
+                        this->layout->SetSel(k);
+                        break;
                     }
                 }
+            }
+        } else if (down & HidNpadButton_Y) {
+            char q[256] = {0};
+            if (prompt_raw(tr(S_SEARCH_PROMPT), g_inst_query.c_str(), q,
+                           sizeof(q)) && q[0]) {
+                this->GotoInstSearch(q);
             }
         }
         break;
@@ -3213,6 +3414,7 @@ void MainApplication::OnLoad() {
     }
     queue_init(roms_root(&g_tico), g_prefs.max_downloads);
     cleanup_stale_parts(); // drop unresumable old-format .part leftovers
+    load_console_icons();  // romfs:/icons/<key>.png, shared into list rows
 
     this->screen = Screen::Home;
     this->sel_ci = 0;

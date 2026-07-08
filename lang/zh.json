@@ -36,7 +36,7 @@
   "queued_n": "已将 %d 个文件加入队列",
   "already_have": "已有 %d 个 — 将 %d 个新文件 (%s) 加入队列？",
   "title_queue": "下载队列",
-  "sub_queue": "A 取消  X 重试  ZL/ZR 移动  Y 菜单  - 日志  B 返回",
+  "sub_queue": "A 取消  X 重试  ZL/ZR 移动  Dpad< 置顶 >置底  Y 菜单  - 日志  B 返回",
   "queue_empty": "(队列为空)",
   "cancelled": "已取消",
   "retrying": "重试中",
@@ -73,7 +73,7 @@
   "dl_queue_warn": "\n\n部分文件在队列中，将被取消。",
   "dl_cleared": "下载已清除",
   "title_installed": "已安装",
-  "sub_installed": "A 打开  Y 选择  X 重命名  Dpad< 排序  Dpad> 置顶  - 删除  L/R 标签  B 返回",
+  "sub_installed": "A 打开  Y 选择  X 重命名  Dpad< 排序  Dpad> 置顶  - 搜索  L/R 标签  B 返回",
   "dir_prefix": "[DIR] ",
   "delete_selected": "删除选中的 %d 个项目？",
   "title_edit_repo": "编辑仓库",
@@ -179,5 +179,7 @@
   "retry_all": "重试所有失败项",
   "clear_finished": "清除已完成",
   "retried_n": "%d 项已重新排队",
-  "toast_all_done": "队列完成：%d 成功，%d 失败"
+  "toast_all_done": "队列完成：%d 成功，%d 失败",
+  "title_inst_search": "搜索已安装",
+  "sub_inst_search": "A 打开  Y 新搜索  B 返回"
 }

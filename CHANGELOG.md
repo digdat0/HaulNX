@@ -4,6 +4,25 @@ Notes for each release. `release.sh` pulls the section matching the version in
 `VERSION` and attaches it to the GitHub release. Add a `## <version>` section
 here before running a release.
 
+## 1.3.0-beta
+
+**Console icons**
+- Every console now shows an icon next to its name — on the Browse tab
+  (grouped and flat), the Installed root, the console picker, Manage consoles,
+  and the download queue. Custom folders get a generic icon.
+
+**Search & queue**
+- **Search installed games** from the Installed tab with **−** (recursive scan
+  of the ROM folders); open a result to jump to its folder.
+- Global search results now show a `*` when a file is already installed.
+- **Move a queue item to the top/bottom** with D-pad ◀/▶ (the active download
+  stays put).
+
+**Light theme fixes**
+- Cancelled, done, verifying, saved and failed queue statuses, plus the
+  "shown/hidden" and active-language markers, were too pale to read on the
+  light theme — all darkened. Dark theme unchanged.
+
 ## 1.2.0-beta
 
 **Metadata**

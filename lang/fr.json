@@ -36,7 +36,7 @@
   "queued_n": "%d fichier(s) en file",
   "already_have": "Vous avez déjà %d — ajouter %d nouveau(x) (%s) ?",
   "title_queue": "File de téléchargement",
-  "sub_queue": "A annuler  X réessayer  ZL/ZR déplacer  Y menu  - journal  B retour",
+  "sub_queue": "A annuler  X réessayer  ZL/ZR déplacer  Dpad< haut >bas  Y menu  - journal  B retour",
   "queue_empty": "(file vide)",
   "cancelled": "Annulé",
   "retrying": "Nouvel essai",
@@ -73,7 +73,7 @@
   "dl_queue_warn": "\n\nCertains sont dans la file de téléchargement et seront annulés.",
   "dl_cleared": "Téléchargements supprimés",
   "title_installed": "Installés",
-  "sub_installed": "A ouvrir  Y sélectionner  X renommer  Dpad< Tri  Dpad> épingler  - supprimer  L/R onglets  B retour",
+  "sub_installed": "A ouvrir  Y sélectionner  X renommer  Dpad< Tri  Dpad> épingler  - rechercher  L/R onglets  B retour",
   "dir_prefix": "[DIR] ",
   "delete_selected": "Supprimer %d élément(s) sélectionné(s) ?",
   "title_edit_repo": "Modifier le dépôt",
@@ -179,5 +179,7 @@
   "retry_all": "Réessayer tous les échecs",
   "clear_finished": "Effacer les terminés",
   "retried_n": "%d remis en file",
-  "toast_all_done": "File terminée : %d ok, %d échoués"
+  "toast_all_done": "File terminée : %d ok, %d échoués",
+  "title_inst_search": "Rechercher installés",
+  "sub_inst_search": "A ouvrir  Y nouvelle recherche  B retour"
 }

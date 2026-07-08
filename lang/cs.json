@@ -36,7 +36,7 @@
   "queued_n": "%d soubor(ů) ve frontě",
   "already_have": "Již máte %d — přidat %d nových (%s) do fronty?",
   "title_queue": "Fronta stahování",
-  "sub_queue": "A zrušit  X opakovat  ZL/ZR přesunout  Y nabídka  - protokol  B zpět",
+  "sub_queue": "A zrušit  X opakovat  ZL/ZR přesunout  Dpad< nahoru >dolů  Y nabídka  - protokol  B zpět",
   "queue_empty": "(fronta je prázdná)",
   "cancelled": "Zrušeno",
   "retrying": "Opakování",
@@ -73,7 +73,7 @@
   "dl_queue_warn": "\n\nNěkteré jsou ve frontě stahování a budou zrušeny.",
   "dl_cleared": "Stahování smazána",
   "title_installed": "Nainstalováno",
-  "sub_installed": "A otevřít  Y vybrat  X přejmenovat  Dpad< Řazení  Dpad> připnout  - smazat  L/R karty  B zpět",
+  "sub_installed": "A otevřít  Y vybrat  X přejmenovat  Dpad< Řazení  Dpad> připnout  - hledat  L/R karty  B zpět",
   "dir_prefix": "[DIR] ",
   "delete_selected": "Smazat %d vybraných položek?",
   "title_edit_repo": "Upravit repozitář",
@@ -179,5 +179,7 @@
   "retry_all": "Zkusit znovu všechny neúspěšné",
   "clear_finished": "Vymazat dokončené",
   "retried_n": "%d znovu ve frontě",
-  "toast_all_done": "Fronta hotova: %d ok, %d selhalo"
+  "toast_all_done": "Fronta hotova: %d ok, %d selhalo",
+  "title_inst_search": "Hledat nainstalované",
+  "sub_inst_search": "A otevřít  Y nové hledání  B zpět"
 }

@@ -36,7 +36,7 @@
   "queued_n": "%d file diantrean",
   "already_have": "Sudah punya %d — antrean %d baru (%s)?",
   "title_queue": "Antrean Unduhan",
-  "sub_queue": "A batal  X coba lagi  ZL/ZR pindah  Y menu  - log  B kembali",
+  "sub_queue": "A batal  X coba lagi  ZL/ZR pindah  Dpad< atas >bawah  Y menu  - log  B kembali",
   "queue_empty": "(antrean kosong)",
   "cancelled": "Dibatalkan",
   "retrying": "Mencoba lagi",
@@ -73,7 +73,7 @@
   "dl_queue_warn": "\n\nBeberapa ada di antrean unduhan dan akan dibatalkan.",
   "dl_cleared": "Unduhan dihapus",
   "title_installed": "Terpasang",
-  "sub_installed": "A buka  Y pilih  X ganti nama  Dpad< Urutan  Dpad> sematkan  - hapus  L/R tab  B kembali",
+  "sub_installed": "A buka  Y pilih  X ganti nama  Dpad< Urutan  Dpad> sematkan  - cari  L/R tab  B kembali",
   "dir_prefix": "[DIR] ",
   "delete_selected": "Hapus %d item terpilih?",
   "title_edit_repo": "Edit repo",
@@ -179,5 +179,7 @@
   "retry_all": "Coba lagi semua yang gagal",
   "clear_finished": "Bersihkan yang selesai",
   "retried_n": "%d diantrekan ulang",
-  "toast_all_done": "Antrean selesai: %d ok, %d gagal"
+  "toast_all_done": "Antrean selesai: %d ok, %d gagal",
+  "title_inst_search": "Cari terpasang",
+  "sub_inst_search": "A buka  Y pencarian baru  B kembali"
 }

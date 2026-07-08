@@ -36,7 +36,7 @@
   "queued_n": "%d fil(er) i kø",
   "already_have": "Har allerede %d — tilføj %d nye (%s) til kø?",
   "title_queue": "Downloadkø",
-  "sub_queue": "A annuller  X prøv igen  ZL/ZR flyt  Y menu  - log  B tilbage",
+  "sub_queue": "A annuller  X prøv igen  ZL/ZR flyt  Dpad< top >bund  Y menu  - log  B tilbage",
   "queue_empty": "(køen er tom)",
   "cancelled": "Annulleret",
   "retrying": "Prøver igen",
@@ -73,7 +73,7 @@
   "dl_queue_warn": "\n\nNogle er i downloadkøen og vil blive annulleret.",
   "dl_cleared": "Downloads slettet",
   "title_installed": "Installeret",
-  "sub_installed": "A åbn  Y vælg  X omdøb  Dpad< Sortering  Dpad> fastgør  - slet  L/R faner  B tilbage",
+  "sub_installed": "A åbn  Y vælg  X omdøb  Dpad< Sortering  Dpad> fastgør  - søg  L/R faner  B tilbage",
   "dir_prefix": "[DIR] ",
   "delete_selected": "Slet %d valgte elementer?",
   "title_edit_repo": "Rediger repo",
@@ -179,5 +179,7 @@
   "retry_all": "Prøv alle mislykkede igen",
   "clear_finished": "Ryd færdige",
   "retried_n": "%d sat i kø igen",
-  "toast_all_done": "Kø færdig: %d ok, %d mislykkedes"
+  "toast_all_done": "Kø færdig: %d ok, %d mislykkedes",
+  "title_inst_search": "Søg installerede",
+  "sub_inst_search": "A åbn  Y ny søgning  B tilbage"
 }

@@ -38,9 +38,11 @@ class MainLayout : public pu::ui::Layout {
     void ApplyTheme();
     void ClearMenu();
     void AddRow(const std::string &name);
-    void AddRow(const std::string &name, pu::ui::Color clr);
+    void AddRow(const std::string &name, pu::ui::Color clr,
+                pu::sdl2::Texture icon = nullptr);
     void AddRow2(const std::string &left, const std::string &right,
-                 pu::ui::Color lclr, pu::ui::Color rclr, float progress = -1.0f);
+                 pu::ui::Color lclr, pu::ui::Color rclr, float progress = -1.0f,
+                 pu::sdl2::Texture icon = nullptr);
     s32 Sel();
     void SetSel(s32 i);
     bool ConsumeTouchActivate(); // selected row tapped again (touch "A")
@@ -78,7 +80,8 @@ class MainApplication : public pu::ui::Application {
         Cache,     // metadata cache management
         ManageData, // settings submenu: downloads folder + metadata cache
         ViewLogs,  // settings submenu: download log + debug log
-        DebugLog   // debug.log viewer
+        DebugLog,  // debug.log viewer
+        InstSearch // search across installed games (roms folder)
     };
     enum class Pending { None, AddRepo, Manual };
     enum class Tab { Browse = 0, Installed = 1, Queue = 2, Settings = 3 };
@@ -168,6 +171,7 @@ class MainApplication : public pu::ui::Application {
     void GotoQueue();
     void GotoSettings();
     void GotoInstalled(const std::string &path);
+    void GotoInstSearch(const std::string &query);
     void GotoRepoEdit(int ci, int ri);
     void GotoPicker(Pending what);
     void GotoLog();

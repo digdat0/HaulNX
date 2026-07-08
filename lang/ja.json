@@ -36,7 +36,7 @@
   "queued_n": "%d 件をキューに追加",
   "already_have": "%d 件は取得済み — 新規 %d 件 (%s) をキューに追加しますか？",
   "title_queue": "ダウンロードキュー",
-  "sub_queue": "A キャンセル  X 再試行  ZL/ZR 移動  Y メニュー  - ログ  B 戻る",
+  "sub_queue": "A キャンセル  X 再試行  ZL/ZR 移動  Dpad< 先頭 >末尾  Y メニュー  - ログ  B 戻る",
   "queue_empty": "(キューは空です)",
   "cancelled": "キャンセルしました",
   "retrying": "再試行中",
@@ -73,7 +73,7 @@
   "dl_queue_warn": "\n\nキューに含まれるものはキャンセルされます。",
   "dl_cleared": "ダウンロードを削除しました",
   "title_installed": "インストール済み",
-  "sub_installed": "A 開く  Y 選択  X 名前変更  Dpad< 並び替え  Dpad> ピン留め  - 削除  L/R タブ  B 戻る",
+  "sub_installed": "A 開く  Y 選択  X 名前変更  Dpad< 並び替え  Dpad> ピン留め  - 検索  L/R タブ  B 戻る",
   "dir_prefix": "[DIR] ",
   "delete_selected": "選択した %d 件を削除しますか？",
   "title_edit_repo": "リポジトリ編集",
@@ -179,5 +179,7 @@
   "retry_all": "失敗したすべてを再試行",
   "clear_finished": "完了を消去",
   "retried_n": "%d件を再キュー",
-  "toast_all_done": "キュー完了: %d 件成功, %d 件失敗"
+  "toast_all_done": "キュー完了: %d 件成功, %d 件失敗",
+  "title_inst_search": "インストール済みを検索",
+  "sub_inst_search": "A 開く  Y 新しい検索  B 戻る"
 }

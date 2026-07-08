@@ -40,7 +40,7 @@
   "already_have": "Already have %d — queue %d new (%s)?",
 
   "title_queue": "Download Queue",
-  "sub_queue": "A cancel  X retry  ZL/ZR move  Y menu  - log  B back",
+  "sub_queue": "A cancel  X retry  ZL/ZR move  Dpad< top >bottom  Y menu  - log  B back",
   "queue_empty": "(queue empty)",
   "cancelled": "Cancelled",
   "retrying": "Retrying",
@@ -81,7 +81,7 @@
   "dl_cleared": "Downloads cleared",
 
   "title_installed": "Installed",
-  "sub_installed": "A open  Y select  X rename  Dpad< Sort  Dpad> pin  - delete  L/R tabs  B back",
+  "sub_installed": "A open  Y select  X rename  Dpad< Sort  Dpad> pin  - search  L/R tabs  B back",
   "dir_prefix": "[DIR] ",
   "delete_selected": "Delete %d selected item(s)?",
 
@@ -205,5 +205,7 @@
   "retry_all": "Retry all failed",
   "clear_finished": "Clear finished",
   "retried_n": "%d re-queued",
-  "toast_all_done": "Queue finished: %d done, %d failed"
+  "toast_all_done": "Queue finished: %d done, %d failed",
+  "title_inst_search": "Search installed",
+  "sub_inst_search": "A open  Y new search  B back"
 }
