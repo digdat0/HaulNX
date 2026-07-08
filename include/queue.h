@@ -83,6 +83,10 @@ void queue_cancel(int slot);
  * position, resuming from any .part already on disk. No-op for other states. */
 void queue_retry(int slot);
 
+/* Re-queue every FAILED item at once (resuming from any .part on disk).
+ * Returns how many were re-queued. */
+int queue_retry_all(void);
+
 /* Move an item one row up (dir=-1) or down (dir=+1) in the list. The active
  * download can't be moved and nothing can move above it. Returns true if the
  * order actually changed. */

@@ -129,6 +129,18 @@ class MainApplication : public pu::ui::Application {
     char chk_tag[64];
     char chk_url[1024];
 
+    // Background bulk metadata refresh (Manage data -> Refresh all metadata):
+    // force-fetches every enabled repo's file list, with live (n/total)
+    // progress and B to cancel between repos.
+    Thread ra_thread;
+    volatile bool ra_running = false;
+    volatile bool ra_done = false;
+    volatile bool ra_cancel = false;
+    volatile int ra_idx = 0;
+    volatile int ra_total = 0;
+    volatile int ra_ok = 0;
+    volatile int ra_fail = 0;
+
     // Background metadata (ia_fetch) load, so the file list doesn't freeze the
     // UI while a repo's metadata downloads. Shows an animated loading indicator.
     Thread meta_thread;
@@ -152,7 +164,7 @@ class MainApplication : public pu::ui::Application {
 
     void GotoHome();
     void GotoRepos(int ci);
-    void GotoFiles(int ci, int ri);
+    void GotoFiles(int ci, int ri, bool force = false);
     void GotoQueue();
     void GotoSettings();
     void GotoInstalled(const std::string &path);
@@ -184,6 +196,11 @@ class MainApplication : public pu::ui::Application {
     void UpdTick(); // poll progress / finish; called each frame while running
     static void UpdThread(void *arg);
     static int UpdProgress(void *ud, u64 now, u64 total);
+
+    // Bulk metadata refresh helpers.
+    void RaStart();
+    void RaTick(); // poll progress / finish; called each frame while running
+    static void RaThread(void *arg);
 
     // Background update-check helpers.
     void ChkStart();

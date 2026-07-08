@@ -36,7 +36,7 @@
   "queued_n": "已將 %d 個檔案加入佇列",
   "already_have": "已有 %d 個 — 將 %d 個新檔案 (%s) 加入佇列？",
   "title_queue": "下載佇列",
-  "sub_queue": "A 取消  X 重試  ZL/ZR 移動  Y 清空  - 記錄  B 返回",
+  "sub_queue": "A 取消  X 重試  ZL/ZR 移動  Y 選單  - 記錄  B 返回",
   "queue_empty": "(佇列為空)",
   "cancelled": "已取消",
   "retrying": "重試中",
@@ -73,7 +73,7 @@
   "dl_queue_warn": "\n\n部分檔案在佇列中，將被取消。",
   "dl_cleared": "下載已清除",
   "title_installed": "已安裝",
-  "sub_installed": "A 開啟  Y 選擇  X 重新命名  Dpad> 置頂  - 刪除  L/R 分頁  B 返回",
+  "sub_installed": "A 開啟  Y 選擇  X 重新命名  Dpad< 排序  Dpad> 置頂  - 刪除  L/R 分頁  B 返回",
   "dir_prefix": "[DIR] ",
   "delete_selected": "刪除選取的 %d 個項目？",
   "title_edit_repo": "編輯儲存庫",
@@ -171,5 +171,13 @@
   "sub_view_logs": "A 選擇  B 返回",
   "debug_log": "檢視除錯日誌",
   "title_debug_log": "除錯日誌",
-  "sub_debug_log": "X 清除日誌  B 返回"
+  "sub_debug_log": "X 清除日誌  B 返回",
+  "clear_debug_confirm": "清除除錯日誌？",
+  "refresh_all": "重新整理所有中繼資料",
+  "refresh_meta": "立即重新整理中繼資料",
+  "refresh_done": "已更新 %d 個，失敗 %d 個",
+  "retry_all": "重試所有失敗項",
+  "clear_finished": "清除已完成",
+  "retried_n": "%d 項已重新排隊",
+  "toast_all_done": "佇列完成：%d 成功，%d 失敗"
 }

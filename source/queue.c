@@ -225,16 +225,43 @@ static void save_locked(void) {
         json_write_escaped(f, it->target);
         fputs(",\"md5\":", f);
         json_write_escaped(f, it->md5);
-        fprintf(f, ",\"size\":%llu,\"is_archive\":%s,\"seq\":%u}",
+        /* "downloaded": the file is fully on disk (past the download phase),
+         * so on reload it skips straight to extraction — no re-download, and
+         * no network needed. */
+        bool downloaded = (s == Q_VERIFYING || s == Q_AWAIT_EXTRACT ||
+                           s == Q_EXTRACTING);
+        fprintf(f, ",\"size\":%llu,\"is_archive\":%s,\"seq\":%u,"
+                   "\"downloaded\":%s}",
                 (unsigned long long)it->size, it->is_archive ? "true" : "false",
-                it->seq);
+                it->seq, downloaded ? "true" : "false");
     }
     fputs("]}", f);
     fclose(f);
 }
 
-/* Reload a previously-saved queue. Outstanding items come back as Q_QUEUED so
- * the worker re-attempts them (resuming from any .part already on disk). */
+/* True if this item's .part is on disk and complete (matches the expected
+ * size when known). Lets a persisted "downloaded" flag be trusted before we
+ * skip the download phase on reload. */
+static bool part_is_complete(const QueueItem *it) {
+    char safe[600];
+    if (!safe_rel(it->name, safe, sizeof(safe))) {
+        return false;
+    }
+    char tmp[1200];
+    snprintf(tmp, sizeof(tmp), "%s/%s_%s.part", DL_TMP_DIR, it->target, safe);
+    struct stat st;
+    if (stat(tmp, &st) != 0 || st.st_size <= 0) {
+        return false;
+    }
+    if (it->size > 0 && (uint64_t)st.st_size != it->size) {
+        return false; /* partial/corrupt: fall back to download + resume */
+    }
+    return true;
+}
+
+/* Reload a previously-saved queue. Items still needing download come back as
+ * Q_QUEUED (resuming from any .part on disk); an archive whose download had
+ * already finished comes back as Q_AWAIT_EXTRACT so only the unzip is retried. */
 static void queue_load(void) {
     size_t len = 0;
     char *body = json_read_file(QUEUE_STATE_PATH, &len);
@@ -291,7 +318,20 @@ static void queue_load(void) {
                 it->seq = (uint32_t)json_u64(
                     body, tok, json_obj_get(body, tok, child, "seq"));
                 snprintf(it->auth, sizeof(it->auth), "%s", auth);
-                it->status = it->url[0] ? Q_QUEUED : Q_FREE;
+                bool downloaded = json_bool(
+                    body, tok, json_obj_get(body, tok, child, "downloaded"));
+                if (!it->url[0]) {
+                    it->status = Q_FREE;
+                } else if (downloaded && it->is_archive &&
+                           part_is_complete(it)) {
+                    /* Download already finished last session; only the unzip
+                     * is left. Go straight to the extract worker — no
+                     * re-download, and it works with no network. */
+                    it->total = it->size; /* so the extract progress bar shows */
+                    it->status = Q_AWAIT_EXTRACT;
+                } else {
+                    it->status = Q_QUEUED;
+                }
                 if (it->seq > maxseq) {
                     maxseq = it->seq;
                 }
@@ -517,12 +557,17 @@ static void install_item(QueueItem *it) {
     it->ex_files = 0;
     int ow = 0;
     int n = extract_archive(tmp, destdir, ex_progress, it, &ow);
-    if (it->cancel || !g_run) {
+    if (!g_run && !it->cancel) {
+        /* Shutting down mid-extract: KEEP the complete .part and leave the
+         * item pending (status EXTRACTING is persisted, and reloads straight
+         * to AWAIT_EXTRACT) so it resumes extraction next launch instead of
+         * re-downloading the whole archive. */
+        return;
+    }
+    if (it->cancel) {
         remove(tmp);
-        if (it->cancel) {
-            it->status = Q_CANCELLED;
-            log_download(it, "cancelled");
-        }
+        it->status = Q_CANCELLED;
+        log_download(it, "cancelled");
         return;
     }
     if (n > 0) {
@@ -818,6 +863,31 @@ void queue_retry(int slot) {
         save_locked();
     }
     mutexUnlock(&g_mtx);
+}
+
+int queue_retry_all(void) {
+    int n = 0;
+    mutexLock(&g_mtx);
+    for (int i = 0; i < QUEUE_MAX; i++) {
+        if (g_items[i].status == Q_FAILED) {
+            QueueItem *it = &g_items[i];
+            it->cancel = false;
+            it->pause = false;
+            it->now = 0;
+            it->total = 0;
+            it->speed = 0;
+            it->ex_files = 0;
+            it->http_code = 0;
+            it->fail_reason[0] = '\0';
+            it->status = Q_QUEUED; /* keep seq: resumes in place */
+            n++;
+        }
+    }
+    if (n > 0) {
+        save_locked();
+    }
+    mutexUnlock(&g_mtx);
+    return n;
 }
 
 static bool q_is_active(QStatus s) {

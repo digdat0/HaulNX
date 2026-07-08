@@ -36,7 +36,7 @@
   "queued_n": "%d fișier(e) în coadă",
   "already_have": "Ai deja %d — adaugi %d noi (%s) în coadă?",
   "title_queue": "Coadă descărcări",
-  "sub_queue": "A anulează  X reîncearcă  ZL/ZR mută  Y golește  - jurnal  B înapoi",
+  "sub_queue": "A anulează  X reîncearcă  ZL/ZR mută  Y meniu  - jurnal  B înapoi",
   "queue_empty": "(coada este goală)",
   "cancelled": "Anulat",
   "retrying": "Se reîncearcă",
@@ -73,7 +73,7 @@
   "dl_queue_warn": "\n\nUnele sunt în coada de descărcări și vor fi anulate.",
   "dl_cleared": "Descărcări șterse",
   "title_installed": "Instalate",
-  "sub_installed": "A deschide  Y selectează  X redenumește  Dpad> fixează  - șterge  L/R file  B înapoi",
+  "sub_installed": "A deschide  Y selectează  X redenumește  Dpad< Sortare  Dpad> fixează  - șterge  L/R file  B înapoi",
   "dir_prefix": "[DIR] ",
   "delete_selected": "Ștergi %d elemente selectate?",
   "title_edit_repo": "Editează depozitul",
@@ -171,5 +171,13 @@
   "sub_view_logs": "A selectează  B înapoi",
   "debug_log": "Vezi jurnalul de depanare",
   "title_debug_log": "Jurnal de depanare",
-  "sub_debug_log": "X șterge jurnal  B înapoi"
+  "sub_debug_log": "X șterge jurnal  B înapoi",
+  "clear_debug_confirm": "Ștergi jurnalul de depanare?",
+  "refresh_all": "Reîmprospătează toate metadatele",
+  "refresh_meta": "Reîmprospătează metadatele acum",
+  "refresh_done": "%d actualizate, %d eșuate",
+  "retry_all": "Reîncearcă toate eșuate",
+  "clear_finished": "Șterge finalizate",
+  "retried_n": "%d readăugate",
+  "toast_all_done": "Coadă gata: %d ok, %d eșuate"
 }

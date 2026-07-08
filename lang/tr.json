@@ -36,7 +36,7 @@
   "queued_n": "%d dosya kuyruğa eklendi",
   "already_have": "Zaten %d mevcut — %d yeni (%s) kuyruğa eklensin mi?",
   "title_queue": "İndirme Kuyruğu",
-  "sub_queue": "A iptal  X tekrar dene  ZL/ZR taşı  Y temizle  - günlük  B geri",
+  "sub_queue": "A iptal  X tekrar dene  ZL/ZR taşı  Y menü  - günlük  B geri",
   "queue_empty": "(kuyruk boş)",
   "cancelled": "İptal edildi",
   "retrying": "Tekrar deneniyor",
@@ -73,7 +73,7 @@
   "dl_queue_warn": "\n\nBazıları indirme kuyruğunda ve iptal edilecek.",
   "dl_cleared": "İndirmeler silindi",
   "title_installed": "Yüklü",
-  "sub_installed": "A aç  Y seç  X yeniden adlandır  Dpad> sabitle  - sil  L/R sekmeler  B geri",
+  "sub_installed": "A aç  Y seç  X yeniden adlandır  Dpad< Sıralama  Dpad> sabitle  - sil  L/R sekmeler  B geri",
   "dir_prefix": "[DIR] ",
   "delete_selected": "Seçilen %d öğe silinsin mi?",
   "title_edit_repo": "Depoyu düzenle",
@@ -171,5 +171,13 @@
   "sub_view_logs": "A seç  B geri",
   "debug_log": "Hata ayıklama günlüğünü görüntüle",
   "title_debug_log": "Hata ayıklama günlüğü",
-  "sub_debug_log": "X günlüğü temizle  B geri"
+  "sub_debug_log": "X günlüğü temizle  B geri",
+  "clear_debug_confirm": "Hata ayıklama günlüğü temizlensin mi?",
+  "refresh_all": "Tüm meta verileri yenile",
+  "refresh_meta": "Meta verileri şimdi yenile",
+  "refresh_done": "%d güncellendi, %d başarısız",
+  "retry_all": "Başarısızların tümünü yeniden dene",
+  "clear_finished": "Bitenleri temizle",
+  "retried_n": "%d yeniden kuyrukta",
+  "toast_all_done": "Kuyruk bitti: %d tamam, %d başarısız"
 }

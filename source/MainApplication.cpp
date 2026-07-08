@@ -300,7 +300,8 @@ static pu::ui::Color qstatus_color(QStatus s) {
     case Q_DONE:        return pu::ui::Color(130, 225, 150, 255);
     case Q_SAVED:       return pu::ui::Color(190, 205, 130, 255);
     case Q_FAILED:      return pu::ui::Color(240, 110, 110, 255);
-    case Q_CANCELLED:   return pu::ui::Color(150, 150, 162, 255);
+    case Q_CANCELLED:   return light ? pu::ui::Color(40, 44, 52, 255)
+                                     : pu::ui::Color(150, 150, 162, 255);
     case Q_QUEUED:
     default:            return light ? pu::ui::Color(80, 90, 110, 255)
                                      : pu::ui::Color(205, 212, 225, 255);
@@ -374,6 +375,7 @@ static bool file_installed(const char *target, const char *fname) {
 
 enum { SORT_DEFAULT, SORT_NAME_AZ, SORT_NAME_ZA, SORT_SIZE_DESC, SORT_SIZE_ASC, SORT__COUNT };
 static int g_sort_mode = SORT_DEFAULT;
+static int g_inst_sort = SORT_DEFAULT; // Installed browser sort (session-persistent)
 static const int g_sort_keys[] = {
     S_SORT_DEFAULT, S_SORT_NAME_AZ, S_SORT_NAME_ZA,
     S_SORT_SIZE_DESC, S_SORT_SIZE_ASC
@@ -849,8 +851,18 @@ void MainLayout::SetSubtitle(const std::string &t) {
             this->footer_segs[k]->SetText(segs[k]);
             s32 cell = (sw - 2 * margin) / (n > 0 ? n : 1);
             s32 center = margin + cell * k + cell / 2;
-            this->footer_segs[k]->SetX(center -
-                                       this->footer_segs[k]->GetWidth() / 2);
+            s32 w = this->footer_segs[k]->GetWidth();
+            s32 x = center - w / 2;
+            // A segment wider than its cell (e.g. the update progress text
+            // once the sizes grow) must stay on screen: clamp to the margins
+            // rather than sliding off the left/right edge.
+            if (x + w > sw - margin) {
+                x = sw - margin - w;
+            }
+            if (x < margin) {
+                x = margin;
+            }
+            this->footer_segs[k]->SetX(x);
         } else {
             this->footer_segs[k]->SetText("");
         }
@@ -1055,7 +1067,7 @@ void MainApplication::GotoRepos(int ci) {
     this->layout->SetSel(ci == this->repos_sel_ci ? this->repos_sel : 0);
 }
 
-void MainApplication::GotoFiles(int ci, int ri) {
+void MainApplication::GotoFiles(int ci, int ri, bool force) {
     g_sort_mode = SORT_DEFAULT;
     g_files_manual = false;
     this->sel_ci = ci;
@@ -1064,7 +1076,7 @@ void MainApplication::GotoFiles(int ci, int ri) {
     Repo *rp = &g->repos[ri];
     this->layout->SetTitle(std::string(g->console) + " > " + rp->label);
     this->screen = Screen::Files;
-    this->StartMetaLoad(rp->id, rp->download_base, g->target, false,
+    this->StartMetaLoad(rp->id, rp->download_base, g->target, force,
                         FILES_SUBTITLE);
 }
 
@@ -1284,6 +1296,94 @@ void MainApplication::GotoManageData() {
     this->layout->ClearMenu();
     this->layout->AddRow(tr(S_MANAGE_DOWNLOADS)); // 0
     this->layout->AddRow(tr(S_MANAGE_CACHE));     // 1
+    this->layout->AddRow(tr(S_REFRESH_ALL));      // 2
+}
+
+// ---- bulk metadata refresh (Manage data -> Refresh all metadata) ----------
+static std::vector<std::string> g_ra_ids;
+static char g_ra_cur[256]; // repo id currently being fetched (display only)
+
+void MainApplication::RaThread(void *arg) {
+    auto self = static_cast<MainApplication *>(arg);
+    for (size_t i = 0; i < g_ra_ids.size(); i++) {
+        if (self->ra_cancel) {
+            break;
+        }
+        snprintf(g_ra_cur, sizeof(g_ra_cur), "%s", g_ra_ids[i].c_str());
+        self->ra_idx = (int)i + 1;
+        ArchiveItem item;
+        // use_cache=false forces a refetch; a successful parse replaces the
+        // cache file (bad responses never overwrite a good cache).
+        if (ia_fetch(g_ra_ids[i].c_str(), &item, false, CACHE_DIR)) {
+            ia_free(&item);
+            self->ra_ok = self->ra_ok + 1;
+        } else {
+            self->ra_fail = self->ra_fail + 1;
+        }
+    }
+    self->ra_done = true;
+}
+
+void MainApplication::RaStart() {
+    // Every enabled repo, deduplicated (the same archive.org item may back
+    // repos on several consoles — one fetch covers them all).
+    g_ra_ids.clear();
+    for (int c = 0; c < g_cfg.console_count; c++) {
+        for (int r = 0; r < g_cfg.consoles[c].repo_count; r++) {
+            Repo *rp = &g_cfg.consoles[c].repos[r];
+            if (rp->enabled && rp->id[0]) {
+                g_ra_ids.push_back(rp->id);
+            }
+        }
+    }
+    std::sort(g_ra_ids.begin(), g_ra_ids.end());
+    g_ra_ids.erase(std::unique(g_ra_ids.begin(), g_ra_ids.end()),
+                   g_ra_ids.end());
+    if (g_ra_ids.empty()) {
+        this->ToastErr(tr(S_NO_REPOS));
+        return;
+    }
+
+    this->ra_done = false;
+    this->ra_cancel = false;
+    this->ra_idx = 0;
+    this->ra_total = (int)g_ra_ids.size();
+    this->ra_ok = 0;
+    this->ra_fail = 0;
+    g_ra_cur[0] = '\0';
+
+    Result rc = threadCreate(&this->ra_thread, &MainApplication::RaThread,
+                             this, NULL, 0x40000, 0x2C, -2);
+    if (R_FAILED(rc) || R_FAILED(threadStart(&this->ra_thread))) {
+        this->ToastErr(tr(S_META_FAILED));
+        return;
+    }
+    this->ra_running = true;
+    this->layout->SetTitle(tr(S_REFRESH_ALL));
+    this->layout->ClearMenu();
+    this->layout->AddRow(tr(S_REFRESH_ALL));
+}
+
+void MainApplication::RaTick() {
+    if (!this->ra_done) {
+        char s[320];
+        snprintf(s, sizeof(s), "(%d/%d)  %s   B %s", (int)this->ra_idx,
+                 (int)this->ra_total, g_ra_cur, tr(S_CANCEL));
+        this->layout->SetSubtitle(s);
+        return;
+    }
+    threadWaitForExit(&this->ra_thread);
+    threadClose(&this->ra_thread);
+    this->ra_running = false;
+    char t[96];
+    snprintf(t, sizeof(t), tr(S_REFRESH_DONE), (int)this->ra_ok,
+             (int)this->ra_fail);
+    if (this->ra_fail > 0) {
+        this->ToastErr(t);
+    } else {
+        this->Toast(t);
+    }
+    this->GotoManageData();
 }
 
 void MainApplication::GotoViewLogs() {
@@ -1532,24 +1632,39 @@ void MainApplication::GotoCreds() {
     this->layout->AddRow(tr(S_CLEAR_CREDS));
 }
 
+// Display name used for Installed sorting: root console folders sort by their
+// full name (matching what's shown), everything else by its raw name.
+static const char *inst_disp_name(const DirEnt &d, bool is_root) {
+    if (is_root && d.is_dir) {
+        const char *f = console_full_name(d.name.c_str());
+        if (f) return f;
+    }
+    return d.name.c_str();
+}
+
 void MainApplication::GotoInstalled(const std::string &path) {
     this->screen = Screen::Installed;
     this->inst_path = path;
     g_inst = list_dir(path);
     bool is_root = (path == roms_root(&g_tico));
+    // Folders stay grouped above files, and pinned folders stay on top at the
+    // root; the chosen sort orders within those groups (size applies to files).
     std::sort(g_inst.begin(), g_inst.end(), [is_root](const DirEnt &a, const DirEnt &b) {
         if (a.is_dir != b.is_dir) return a.is_dir > b.is_dir;
         if (is_root && a.is_dir && b.is_dir) {
             bool pa = prefs_dir_pinned(&g_prefs, a.name.c_str());
             bool pb = prefs_dir_pinned(&g_prefs, b.name.c_str());
             if (pa != pb) return pa > pb;
-            const char *fa = console_full_name(a.name.c_str());
-            const char *fb = console_full_name(b.name.c_str());
-            const char *sa = fa ? fa : a.name.c_str();
-            const char *sb = fb ? fb : b.name.c_str();
-            return strcasecmp(sa, sb) < 0;
         }
-        return strcasecmp(a.name.c_str(), b.name.c_str()) < 0;
+        if (!a.is_dir && !b.is_dir &&
+            (g_inst_sort == SORT_SIZE_DESC || g_inst_sort == SORT_SIZE_ASC) &&
+            a.size != b.size) {
+            return g_inst_sort == SORT_SIZE_DESC ? a.size > b.size
+                                                 : a.size < b.size;
+        }
+        int c = strcasecmp(inst_disp_name(a, is_root),
+                           inst_disp_name(b, is_root));
+        return g_inst_sort == SORT_NAME_ZA ? c > 0 : c < 0;
     });
     std::string shown = path;
     if (shown.rfind(roms_root(&g_tico), 0) == 0) {
@@ -1593,6 +1708,9 @@ void MainApplication::GotoInstalled(const std::string &path) {
     if (g_inst.empty()) {
         this->layout->AddRow(tr(S_EMPTY));
     }
+    if (g_inst_sort != SORT_DEFAULT) {
+        this->layout->SetRomInfo(tr(g_sort_keys[g_inst_sort]));
+    }
 }
 
 void MainApplication::GotoRepoEdit(int ci, int ri) {
@@ -1615,8 +1733,9 @@ void MainApplication::GotoRepoEdit(int ci, int ri) {
     this->layout->AddRow(r);
     snprintf(r, sizeof(r), tr(S_LABEL_ENABLED),
              rp->enabled ? tr(S_ON) : tr(S_OFF));
-    this->layout->AddRow(r);
-    this->layout->AddRow(tr(S_DELETE_REPO));
+    this->layout->AddRow(r);                     // 3
+    this->layout->AddRow(tr(S_REFRESH_META));    // 4
+    this->layout->AddRow(tr(S_DELETE_REPO));     // 5
 }
 
 void MainApplication::GotoPicker(Pending what) {
@@ -1826,6 +1945,16 @@ void MainApplication::HandleInput(u64 down, u64 held,
         }
     }
 
+    // A bulk metadata refresh owns the UI while it runs: show (n/total)
+    // progress; B cancels after the in-flight repo finishes.
+    if (this->ra_running) {
+        if (down & HidNpadButton_B) {
+            this->ra_cancel = true;
+        }
+        this->RaTick();
+        return;
+    }
+
     // A repo's metadata is loading on a background thread: animate the indicator
     // and swallow input until it's ready.
     if (this->meta_running) {
@@ -1886,7 +2015,13 @@ void MainApplication::HandleInput(u64 down, u64 held,
         static bool init = false;
         static int idle = 1000;
         static QueueView cqv[QUEUE_MAX];
-        idle = queue_active_count() > 0 ? 0 : (idle < 1000 ? idle + 1 : idle);
+        // Accumulated over the current active run, for a "queue finished"
+        // summary once it drains (per-item toasts overwrite each other when
+        // several finish together, so a batch needs one final tally).
+        static int done_acc = 0, fail_acc = 0;
+        static bool was_active = false;
+        int qac = queue_active_count();
+        idle = qac > 0 ? 0 : (idle < 1000 ? idle + 1 : idle);
         if (idle <= 2) {
             int n = queue_snapshot(cqv, QUEUE_MAX);
             QStatus cur[QUEUE_MAX];
@@ -1906,6 +2041,11 @@ void MainApplication::HandleInput(u64 down, u64 held,
                     bool was_term = (prev == Q_DONE || prev == Q_SAVED ||
                                      prev == Q_FAILED || prev == Q_FREE);
                     if (now_term && !was_term) {
+                        if (s == Q_FAILED) {
+                            fail_acc++;
+                        } else {
+                            done_acc++;
+                        }
                         char nm[48];
                         snprintf(nm, sizeof(nm), "%.44s", cqv[k].item.name);
                         if (s == Q_FAILED) {
@@ -1920,7 +2060,24 @@ void MainApplication::HandleInput(u64 down, u64 held,
             }
             memcpy(last, cur, sizeof(last));
             init = true;
+            // Drain edge: the queue just went idle. Summarize a multi-item run
+            // (a lone download already got its own toast above).
+            if (was_active && qac == 0) {
+                if (done_acc + fail_acc > 1) {
+                    char t[80];
+                    snprintf(t, sizeof(t), tr(S_TOAST_ALL_DONE), done_acc,
+                             fail_acc);
+                    if (fail_acc > 0) {
+                        this->ToastErr(t);
+                    } else {
+                        this->Toast(t);
+                    }
+                }
+                done_acc = 0;
+                fail_acc = 0;
+            }
         }
+        was_active = qac > 0;
     }
 
     // Live-refresh the queue list while it's open.
@@ -2331,8 +2488,20 @@ void MainApplication::HandleInput(u64 down, u64 held,
             this->GotoLog();
             return;
         } else if (down & HidNpadButton_Y) {
-            queue_clear_finished();
-            this->Toast(tr(S_CLEARED));
+            // Queue-level actions (batch): retry all failed / clear finished.
+            int r = this->CreateShowDialog(
+                tr(S_TITLE_QUEUE), "",
+                {tr(S_RETRY_ALL), tr(S_CLEAR_FINISHED), tr(S_CANCEL)}, false, {},
+                style_dialog);
+            if (r == 0) {
+                int n = queue_retry_all();
+                char t[48];
+                snprintf(t, sizeof(t), tr(S_RETRIED_N), n);
+                this->Toast(t);
+            } else if (r == 1) {
+                queue_clear_finished();
+                this->Toast(tr(S_CLEARED));
+            }
         } else {
             static QueueView qv[QUEUE_MAX];
             int n = queue_snapshot(qv, QUEUE_MAX);
@@ -2513,6 +2682,7 @@ void MainApplication::HandleInput(u64 down, u64 held,
             switch (this->layout->Sel()) {
             case 0: this->GotoDownloads(); return;
             case 1: this->GotoCache(); return;
+            case 2: this->RaStart(); return; // refresh all metadata
             default: break;
             }
         }
@@ -2536,7 +2706,7 @@ void MainApplication::HandleInput(u64 down, u64 held,
         if (down & HidNpadButton_B) {
             this->GotoViewLogs();
         } else if (down & HidNpadButton_X) {
-            if (this->Confirm(tr(S_CLEAR_LOG), tr(S_CLEAR_LOG_CONFIRM))) {
+            if (this->Confirm(tr(S_CLEAR_LOG), tr(S_CLEAR_DEBUG_CONFIRM))) {
                 remove(LOG_PATH);
                 this->Toast(tr(S_LOG_CLEARED));
                 this->GotoDebugLog();
@@ -2734,6 +2904,14 @@ void MainApplication::HandleInput(u64 down, u64 held,
                     }
                 }
             }
+        } else if (down & HidNpadButton_Left) {
+            // Cycle the list sort (name A-Z / Z-A / size); keep the selection.
+            g_inst_sort = (g_inst_sort + 1) % SORT__COUNT;
+            this->Toast(tr(g_sort_keys[g_inst_sort]));
+            s32 keep = this->layout->Sel();
+            this->GotoInstalled(this->inst_path);
+            if (keep >= 0 && keep < this->layout->RowCount())
+                this->layout->SetSel(keep);
         } else if (down & HidNpadButton_X) {
             s32 i = this->layout->Sel();
             if (i >= 0 && i < (s32)g_inst.size()) {
@@ -2837,7 +3015,10 @@ void MainApplication::HandleInput(u64 down, u64 held,
                 rp->enabled = !rp->enabled;
                 config_save(&g_cfg);
                 break;
-            case 4:
+            case 4: // hard refresh: refetch this repo's metadata, skip cache
+                this->GotoFiles(this->sel_ci, this->sel_ri, true);
+                return;
+            case 5:
                 if (this->Confirm(tr(S_DELETE_REPO), tr(S_DELETE_REPO_CONFIRM))) {
                     config_remove_repo(&g_cfg.consoles[this->sel_ci],
                                        this->sel_ri);
@@ -3070,6 +3251,12 @@ void MainApplication::Shutdown() {
         threadWaitForExit(&this->upd_thread);
         threadClose(&this->upd_thread);
         this->upd_running = false;
+    }
+    if (this->ra_running) {
+        this->ra_cancel = true;
+        threadWaitForExit(&this->ra_thread);
+        threadClose(&this->ra_thread);
+        this->ra_running = false;
     }
     if (this->chk_running) {
         threadWaitForExit(&this->chk_thread);

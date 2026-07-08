@@ -4,6 +4,36 @@ Notes for each release. `release.sh` pulls the section matching the version in
 `VERSION` and attaches it to the GitHub release. Add a `## <version>` section
 here before running a release.
 
+## 1.2.0-beta
+
+**Metadata**
+- **Refresh all metadata** in one pass (Manage data) with live `(n/total)`
+  progress and a done/failed summary — handy before a global search, which
+  only covers cached repos.
+- **Refresh metadata now** (hard refresh) restored on a repo's edit screen.
+
+**Downloads**
+- Exiting during extraction no longer re-downloads the archive on next
+  launch — the completed file is kept and the unzip resumes (works offline).
+- **Retry all failed** and **Clear finished** as a Queue actions menu (Y).
+- A summary toast tallies a finished batch (e.g. "12 done, 1 failed").
+
+**Installed browser**
+- Re-sort with D-pad Left (name A–Z / Z–A / size); folders stay grouped and
+  pinned folders stay on top.
+
+**Languages**
+- **Vietnamese now renders correctly** — a bundled fallback font supplies the
+  glyphs (ế, ệ, ợ…) the console's system font lacks, with vertical metrics
+  matched so it sits on the same baseline as the rest of the text.
+
+**Fixes**
+- Self-update progress text no longer slides off the left edge once the file
+  size grows.
+- Clearing the debug log now asks "Clear the debug log?" instead of the
+  download-history wording.
+- Cancelled queue items are readable in the light theme (were washed out).
+
 ## 1.1.1-beta
 
 **Touch support**

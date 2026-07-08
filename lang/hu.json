@@ -36,7 +36,7 @@
   "queued_n": "%d fájl sorba állítva",
   "already_have": "Már megvan %d — sorba állítod a %d újat (%s)?",
   "title_queue": "Letöltési várólista",
-  "sub_queue": "A mégse  X újra  ZL/ZR mozgat  Y töröl  - napló  B vissza",
+  "sub_queue": "A mégse  X újra  ZL/ZR mozgat  Y menü  - napló  B vissza",
   "queue_empty": "(a várólista üres)",
   "cancelled": "Megszakítva",
   "retrying": "Újrapróbálkozás",
@@ -73,7 +73,7 @@
   "dl_queue_warn": "\n\nNéhány a letöltési várólistán van és megszakad.",
   "dl_cleared": "Letöltések törölve",
   "title_installed": "Telepített",
-  "sub_installed": "A megnyit  Y kiválaszt  X átnevez  Dpad> kitűzés  - töröl  L/R fülek  B vissza",
+  "sub_installed": "A megnyit  Y kiválaszt  X átnevez  Dpad< Rendezés  Dpad> kitűzés  - töröl  L/R fülek  B vissza",
   "dir_prefix": "[DIR] ",
   "delete_selected": "Töröl %d kiválasztott elemet?",
   "title_edit_repo": "Tároló szerkesztése",
@@ -171,5 +171,13 @@
   "sub_view_logs": "A kiválaszt  B vissza",
   "debug_log": "Hibakeresési napló megtekintése",
   "title_debug_log": "Hibakeresési napló",
-  "sub_debug_log": "X napló törlése  B vissza"
+  "sub_debug_log": "X napló törlése  B vissza",
+  "clear_debug_confirm": "Törlöd a hibakeresési naplót?",
+  "refresh_all": "Összes metaadat frissítése",
+  "refresh_meta": "Metaadatok frissítése most",
+  "refresh_done": "%d frissítve, %d sikertelen",
+  "retry_all": "Összes sikertelen újra",
+  "clear_finished": "Befejezettek törlése",
+  "retried_n": "%d újra sorba",
+  "toast_all_done": "Sor kész: %d ok, %d sikertelen"
 }

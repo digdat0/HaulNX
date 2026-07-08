@@ -35,6 +35,36 @@ SOFTWARE.
 
 ---
 
+## Noto Sans (subset)
+
+`romfs/fonts/viet-fallback.ttf` is a modified glyph subset of **Noto Sans
+Regular** (Latin Extended Additional + combining diacritics, used as a
+fallback for Vietnamese text) — https://notofonts.github.io/. Modifications:
+subset to the listed ranges, vertical metrics matched to the console's system
+font for baseline alignment, and renamed to "Viet Fallback Sans" per the OFL's
+Reserved Font Name rule.
+
+```
+Copyright 2022 The Noto Project Authors
+(https://github.com/notofonts/latin-greek-cyrillic)
+
+This Font Software is licensed under the SIL Open Font License, Version 1.1.
+This license is available with a FAQ at: https://openfontlicense.org
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of the Font Software, to use, study, copy, merge, embed, modify, redistribute,
+and sell modified and unmodified copies of the Font Software, subject to the
+conditions of the SIL Open Font License, Version 1.1. The Font Software may
+not be sold by itself; any redistribution must include this copyright notice
+and license. The fonts, including any derivative works, may be bundled,
+embedded, redistributed and/or sold with any software provided that any
+reserved names are not used by derivative works.
+
+THE FONT SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND.
+```
+
+---
+
 ## jsmn
 
 JSON tokenizer (vendored) — https://github.com/zserge/jsmn

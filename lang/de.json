@@ -36,7 +36,7 @@
   "queued_n": "%d Datei(en) eingereiht",
   "already_have": "%d bereits vorhanden — %d neue (%s) einreihen?",
   "title_queue": "Download-Warteschlange",
-  "sub_queue": "A abbrechen  X wiederholen  ZL/ZR verschieben  Y leeren  - Protokoll  B zurück",
+  "sub_queue": "A abbrechen  X wiederholen  ZL/ZR verschieben  Y Menü  - Protokoll  B zurück",
   "queue_empty": "(Warteschlange leer)",
   "cancelled": "Abgebrochen",
   "retrying": "Erneuter Versuch",
@@ -73,7 +73,7 @@
   "dl_queue_warn": "\n\nEinige befinden sich in der Warteschlange und werden abgebrochen.",
   "dl_cleared": "Downloads gelöscht",
   "title_installed": "Installiert",
-  "sub_installed": "A öffnen  Y auswählen  X umbenennen  Dpad> anheften  - löschen  L/R Tabs  B zurück",
+  "sub_installed": "A öffnen  Y auswählen  X umbenennen  Dpad< Sortierung  Dpad> anheften  - löschen  L/R Tabs  B zurück",
   "dir_prefix": "[DIR] ",
   "delete_selected": "%d ausgewählte(s) Element(e) löschen?",
   "title_edit_repo": "Repo bearbeiten",
@@ -171,5 +171,13 @@
   "sub_view_logs": "A auswählen  B zurück",
   "debug_log": "Debug-Protokoll anzeigen",
   "title_debug_log": "Debug-Protokoll",
-  "sub_debug_log": "X Protokoll löschen  B zurück"
+  "sub_debug_log": "X Protokoll löschen  B zurück",
+  "clear_debug_confirm": "Debug-Protokoll löschen?",
+  "refresh_all": "Alle Metadaten aktualisieren",
+  "refresh_meta": "Metadaten jetzt aktualisieren",
+  "refresh_done": "%d aktualisiert, %d fehlgeschlagen",
+  "retry_all": "Alle fehlgeschlagenen wiederholen",
+  "clear_finished": "Fertige entfernen",
+  "retried_n": "%d erneut eingereiht",
+  "toast_all_done": "Warteschlange fertig: %d ok, %d fehlgeschlagen"
 }

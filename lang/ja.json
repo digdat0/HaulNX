@@ -36,7 +36,7 @@
   "queued_n": "%d 件をキューに追加",
   "already_have": "%d 件は取得済み — 新規 %d 件 (%s) をキューに追加しますか？",
   "title_queue": "ダウンロードキュー",
-  "sub_queue": "A キャンセル  X 再試行  ZL/ZR 移動  Y クリア  - ログ  B 戻る",
+  "sub_queue": "A キャンセル  X 再試行  ZL/ZR 移動  Y メニュー  - ログ  B 戻る",
   "queue_empty": "(キューは空です)",
   "cancelled": "キャンセルしました",
   "retrying": "再試行中",
@@ -73,7 +73,7 @@
   "dl_queue_warn": "\n\nキューに含まれるものはキャンセルされます。",
   "dl_cleared": "ダウンロードを削除しました",
   "title_installed": "インストール済み",
-  "sub_installed": "A 開く  Y 選択  X 名前変更  Dpad> ピン留め  - 削除  L/R タブ  B 戻る",
+  "sub_installed": "A 開く  Y 選択  X 名前変更  Dpad< 並び替え  Dpad> ピン留め  - 削除  L/R タブ  B 戻る",
   "dir_prefix": "[DIR] ",
   "delete_selected": "選択した %d 件を削除しますか？",
   "title_edit_repo": "リポジトリ編集",
@@ -171,5 +171,13 @@
   "sub_view_logs": "A 選択  B 戻る",
   "debug_log": "デバッグログを表示",
   "title_debug_log": "デバッグログ",
-  "sub_debug_log": "X ログ消去  B 戻る"
+  "sub_debug_log": "X ログ消去  B 戻る",
+  "clear_debug_confirm": "デバッグログを消去しますか？",
+  "refresh_all": "すべてのメタデータを更新",
+  "refresh_meta": "メタデータを今すぐ更新",
+  "refresh_done": "%d件更新、%d件失敗",
+  "retry_all": "失敗したすべてを再試行",
+  "clear_finished": "完了を消去",
+  "retried_n": "%d件を再キュー",
+  "toast_all_done": "キュー完了: %d 件成功, %d 件失敗"
 }

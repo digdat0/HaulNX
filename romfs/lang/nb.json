@@ -36,7 +36,7 @@
   "queued_n": "%d fil(er) i kø",
   "already_have": "Har allerede %d — legg til %d nye (%s) i kø?",
   "title_queue": "Nedlastingskø",
-  "sub_queue": "A avbryt  X prøv igjen  ZL/ZR flytt  Y tøm  - logg  B tilbake",
+  "sub_queue": "A avbryt  X prøv igjen  ZL/ZR flytt  Y meny  - logg  B tilbake",
   "queue_empty": "(køen er tom)",
   "cancelled": "Avbrutt",
   "retrying": "Prøver igjen",
@@ -73,7 +73,7 @@
   "dl_queue_warn": "\n\nNoen er i nedlastingskøen og vil bli avbrutt.",
   "dl_cleared": "Nedlastinger slettet",
   "title_installed": "Installert",
-  "sub_installed": "A åpne  Y velg  X omdøp  Dpad> fest  - slett  L/R faner  B tilbake",
+  "sub_installed": "A åpne  Y velg  X omdøp  Dpad< Sortering  Dpad> fest  - slett  L/R faner  B tilbake",
   "dir_prefix": "[DIR] ",
   "delete_selected": "Slette %d valgte elementer?",
   "title_edit_repo": "Rediger repo",
@@ -171,5 +171,13 @@
   "sub_view_logs": "A velg  B tilbake",
   "debug_log": "Vis feilsøkingslogg",
   "title_debug_log": "Feilsøkingslogg",
-  "sub_debug_log": "X tøm logg  B tilbake"
+  "sub_debug_log": "X tøm logg  B tilbake",
+  "clear_debug_confirm": "Tømme feilsøkingsloggen?",
+  "refresh_all": "Oppdater alle metadata",
+  "refresh_meta": "Oppdater metadata nå",
+  "refresh_done": "%d oppdatert, %d mislyktes",
+  "retry_all": "Prøv alle mislykkede igjen",
+  "clear_finished": "Tøm fullførte",
+  "retried_n": "%d satt i kø igjen",
+  "toast_all_done": "Kø ferdig: %d ok, %d mislyktes"
 }

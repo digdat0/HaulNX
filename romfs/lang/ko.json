@@ -36,7 +36,7 @@
   "queued_n": "%d개 파일 대기열에 추가",
   "already_have": "%d개 보유 중 — 새 %d개 (%s) 대기열에 추가할까요?",
   "title_queue": "다운로드 대기열",
-  "sub_queue": "A 취소  X 재시도  ZL/ZR 이동  Y 비우기  - 로그  B 뒤로",
+  "sub_queue": "A 취소  X 재시도  ZL/ZR 이동  Y 메뉴  - 로그  B 뒤로",
   "queue_empty": "(대기열 비어 있음)",
   "cancelled": "취소됨",
   "retrying": "재시도 중",
@@ -73,7 +73,7 @@
   "dl_queue_warn": "\n\n일부가 대기열에 있으며 취소됩니다.",
   "dl_cleared": "다운로드 삭제됨",
   "title_installed": "설치됨",
-  "sub_installed": "A 열기  Y 선택  X 이름 변경  Dpad> 고정  - 삭제  L/R 탭  B 뒤로",
+  "sub_installed": "A 열기  Y 선택  X 이름 변경  Dpad< 정렬  Dpad> 고정  - 삭제  L/R 탭  B 뒤로",
   "dir_prefix": "[DIR] ",
   "delete_selected": "선택한 %d개 항목을 삭제할까요?",
   "title_edit_repo": "저장소 편집",
@@ -171,5 +171,13 @@
   "sub_view_logs": "A 선택  B 뒤로",
   "debug_log": "디버그 로그 보기",
   "title_debug_log": "디버그 로그",
-  "sub_debug_log": "X 로그 삭제  B 뒤로"
+  "sub_debug_log": "X 로그 삭제  B 뒤로",
+  "clear_debug_confirm": "디버그 로그를 지우시겠습니까?",
+  "refresh_all": "모든 메타데이터 새로고침",
+  "refresh_meta": "지금 메타데이터 새로고침",
+  "refresh_done": "%d개 업데이트, %d개 실패",
+  "retry_all": "실패한 항목 모두 재시도",
+  "clear_finished": "완료 항목 지우기",
+  "retried_n": "%d개 다시 대기열에",
+  "toast_all_done": "대기열 완료: %d개 완료, %d개 실패"
 }

@@ -36,7 +36,7 @@
   "queued_n": "%d bestand(en) in wachtrij",
   "already_have": "Al %d aanwezig — %d nieuwe (%s) in wachtrij plaatsen?",
   "title_queue": "Downloadwachtrij",
-  "sub_queue": "A annuleren  X opnieuw  ZL/ZR verplaatsen  Y wissen  - logboek  B terug",
+  "sub_queue": "A annuleren  X opnieuw  ZL/ZR verplaatsen  Y menu  - logboek  B terug",
   "queue_empty": "(wachtrij leeg)",
   "cancelled": "Geannuleerd",
   "retrying": "Opnieuw proberen",
@@ -73,7 +73,7 @@
   "dl_queue_warn": "\n\nSommige staan in de downloadwachtrij en worden geannuleerd.",
   "dl_cleared": "Downloads verwijderd",
   "title_installed": "Geïnstalleerd",
-  "sub_installed": "A openen  Y selecteren  X hernoemen  Dpad> vastzetten  - verwijderen  L/R tabbladen  B terug",
+  "sub_installed": "A openen  Y selecteren  X hernoemen  Dpad< Sortering  Dpad> vastzetten  - verwijderen  L/R tabbladen  B terug",
   "dir_prefix": "[DIR] ",
   "delete_selected": "%d geselecteerde item(s) verwijderen?",
   "title_edit_repo": "Repo bewerken",
@@ -171,5 +171,13 @@
   "sub_view_logs": "A selecteren  B terug",
   "debug_log": "Debuglogboek bekijken",
   "title_debug_log": "Debuglogboek",
-  "sub_debug_log": "X logboek wissen  B terug"
+  "sub_debug_log": "X logboek wissen  B terug",
+  "clear_debug_confirm": "Debuglogboek wissen?",
+  "refresh_all": "Alle metadata vernieuwen",
+  "refresh_meta": "Metadata nu vernieuwen",
+  "refresh_done": "%d bijgewerkt, %d mislukt",
+  "retry_all": "Alle mislukte opnieuw",
+  "clear_finished": "Voltooide wissen",
+  "retried_n": "%d opnieuw in wachtrij",
+  "toast_all_done": "Wachtrij klaar: %d ok, %d mislukt"
 }

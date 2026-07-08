@@ -237,6 +237,18 @@ enum {
     S_DEBUG_LOG,
     S_TITLE_DEBUG_LOG,
     S_SUB_DEBUG_LOG,
+    S_CLEAR_DEBUG_CONFIRM,
+
+    /* ---- metadata refresh ---- */
+    S_REFRESH_ALL,
+    S_REFRESH_META,
+    S_REFRESH_DONE,
+
+    /* ---- queue actions + summary ---- */
+    S_RETRY_ALL,
+    S_CLEAR_FINISHED,
+    S_RETRIED_N,
+    S_TOAST_ALL_DONE,
 
     S__COUNT
 };

@@ -45,6 +45,8 @@ but it works.**
     with backoff, resuming the partial file
   - Pipelined extraction — the next download starts while the previous archive unpacks
   - Progress bar, speed, ETA, cancel, retry (resumes in place), reorder (ZL/ZR)
+  - Queue actions menu (**Y**): retry every failed item or clear finished ones
+    at once; a summary toast reports the tally when a batch finishes
   - Queue the entire file list at once with **−** (free-space check included)
   - Queue persists across app restarts; interrupted downloads resume automatically
   - **Network-loss aware**: if the connection drops, active downloads pause
@@ -60,6 +62,8 @@ but it works.**
 
 - **Installed browser**
   - Sorted alphabetically by full console name, pinned folders first
+  - Re-sort with **D-pad Left** (name A–Z / Z–A / size); folders stay grouped
+    and pinned ones stay on top
   - Multi-select with **Y**, bulk-delete with **−**, rename with **X**
 
 - **Touch support**
@@ -84,6 +88,9 @@ but it works.**
 - **Data management**
   - **Settings → Manage data**: clean up the temporary downloads folder and the
     metadata cache (entries tagged by console), singly or all at once
+  - **Refresh all metadata** in one go (with live progress) — useful before a
+    global search, which covers cached repos; per-repo hard refresh lives on
+    the repo edit screen
   - Unresumable leftover `.part` files are cleaned up automatically at startup
 
 - **In-app self-update**

@@ -36,7 +36,7 @@
   "queued_n": "%d fichier(s) en file",
   "already_have": "Vous avez déjà %d — ajouter %d nouveau(x) (%s) ?",
   "title_queue": "File de téléchargement",
-  "sub_queue": "A annuler  X réessayer  ZL/ZR déplacer  Y effacer  - journal  B retour",
+  "sub_queue": "A annuler  X réessayer  ZL/ZR déplacer  Y menu  - journal  B retour",
   "queue_empty": "(file vide)",
   "cancelled": "Annulé",
   "retrying": "Nouvel essai",
@@ -73,7 +73,7 @@
   "dl_queue_warn": "\n\nCertains sont dans la file de téléchargement et seront annulés.",
   "dl_cleared": "Téléchargements supprimés",
   "title_installed": "Installés",
-  "sub_installed": "A ouvrir  Y sélectionner  X renommer  Dpad> épingler  - supprimer  L/R onglets  B retour",
+  "sub_installed": "A ouvrir  Y sélectionner  X renommer  Dpad< Tri  Dpad> épingler  - supprimer  L/R onglets  B retour",
   "dir_prefix": "[DIR] ",
   "delete_selected": "Supprimer %d élément(s) sélectionné(s) ?",
   "title_edit_repo": "Modifier le dépôt",
@@ -171,5 +171,13 @@
   "sub_view_logs": "A sélectionner  B retour",
   "debug_log": "Voir le journal de débogage",
   "title_debug_log": "Journal de débogage",
-  "sub_debug_log": "X effacer journal  B retour"
+  "sub_debug_log": "X effacer journal  B retour",
+  "clear_debug_confirm": "Effacer le journal de débogage ?",
+  "refresh_all": "Actualiser toutes les métadonnées",
+  "refresh_meta": "Actualiser les métadonnées maintenant",
+  "refresh_done": "%d mis à jour, %d échoués",
+  "retry_all": "Réessayer tous les échecs",
+  "clear_finished": "Effacer les terminés",
+  "retried_n": "%d remis en file",
+  "toast_all_done": "File terminée : %d ok, %d échoués"
 }
