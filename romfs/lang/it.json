@@ -181,5 +181,8 @@
   "retried_n": "%d rimessi in coda",
   "toast_all_done": "Coda finita: %d ok, %d falliti",
   "title_inst_search": "Cerca installati",
-  "sub_inst_search": "A apri  Y nuova ricerca  B indietro"
+  "sub_inst_search": "A apri  Y nuova ricerca  B indietro",
+  "card_view": "Vista a schede: %s",
+  "sub_home_cards": "A apri  X fissa  Y aggiungi repo  - cerca  L/R schede  ZL/ZR pagina",
+  "sub_installed_cards": "A apri  X fissa  - cerca  L/R schede  B indietro"
 }

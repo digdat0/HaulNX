@@ -181,5 +181,8 @@
   "retried_n": "%d na fila novamente",
   "toast_all_done": "Fila concluída: %d ok, %d falharam",
   "title_inst_search": "Buscar instalados",
-  "sub_inst_search": "A abrir  Y nova pesquisa  B voltar"
+  "sub_inst_search": "A abrir  Y nova pesquisa  B voltar",
+  "card_view": "Visualização em cartões: %s",
+  "sub_home_cards": "A abrir  X fixar  Y adicionar repo  - pesquisar  L/R abas  ZL/ZR página",
+  "sub_installed_cards": "A abrir  X fixar  - pesquisar  L/R abas  B voltar"
 }

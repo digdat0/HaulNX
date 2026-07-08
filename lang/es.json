@@ -181,5 +181,8 @@
   "retried_n": "%d en cola de nuevo",
   "toast_all_done": "Cola terminada: %d hechos, %d fallidos",
   "title_inst_search": "Buscar instalados",
-  "sub_inst_search": "A abrir  Y nueva búsqueda  B atrás"
+  "sub_inst_search": "A abrir  Y nueva búsqueda  B atrás",
+  "card_view": "Vista de tarjetas: %s",
+  "sub_home_cards": "A abrir  X fijar  Y añadir repo  - buscar  L/R pestañas  ZL/ZR página",
+  "sub_installed_cards": "A abrir  X fijar  - buscar  L/R pestañas  B volver"
 }

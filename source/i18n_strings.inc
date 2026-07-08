@@ -182,6 +182,9 @@ static const char *const g_en[S__COUNT] = {
     /* S_TOAST_ALL_DONE */ "Queue finished: %d done, %d failed",
     /* S_TITLE_INST_SEARCH */ "Search installed",
     /* S_SUB_INST_SEARCH */ "A open  Y new search  B back",
+    /* S_CARD_VIEW */ "Card view: %s",
+    /* S_SUB_HOME_CARDS */ "A open  X pin  Y add repo  - search  L/R tabs  ZL/ZR page",
+    /* S_SUB_INSTALLED_CARDS */ "A open  X pin  - search  L/R tabs  B back",
 };
 
 static const char *const g_key_names[S__COUNT] = {
@@ -365,4 +368,7 @@ static const char *const g_key_names[S__COUNT] = {
     [S_TOAST_ALL_DONE] = "toast_all_done",
     [S_TITLE_INST_SEARCH] = "title_inst_search",
     [S_SUB_INST_SEARCH] = "sub_inst_search",
+    [S_CARD_VIEW] = "card_view",
+    [S_SUB_HOME_CARDS] = "sub_home_cards",
+    [S_SUB_INSTALLED_CARDS] = "sub_installed_cards",
 };

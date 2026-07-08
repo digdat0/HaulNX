@@ -181,5 +181,8 @@
   "retried_n": "%d remis en file",
   "toast_all_done": "File terminée : %d ok, %d échoués",
   "title_inst_search": "Rechercher installés",
-  "sub_inst_search": "A ouvrir  Y nouvelle recherche  B retour"
+  "sub_inst_search": "A ouvrir  Y nouvelle recherche  B retour",
+  "card_view": "Vue cartes : %s",
+  "sub_home_cards": "A ouvrir  X épingler  Y ajouter repo  - rechercher  L/R onglets  ZL/ZR page",
+  "sub_installed_cards": "A ouvrir  X épingler  - rechercher  L/R onglets  B retour"
 }

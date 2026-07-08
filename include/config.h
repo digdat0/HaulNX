@@ -76,6 +76,7 @@ typedef struct {
     bool net_check;      /* true: warn on startup if no network (default true) */
     char lang[16];       /* language code, e.g. "en", "es", "ja"; empty = English */
     char theme[16];      /* "dark" (default) or "light" */
+    bool card_view;      /* true: console lists render as a card grid */
     /* Top-level ROM folders pinned to the top of the Installed tab. */
     char pinned_dirs[MAX_PINNED_DIRS][64];
     int pinned_dir_count;

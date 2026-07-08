@@ -181,5 +181,8 @@
   "retried_n": "%d köade igen",
   "toast_all_done": "Kön klar: %d klara, %d misslyckade",
   "title_inst_search": "Sök installerade",
-  "sub_inst_search": "A öppna  Y ny sökning  B tillbaka"
+  "sub_inst_search": "A öppna  Y ny sökning  B tillbaka",
+  "card_view": "Kortvy: %s",
+  "sub_home_cards": "A öppna  X fäst  Y lägg till repo  - sök  L/R flikar  ZL/ZR sida",
+  "sub_installed_cards": "A öppna  X fäst  - sök  L/R flikar  B tillbaka"
 }

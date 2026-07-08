@@ -181,5 +181,8 @@
   "retried_n": "%d znovu ve frontě",
   "toast_all_done": "Fronta hotova: %d ok, %d selhalo",
   "title_inst_search": "Hledat nainstalované",
-  "sub_inst_search": "A otevřít  Y nové hledání  B zpět"
+  "sub_inst_search": "A otevřít  Y nové hledání  B zpět",
+  "card_view": "Zobrazení karet: %s",
+  "sub_home_cards": "A otevřít  X připnout  Y přidat repo  - hledat  L/R karty  ZL/ZR stránka",
+  "sub_installed_cards": "A otevřít  X připnout  - hledat  L/R karty  B zpět"
 }

@@ -181,5 +181,8 @@
   "retried_n": "%d ξανά σε ουρά",
   "toast_all_done": "Ουρά ολοκληρώθηκε: %d ok, %d απέτυχαν",
   "title_inst_search": "Αναζήτηση εγκατεστημένων",
-  "sub_inst_search": "A άνοιγμα  Y νέα αναζήτηση  B πίσω"
+  "sub_inst_search": "A άνοιγμα  Y νέα αναζήτηση  B πίσω",
+  "card_view": "Προβολή καρτών: %s",
+  "sub_home_cards": "A άνοιγμα  X καρφίτσωμα  Y προσθήκη repo  - αναζήτηση  L/R καρτέλες  ZL/ZR σελίδα",
+  "sub_installed_cards": "A άνοιγμα  X καρφίτσωμα  - αναζήτηση  L/R καρτέλες  B πίσω"
 }

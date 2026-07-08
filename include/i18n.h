@@ -254,6 +254,11 @@ enum {
     S_TITLE_INST_SEARCH,
     S_SUB_INST_SEARCH,
 
+    /* ---- card view ---- */
+    S_CARD_VIEW,
+    S_SUB_HOME_CARDS,
+    S_SUB_INSTALLED_CARDS,
+
     S__COUNT
 };
 

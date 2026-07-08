@@ -24,6 +24,9 @@ class TableList : public pu::ui::elm::Element {
         // Optional left icon (e.g. a console icon), BORROWED — owned by a
         // shared cache elsewhere, never freed by this list.
         pu::sdl2::Texture icon;
+        // Optional short text drawn BEFORE the icon (e.g. a queue status), so
+        // the icon becomes the second column. Uses lclr.
+        std::string prefix;
     };
 
   private:
@@ -37,14 +40,18 @@ class TableList : public pu::ui::elm::Element {
     s32 rows_visible;
     s32 sel;
     s32 scroll_top;
-    pu::ui::Color row_bg, row_alt_bg, focus_bg, scroll_clr, mark_bg;
+    // Selection-highlight fade: restarted whenever the selection changes so
+    // the blue eases in instead of teleporting between rows.
+    s32 anim_sel = -1;
+    s32 sel_alpha = 255;
+    pu::ui::Color row_bg, row_alt_bg, focus_bg, scroll_clr, mark_bg, prog_clr;
     std::set<s32> marked;
     std::string font;
     std::vector<Row> rows;
 
     // Visible-window texture cache: only rebuilt when the window or content
     // changes, so a static list does not re-render text every frame.
-    std::vector<Cell> cache_l, cache_r;
+    std::vector<Cell> cache_l, cache_r, cache_p; // p = optional prefix text
     s32 cache_top;
     bool dirty;
 
@@ -96,15 +103,21 @@ class TableList : public pu::ui::elm::Element {
                 pu::ui::render::DeleteTexture(c.tex);
             }
         }
+        for (auto &c : this->cache_p) {
+            if (c.tex) {
+                pu::ui::render::DeleteTexture(c.tex);
+            }
+        }
         this->cache_l.clear();
         this->cache_r.clear();
+        this->cache_p.clear();
     }
 
     void RebuildCache() {
         this->FreeCache();
         for (s32 i = 0; i < this->rows_visible; i++) {
             s32 ridx = this->scroll_top + i;
-            Cell lc{nullptr, 0, 0}, rc{nullptr, 0, 0};
+            Cell lc{nullptr, 0, 0}, rc{nullptr, 0, 0}, pc{nullptr, 0, 0};
             if (ridx >= 0 && ridx < (s32)this->rows.size()) {
                 Row &r = this->rows[ridx];
                 if (r.has_right && !r.right.empty()) {
@@ -113,8 +126,15 @@ class TableList : public pu::ui::elm::Element {
                     rc.w = pu::ui::render::GetTextureWidth(rc.tex);
                     rc.h = pu::ui::render::GetTextureHeight(rc.tex);
                 }
+                if (!r.prefix.empty()) {
+                    pc.tex = pu::ui::render::RenderText(this->font, r.prefix,
+                                                        r.lclr);
+                    pc.w = pu::ui::render::GetTextureWidth(pc.tex);
+                    pc.h = pu::ui::render::GetTextureHeight(pc.tex);
+                }
+                s32 prefix_inset = pc.tex ? (pc.w + IconGap) : 0;
                 s32 icon_inset = r.icon ? (this->IconPx() + IconGap) : 0;
-                s32 left_max = this->w - 2 * PadX - icon_inset -
+                s32 left_max = this->w - 2 * PadX - prefix_inset - icon_inset -
                                (rc.tex ? rc.w + PadX : 0);
                 if (left_max < 60) {
                     left_max = 60;
@@ -126,6 +146,7 @@ class TableList : public pu::ui::elm::Element {
             }
             this->cache_l.push_back(lc);
             this->cache_r.push_back(rc);
+            this->cache_p.push_back(pc);
         }
         this->cache_top = this->scroll_top;
         this->dirty = false;
@@ -136,9 +157,9 @@ class TableList : public pu::ui::elm::Element {
               const s32 rows_visible)
         : x(x), y(y), w(w), row_h(row_h), rows_visible(rows_visible), sel(0),
           scroll_top(0), row_bg(22, 23, 27, 255), row_alt_bg(28, 30, 36, 255),
-          // Teal selection highlight, distinct from the blue header/tab bar.
-          focus_bg(28, 122, 116, 255), scroll_clr(80, 86, 100, 255),
-          mark_bg(60, 80, 120, 255),
+          // Blue selection highlight (theme overrides via SetThemeColors).
+          focus_bg(45, 95, 180, 255), scroll_clr(80, 86, 100, 255),
+          mark_bg(60, 80, 120, 255), prog_clr(100, 170, 245, 255),
           cache_top(-1), dirty(true) {
         this->font = pu::ui::GetDefaultFont(pu::ui::DefaultFontSize::MediumLarge);
     }
@@ -147,9 +168,11 @@ class TableList : public pu::ui::elm::Element {
     ~TableList() { this->FreeCache(); }
 
     void SetThemeColors(pu::ui::Color bg, pu::ui::Color alt, pu::ui::Color focus,
-                        pu::ui::Color scroll, pu::ui::Color mark) {
+                        pu::ui::Color scroll, pu::ui::Color mark,
+                        pu::ui::Color prog = {100, 170, 245, 255}) {
         this->row_bg = bg; this->row_alt_bg = alt; this->focus_bg = focus;
         this->scroll_clr = scroll; this->mark_bg = mark;
+        this->prog_clr = prog;
         this->dirty = true;
     }
 
@@ -167,14 +190,16 @@ class TableList : public pu::ui::elm::Element {
     }
     void AddRow(const std::string &left, const pu::ui::Color lclr,
                 pu::sdl2::Texture icon = nullptr) {
-        this->rows.push_back(Row{left, "", lclr, lclr, false, -1.0f, icon});
+        this->rows.push_back(Row{left, "", lclr, lclr, false, -1.0f, icon, ""});
         this->dirty = true;
     }
     void AddRow2(const std::string &left, const std::string &right,
                  const pu::ui::Color lclr, const pu::ui::Color rclr,
                  const float progress = -1.0f,
-                 pu::sdl2::Texture icon = nullptr) {
-        this->rows.push_back(Row{left, right, lclr, rclr, true, progress, icon});
+                 pu::sdl2::Texture icon = nullptr,
+                 const std::string &prefix = "") {
+        this->rows.push_back(
+            Row{left, right, lclr, rclr, true, progress, icon, prefix});
         this->dirty = true;
     }
 
@@ -223,37 +248,57 @@ class TableList : public pu::ui::elm::Element {
 
     void OnRender(pu::ui::render::Renderer::Ref &drawer, const s32 rx,
                   const s32 ry) override {
+        if (this->rows.empty()) {
+            return; // nothing to show (e.g. card view active): no row stripes
+        }
         if (this->dirty || this->cache_top != this->scroll_top) {
             this->RebuildCache();
+        }
+        // Advance the selection fade (restart when the selection moved).
+        if (this->anim_sel != this->sel) {
+            this->anim_sel = this->sel;
+            this->sel_alpha = 90;
+        } else if (this->sel_alpha < 255) {
+            s32 a = this->sel_alpha + 30;
+            this->sel_alpha = a > 255 ? 255 : a;
         }
         for (s32 i = 0; i < this->rows_visible; i++) {
             s32 ridx = this->scroll_top + i;
             s32 rowy = ry + i * this->row_h;
             bool has = (ridx >= 0 && ridx < (s32)this->rows.size());
             bool is_marked = has && this->marked.count(ridx);
-            pu::ui::Color bg =
-                (has && ridx == this->sel)
-                    ? this->focus_bg
-                    : is_marked ? this->mark_bg
-                    : ((ridx % 2) ? this->row_alt_bg : this->row_bg);
+            pu::ui::Color bg = is_marked
+                                   ? this->mark_bg
+                                   : ((ridx % 2) ? this->row_alt_bg
+                                                 : this->row_bg);
             drawer->RenderRectangleFill(bg, rx, rowy, this->w, this->row_h);
+            if (has && ridx == this->sel) {
+                // Highlight overlays the base row and eases in.
+                auto f = this->focus_bg;
+                f.a = (u8)this->sel_alpha;
+                drawer->RenderRectangleFill(f, rx, rowy, this->w, this->row_h);
+            }
             if (!has) {
                 continue;
             }
-            // Progress bar (e.g. active download): thin track along the bottom.
+            // Progress bar (e.g. active download): rounded track at the bottom.
             float prog = this->rows[ridx].progress;
             if (prog >= 0.0f) {
                 if (prog > 1.0f) {
                     prog = 1.0f;
                 }
-                s32 bh = 6;
-                s32 by = rowy + this->row_h - bh - 4;
+                s32 bh = 8;
+                s32 by = rowy + this->row_h - bh - 5;
                 s32 bx = rx + PadX;
                 s32 bw = this->w - 2 * PadX;
-                drawer->RenderRectangleFill(pu::ui::Color(0, 0, 0, 120), bx, by,
-                                            bw, bh);
-                drawer->RenderRectangleFill(pu::ui::Color(120, 225, 150, 255), bx,
-                                            by, (s32)(bw * prog), bh);
+                drawer->RenderRoundedRectangleFill(pu::ui::Color(0, 0, 0, 90),
+                                                   bx, by, bw, bh, 4);
+                s32 fw = (s32)(bw * prog);
+                if (fw > 2) {
+                    s32 r = fw < 8 ? fw / 2 : 4;
+                    drawer->RenderRoundedRectangleFill(this->prog_clr, bx, by,
+                                                       fw, bh, r);
+                }
             }
             Cell &lc = this->cache_l[i];
             Cell &rc = this->cache_r[i];
@@ -261,14 +306,21 @@ class TableList : public pu::ui::elm::Element {
                 drawer->RenderTexture(rc.tex, rx + this->w - PadX - rc.w,
                                       rowy + (this->row_h - rc.h) / 2);
             }
-            // Optional left icon, then shift the left text past it.
+            // Columns, left to right: optional prefix text, optional icon,
+            // then the main left text.
+            Cell &pc = this->cache_p[i];
             s32 tx = rx + PadX;
+            if (pc.tex) {
+                drawer->RenderTexture(pc.tex, tx,
+                                      rowy + (this->row_h - pc.h) / 2);
+                tx += pc.w + IconGap;
+            }
             if (this->rows[ridx].icon) {
                 s32 isz = this->IconPx();
                 pu::ui::render::TextureRenderOptions o;
                 o.width = isz;
                 o.height = isz;
-                drawer->RenderTexture(this->rows[ridx].icon, rx + PadX,
+                drawer->RenderTexture(this->rows[ridx].icon, tx,
                                       rowy + (this->row_h - isz) / 2, o);
                 tx += isz + IconGap;
             }

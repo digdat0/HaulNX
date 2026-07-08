@@ -181,5 +181,8 @@
   "retried_n": "%d diantrekan ulang",
   "toast_all_done": "Antrean selesai: %d ok, %d gagal",
   "title_inst_search": "Cari terpasang",
-  "sub_inst_search": "A buka  Y pencarian baru  B kembali"
+  "sub_inst_search": "A buka  Y pencarian baru  B kembali",
+  "card_view": "Tampilan kartu: %s",
+  "sub_home_cards": "A buka  X sematkan  Y tambah repo  - cari  L/R tab  ZL/ZR halaman",
+  "sub_installed_cards": "A buka  X sematkan  - cari  L/R tab  B kembali"
 }

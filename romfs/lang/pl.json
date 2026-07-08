@@ -181,5 +181,8 @@
   "retried_n": "%d ponownie w kolejce",
   "toast_all_done": "Kolejka gotowa: %d ok, %d nieudanych",
   "title_inst_search": "Szukaj zainstalowanych",
-  "sub_inst_search": "A otwórz  Y nowe wyszukiwanie  B wstecz"
+  "sub_inst_search": "A otwórz  Y nowe wyszukiwanie  B wstecz",
+  "card_view": "Widok kart: %s",
+  "sub_home_cards": "A otwórz  X przypnij  Y dodaj repo  - szukaj  L/R karty  ZL/ZR strona",
+  "sub_installed_cards": "A otwórz  X przypnij  - szukaj  L/R karty  B wstecz"
 }

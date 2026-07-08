@@ -6,6 +6,36 @@
 #include <set>
 #include <switch.h>
 #include "TableList.hpp"
+#include "CardGrid.hpp"
+
+// Draws a BORROWED texture (an icon owned by a shared cache) at a fixed size
+// and position. Used for the console icon shown next to the header title.
+class IconElement : public pu::ui::elm::Element {
+    pu::sdl2::Texture tex; // borrowed — never freed here
+    s32 x, y, sz;
+
+  public:
+    IconElement(s32 x, s32 y, s32 sz) : tex(nullptr), x(x), y(y), sz(sz) {}
+    PU_SMART_CTOR(IconElement)
+    void SetTexture(pu::sdl2::Texture t) { this->tex = t; }
+    void SetPos(s32 nx, s32 ny) { this->x = nx; this->y = ny; }
+    s32 GetX() override { return this->x; }
+    s32 GetY() override { return this->y; }
+    s32 GetWidth() override { return this->sz; }
+    s32 GetHeight() override { return this->sz; }
+    void OnRender(pu::ui::render::Renderer::Ref &drawer, const s32 rx,
+                  const s32 ry) override {
+        if (!this->tex) {
+            return;
+        }
+        pu::ui::render::TextureRenderOptions o;
+        o.width = this->sz;
+        o.height = this->sz;
+        drawer->RenderTexture(this->tex, rx, ry, o);
+    }
+    void OnInput(const u64, const u64, const u64,
+                 const pu::ui::TouchPoint) override {}
+};
 
 class MainLayout : public pu::ui::Layout {
   private:
@@ -13,12 +43,15 @@ class MainLayout : public pu::ui::Layout {
     pu::ui::elm::Rectangle::Ref tab_bar;
     pu::ui::elm::Rectangle::Ref footer;
     pu::ui::elm::TextBlock::Ref title;
+    IconElement::Ref title_icon; // console icon shown after the title text
     pu::ui::elm::TextBlock::Ref status;
     pu::ui::elm::TextBlock::Ref net_icon;
     pu::ui::elm::TextBlock::Ref bat_info;
     pu::ui::elm::TextBlock::Ref rom_info;
     std::vector<pu::ui::elm::TextBlock::Ref> footer_segs;
     TableList::Ref list;
+    CardGrid::Ref grid;    // card view for the console lists
+    bool cards_mode = false; // which of list/grid is active for this screen
     std::vector<pu::ui::elm::TextBlock::Ref> tabs;
     pu::ui::elm::Rectangle::Ref tab_underline;
 
@@ -27,6 +60,7 @@ class MainLayout : public pu::ui::Layout {
     PU_SMART_CTOR(MainLayout)
 
     void SetTitle(const std::string &t);
+    void SetTitleIcon(pu::sdl2::Texture tex); // console icon after the title
     void SetStatus(const std::string &t);
     void SetNetColor(pu::ui::Color c);
     void SetNetIcon(const std::string &text, pu::ui::Color c);
@@ -42,7 +76,15 @@ class MainLayout : public pu::ui::Layout {
                 pu::sdl2::Texture icon = nullptr);
     void AddRow2(const std::string &left, const std::string &right,
                  pu::ui::Color lclr, pu::ui::Color rclr, float progress = -1.0f,
-                 pu::sdl2::Texture icon = nullptr);
+                 pu::sdl2::Texture icon = nullptr,
+                 const std::string &prefix = "");
+    // Card view (console lists). ClearMenu resets to list mode; a screen that
+    // wants cards calls SetCardsMode(true) and AddCard instead of AddRow.
+    void SetCardsMode(bool on);
+    bool InCards() const { return this->cards_mode; }
+    void AddCard(const std::string &title, const std::string &subtitle,
+                 pu::sdl2::Texture icon);
+    void CardMove(s32 dx, s32 dy);
     s32 Sel();
     void SetSel(s32 i);
     bool ConsumeTouchActivate(); // selected row tapped again (touch "A")

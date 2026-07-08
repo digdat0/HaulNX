@@ -387,6 +387,7 @@ void prefs_load(Prefs *p) {
     p->net_check = true;
     p->lang[0] = '\0';
     strcpy(p->theme, "dark");
+    p->card_view = false;
     p->pinned_dir_count = 0;
     size_t len = 0;
     char *js = json_read_file(PREFS_PATH, &len);
@@ -424,6 +425,10 @@ void prefs_load(Prefs *p) {
         idx = json_obj_get(js, tok, 0, "theme");
         if (idx >= 0 && tok[idx].type == JSMN_STRING) {
             json_copy(js, tok, idx, p->theme, sizeof(p->theme));
+        }
+        idx = json_obj_get(js, tok, 0, "cardView");
+        if (idx >= 0) {
+            p->card_view = json_bool(js, tok, idx);
         }
         idx = json_obj_get(js, tok, 0, "pinnedDirs");
         if (idx >= 0 && tok[idx].type == JSMN_ARRAY) {
@@ -465,6 +470,7 @@ bool prefs_save(const Prefs *p) {
     json_write_escaped(f, p->lang);
     fputs(",\n  \"theme\": ", f);
     json_write_escaped(f, p->theme);
+    fprintf(f, ",\n  \"cardView\": %s", p->card_view ? "true" : "false");
     fputs(",\n  \"pinnedDirs\": [", f);
     for (int i = 0; i < p->pinned_dir_count; i++) {
         if (i) {

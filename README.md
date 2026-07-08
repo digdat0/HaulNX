@@ -71,6 +71,13 @@ but it works.**
   - Multi-select with **Y**, then **−** to delete the marked items; rename
     with **X**
 
+- **Card view** (optional)
+  - Toggle **Advanced settings → Card view** to browse consoles as a 4-wide
+    grid of cards (icon, name, repo/app counts) on the Browse tab and the
+    Installed root — file lists stay as tables
+  - D-pad/stick moves in all four directions; **A** opens, **X** pins,
+    **−** searches; tap/drag works too
+
 - **Touch support**
   - Tap a tab to switch to it; tap a list row to select it, tap it again to
     activate; drag up/down to scroll — the whole app works in handheld mode

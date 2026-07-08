@@ -181,5 +181,8 @@
   "retried_n": "%d jonoon uudelleen",
   "toast_all_done": "Jono valmis: %d ok, %d epäonnistui",
   "title_inst_search": "Hae asennettuja",
-  "sub_inst_search": "A avaa  Y uusi haku  B takaisin"
+  "sub_inst_search": "A avaa  Y uusi haku  B takaisin",
+  "card_view": "Korttinäkymä: %s",
+  "sub_home_cards": "A avaa  X kiinnitä  Y lisää repo  - hae  L/R välilehdet  ZL/ZR sivu",
+  "sub_installed_cards": "A avaa  X kiinnitä  - hae  L/R välilehdet  B takaisin"
 }

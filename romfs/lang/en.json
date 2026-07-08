@@ -207,5 +207,8 @@
   "retried_n": "%d re-queued",
   "toast_all_done": "Queue finished: %d done, %d failed",
   "title_inst_search": "Search installed",
-  "sub_inst_search": "A open  Y new search  B back"
+  "sub_inst_search": "A open  Y new search  B back",
+  "card_view": "Card view: %s",
+  "sub_home_cards": "A open  X pin  Y add repo  - search  L/R tabs  ZL/ZR page",
+  "sub_installed_cards": "A open  X pin  - search  L/R tabs  B back"
 }

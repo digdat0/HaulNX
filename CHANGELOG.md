@@ -4,6 +4,28 @@ Notes for each release. `release.sh` pulls the section matching the version in
 `VERSION` and attaches it to the GitHub release. Add a `## <version>` section
 here before running a release.
 
+## 1.4.0-beta
+
+**Card view**
+- New optional **card view** for the console lists (Browse tab and the
+  Installed root): a 4-wide grid of cards with a big console icon, the full
+  console name (wrapping onto two lines) and repo/app counts. Toggle it in
+  **Advanced settings → Card view**; file lists stay as tables.
+- Navigate with the D-pad/stick in all four directions; **A** opens, **X**
+  pins, **−** searches; tap and drag also work.
+
+**More console icons**
+- The download queue shows each item's console icon (between the status and
+  the name), the Browse/Installed headers show the current console's icon,
+  and both search screens tag every result with its console icon.
+- Manage consoles now lists full console names.
+
+**Look & feel**
+- The selection highlight is now **blue** (was teal) in both themes, and it
+  **fades in** as you move instead of snapping; the selected card lifts with
+  a light outline and a slightly larger icon.
+- Queue progress bars are rounded and blue, matching the app's accent color.
+
 ## 1.3.0-beta
 
 **Console icons**

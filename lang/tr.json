@@ -181,5 +181,8 @@
   "retried_n": "%d yeniden kuyrukta",
   "toast_all_done": "Kuyruk bitti: %d tamam, %d başarısız",
   "title_inst_search": "Yüklüleri ara",
-  "sub_inst_search": "A aç  Y yeni arama  B geri"
+  "sub_inst_search": "A aç  Y yeni arama  B geri",
+  "card_view": "Kart görünümü: %s",
+  "sub_home_cards": "A aç  X sabitle  Y repo ekle  - ara  L/R sekmeler  ZL/ZR sayfa",
+  "sub_installed_cards": "A aç  X sabitle  - ara  L/R sekmeler  B geri"
 }

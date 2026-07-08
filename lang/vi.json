@@ -181,5 +181,8 @@
   "retried_n": "%d đưa lại vào hàng đợi",
   "toast_all_done": "Hàng đợi xong: %d ok, %d lỗi",
   "title_inst_search": "Tìm đã cài",
-  "sub_inst_search": "A mở  Y tìm mới  B quay lại"
+  "sub_inst_search": "A mở  Y tìm mới  B quay lại",
+  "card_view": "Chế độ thẻ: %s",
+  "sub_home_cards": "A mở  X ghim  Y thêm repo  - tìm kiếm  L/R tab  ZL/ZR trang",
+  "sub_installed_cards": "A mở  X ghim  - tìm kiếm  L/R tab  B quay lại"
 }

@@ -181,5 +181,8 @@
   "retried_n": "%d 項已重新排隊",
   "toast_all_done": "佇列完成：%d 成功，%d 失敗",
   "title_inst_search": "搜尋已安裝",
-  "sub_inst_search": "A 開啟  Y 新搜尋  B 返回"
+  "sub_inst_search": "A 開啟  Y 新搜尋  B 返回",
+  "card_view": "卡片檢視: %s",
+  "sub_home_cards": "A 開啟  X 置頂  Y 新增倉庫  - 搜尋  L/R 分頁  ZL/ZR 翻頁",
+  "sub_installed_cards": "A 開啟  X 置頂  - 搜尋  L/R 分頁  B 返回"
 }

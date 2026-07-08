@@ -181,5 +181,8 @@
   "retried_n": "%d件を再キュー",
   "toast_all_done": "キュー完了: %d 件成功, %d 件失敗",
   "title_inst_search": "インストール済みを検索",
-  "sub_inst_search": "A 開く  Y 新しい検索  B 戻る"
+  "sub_inst_search": "A 開く  Y 新しい検索  B 戻る",
+  "card_view": "カード表示: %s",
+  "sub_home_cards": "A 開く  X ピン留め  Y リポ追加  - 検索  L/R タブ  ZL/ZR ページ",
+  "sub_installed_cards": "A 開く  X ピン留め  - 検索  L/R タブ  B 戻る"
 }

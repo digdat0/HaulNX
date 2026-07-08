@@ -181,5 +181,8 @@
   "retried_n": "%d újra sorba",
   "toast_all_done": "Sor kész: %d ok, %d sikertelen",
   "title_inst_search": "Telepítettek keresése",
-  "sub_inst_search": "A megnyit  Y új keresés  B vissza"
+  "sub_inst_search": "A megnyit  Y új keresés  B vissza",
+  "card_view": "Kártyanézet: %s",
+  "sub_home_cards": "A megnyitás  X kitűzés  Y repo hozzáadása  - keresés  L/R lapok  ZL/ZR oldal",
+  "sub_installed_cards": "A megnyit  X kitűzés  - keresés  L/R fülek  B vissza"
 }

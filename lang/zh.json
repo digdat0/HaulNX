@@ -181,5 +181,8 @@
   "retried_n": "%d 项已重新排队",
   "toast_all_done": "队列完成：%d 成功，%d 失败",
   "title_inst_search": "搜索已安装",
-  "sub_inst_search": "A 打开  Y 新搜索  B 返回"
+  "sub_inst_search": "A 打开  Y 新搜索  B 返回",
+  "card_view": "卡片视图: %s",
+  "sub_home_cards": "A 打开  X 置顶  Y 添加仓库  - 搜索  L/R 标签  ZL/ZR 翻页",
+  "sub_installed_cards": "A 打开  X 置顶  - 搜索  L/R 标签  B 返回"
 }

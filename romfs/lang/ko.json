@@ -181,5 +181,8 @@
   "retried_n": "%d개 다시 대기열에",
   "toast_all_done": "대기열 완료: %d개 완료, %d개 실패",
   "title_inst_search": "설치된 항목 검색",
-  "sub_inst_search": "A 열기  Y 새 검색  B 뒤로"
+  "sub_inst_search": "A 열기  Y 새 검색  B 뒤로",
+  "card_view": "카드 보기: %s",
+  "sub_home_cards": "A 열기  X 고정  Y 저장소 추가  - 검색  L/R 탭  ZL/ZR 페이지",
+  "sub_installed_cards": "A 열기  X 고정  - 검색  L/R 탭  B 뒤로"
 }

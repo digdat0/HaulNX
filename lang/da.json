@@ -181,5 +181,8 @@
   "retried_n": "%d sat i kø igen",
   "toast_all_done": "Kø færdig: %d ok, %d mislykkedes",
   "title_inst_search": "Søg installerede",
-  "sub_inst_search": "A åbn  Y ny søgning  B tilbage"
+  "sub_inst_search": "A åbn  Y ny søgning  B tilbage",
+  "card_view": "Kortvisning: %s",
+  "sub_home_cards": "A åbn  X fastgør  Y tilføj repo  - søg  L/R faner  ZL/ZR side",
+  "sub_installed_cards": "A åbn  X fastgør  - søg  L/R faner  B tilbage"
 }

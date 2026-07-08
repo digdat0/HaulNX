@@ -181,5 +181,8 @@
   "retried_n": "%d erneut eingereiht",
   "toast_all_done": "Warteschlange fertig: %d ok, %d fehlgeschlagen",
   "title_inst_search": "Installierte suchen",
-  "sub_inst_search": "A öffnen  Y neue Suche  B zurück"
+  "sub_inst_search": "A öffnen  Y neue Suche  B zurück",
+  "card_view": "Kartenansicht: %s",
+  "sub_home_cards": "A öffnen  X anheften  Y Repo hinzufügen  - suchen  L/R Tabs  ZL/ZR Seite",
+  "sub_installed_cards": "A öffnen  X anheften  - suchen  L/R Tabs  B zurück"
 }

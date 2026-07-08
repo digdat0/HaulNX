@@ -88,7 +88,7 @@ static const AppTheme g_theme_dark = {
     {206,216,238,255},    {150,160,185,255},   {232,234,240,255},
     {28,54,104,255},      {255,255,255,255},   {210,222,245,255},
     {255,255,255,255},    {40,75,140,255},
-    {22,23,27,255},       {28,30,36,255},      {28,122,116,255},
+    {22,23,27,255},       {28,30,36,255},      {45,95,180,255},
     {80,86,100,255},      {60,80,120,255},
 };
 
@@ -99,7 +99,7 @@ static const AppTheme g_theme_light = {
     {50,60,80,255},       {90,100,120,255},    {0,0,0,255},
     {210,218,235,255},    {30,30,40,255},      {50,60,80,255},
     {30,30,40,255},       {170,190,220,255},
-    {225,228,234,255},    {215,218,224,255},   {60,160,150,255},
+    {225,228,234,255},    {215,218,224,255},   {115,155,215,255},
     {160,168,185,255},    {170,190,220,255},
 };
 
@@ -731,6 +731,10 @@ MainLayout::MainLayout() : Layout::Layout() {
     this->title->SetColor(g_theme->title_clr);
     this->Add(this->title);
 
+    // Console icon shown after the title breadcrumb (hidden unless set).
+    this->title_icon = IconElement::New(0, 20, 46);
+    this->Add(this->title_icon);
+
     this->status = pu::ui::elm::TextBlock::New(sw - 400, 30, "");
     this->status->SetColor(g_theme->status_clr);
     this->Add(this->status);
@@ -771,6 +775,11 @@ MainLayout::MainLayout() : Layout::Layout() {
     this->list = TableList::New(0, list_y, sw, row_h, rows_visible);
     this->Add(this->list);
 
+    // Card view for the console lists; empty (and thus invisible) unless a
+    // screen populates it via SetCardsMode(true) + AddCard.
+    this->grid = CardGrid::New(0, list_y, sw, avail);
+    this->Add(this->grid);
+
     this->rom_info = pu::ui::elm::TextBlock::New(45, sh - footer_h - 38, "");
     this->rom_info->SetColor(g_theme->rom_info_clr);
     this->Add(this->rom_info);
@@ -804,7 +813,12 @@ void MainLayout::ApplyTheme() {
         t->SetColor(g_theme->tab_clr);
     this->list->SetThemeColors(g_theme->tl_row_bg, g_theme->tl_row_alt,
                                g_theme->tl_focus, g_theme->tl_scroll,
-                               g_theme->tl_mark);
+                               g_theme->tl_mark,
+                               is_light_theme()
+                                   ? pu::ui::Color(35, 100, 200, 255)
+                                   : pu::ui::Color(100, 170, 245, 255));
+    this->grid->SetThemeColors(g_theme->tl_row_alt, g_theme->tl_focus,
+                               g_theme->row_text, g_theme->rom_info_clr);
 }
 
 void MainLayout::SetActiveTab(int idx) {
@@ -833,6 +847,14 @@ void MainLayout::SetTitle(const std::string &t) {
     // Keep the app name visible alongside the per-screen breadcrumb.
     this->title->SetText(t.empty() ? std::string("TicoDL+")
                                    : std::string("TicoDL+     ") + t);
+    // Default: no console icon (screens with one call SetTitleIcon after this).
+    this->title_icon->SetTexture(nullptr);
+}
+void MainLayout::SetTitleIcon(pu::sdl2::Texture tex) {
+    this->title_icon->SetTexture(tex);
+    // Place it just after the title text, vertically aligned with it.
+    this->title_icon->SetPos(this->title->GetX() + this->title->GetWidth() + 16,
+                             20);
 }
 void MainLayout::SetRomInfo(const std::string &t) { this->rom_info->SetText(t); }
 static void layout_status_bar(pu::ui::elm::TextBlock::Ref &storage,
@@ -913,7 +935,18 @@ void MainLayout::SetSubtitle(const std::string &t) {
         }
     }
 }
-void MainLayout::ClearMenu() { this->list->Clear(); this->rom_info->SetText(""); }
+void MainLayout::ClearMenu() {
+    this->list->Clear();
+    this->grid->Clear();
+    this->cards_mode = false; // card screens opt back in after ClearMenu
+    this->rom_info->SetText("");
+}
+void MainLayout::SetCardsMode(bool on) { this->cards_mode = on; }
+void MainLayout::AddCard(const std::string &title, const std::string &subtitle,
+                         pu::sdl2::Texture icon) {
+    this->grid->AddCard(title, subtitle, icon);
+}
+void MainLayout::CardMove(s32 dx, s32 dy) { this->grid->Move(dx, dy); }
 void MainLayout::AddRow(const std::string &name) {
     this->AddRow(name, g_theme->row_text);
 }
@@ -923,21 +956,47 @@ void MainLayout::AddRow(const std::string &name, pu::ui::Color clr,
 }
 void MainLayout::AddRow2(const std::string &left, const std::string &right,
                          pu::ui::Color lclr, pu::ui::Color rclr, float progress,
-                         pu::sdl2::Texture icon) {
-    this->list->AddRow2(left, right, lclr, rclr, progress, icon);
+                         pu::sdl2::Texture icon, const std::string &prefix) {
+    this->list->AddRow2(left, right, lclr, rclr, progress, icon, prefix);
 }
-s32 MainLayout::Sel() { return this->list->GetSelected(); }
-void MainLayout::SetSel(s32 i) { this->list->SetSelected(i); }
+s32 MainLayout::Sel() {
+    return this->cards_mode ? this->grid->GetSelected()
+                            : this->list->GetSelected();
+}
+void MainLayout::SetSel(s32 i) {
+    if (this->cards_mode) {
+        this->grid->SetSelected(i);
+    } else {
+        this->list->SetSelected(i);
+    }
+}
 bool MainLayout::ConsumeTouchActivate() {
-    return this->list->ConsumeTouchActivate();
+    // Consume both so the inactive one can't hold a stale activation.
+    bool g = this->grid->ConsumeTouchActivate();
+    bool l = this->list->ConsumeTouchActivate();
+    return this->cards_mode ? g : l;
 }
-s32 MainLayout::RowCount() { return this->list->Count(); }
+s32 MainLayout::RowCount() {
+    return this->cards_mode ? this->grid->Count() : this->list->Count();
+}
 void MainLayout::MoveBy(s32 delta) { this->list->MoveBy(delta); }
 void MainLayout::Step(s32 delta) { this->list->Step(delta); }
 void MainLayout::MoveUp() { this->MoveBy(-1); }
 void MainLayout::MoveDown() { this->MoveBy(1); }
-void MainLayout::PageUp() { this->MoveBy(-this->list->RowsVisible()); }
-void MainLayout::PageDown() { this->MoveBy(this->list->RowsVisible()); }
+void MainLayout::PageUp() {
+    if (this->cards_mode) {
+        this->grid->PageMove(-1);
+    } else {
+        this->MoveBy(-this->list->RowsVisible());
+    }
+}
+void MainLayout::PageDown() {
+    if (this->cards_mode) {
+        this->grid->PageMove(1);
+    } else {
+        this->MoveBy(this->list->RowsVisible());
+    }
+}
 void MainLayout::ToggleMark(s32 i) { this->list->ToggleMark(i); }
 int MainLayout::MarkedCount() { return this->list->MarkedCount(); }
 const std::set<s32> &MainLayout::Marked() { return this->list->Marked(); }
@@ -1015,8 +1074,10 @@ void MainApplication::GotoHome() {
     this->screen = Screen::Home;
     this->layout->ClearMenu();
     if (g_prefs.group_consoles) {
+        bool cards = g_prefs.card_view;
         this->layout->SetTitle(tr(S_TITLE_CONSOLES));
-        this->layout->SetSubtitle(tr(S_SUB_HOME_GROUPED));
+        this->layout->SetSubtitle(cards ? tr(S_SUB_HOME_CARDS)
+                                        : tr(S_SUB_HOME_GROUPED));
         // Build the shown consoles, sorted A-Z by their displayed label (the
         // full name), since the stored order is by folder key. g_home_map maps
         // each visible row back to its real console index (for open / delete).
@@ -1057,14 +1118,24 @@ void MainApplication::GotoHome() {
             }
             std::string display = row.pinned
                 ? std::string("★ ") + row.label : row.label;
-            this->layout->AddRow2(display, cnt,
-                                  g_theme->row_text,
-                                  count_color(), -1.0f,
-                                  console_icon(g_cfg.consoles[row.idx].console));
+            if (cards) {
+                // Card: full name as the (wrappable) title; counts beneath.
+                const char *cname = g_cfg.consoles[row.idx].console;
+                const char *full = console_full_name(cname);
+                std::string title = (row.pinned ? "★ " : "") +
+                                    std::string(full ? full : cname);
+                this->layout->AddCard(title, cnt, console_icon(cname));
+            } else {
+                this->layout->AddRow2(
+                    display, cnt, g_theme->row_text, count_color(), -1.0f,
+                    console_icon(g_cfg.consoles[row.idx].console));
+            }
             g_home_map.push_back(row.idx);
         }
         if (g_home_map.empty()) {
             this->layout->AddRow(tr(S_NO_COLLECTIONS));
+        } else if (cards) {
+            this->layout->SetCardsMode(true);
         }
     } else {
         this->layout->SetTitle(tr(S_TITLE_REPOS));
@@ -1100,6 +1171,7 @@ void MainApplication::GotoRepos(int ci) {
     char ctitle[192];
     snprintf(ctitle, sizeof(ctitle), tr(S_CONSOLE_PREFIX), g->console);
     this->layout->SetTitle(ctitle);
+    this->layout->SetTitleIcon(console_icon(g->console));
     this->layout->SetSubtitle(tr(S_SUB_REPOS));
     this->layout->ClearMenu();
     for (int i = 0; i < g->repo_count; i++) {
@@ -1124,6 +1196,7 @@ void MainApplication::GotoFiles(int ci, int ri, bool force) {
     ConsoleGroup *g = &g_cfg.consoles[ci];
     Repo *rp = &g->repos[ri];
     this->layout->SetTitle(std::string(g->console) + " > " + rp->label);
+    this->layout->SetTitleIcon(console_icon(g->console));
     this->screen = Screen::Files;
     this->StartMetaLoad(rp->id, rp->download_base, g->target, force,
                         FILES_SUBTITLE);
@@ -1263,6 +1336,9 @@ void MainApplication::GotoAdvanced() {
     snprintf(r, sizeof(r), tr(S_NET_CHECK_STARTUP),
              g_prefs.net_check ? tr(S_ON) : tr(S_OFF));
     this->layout->AddRow(r);                      // 6
+    snprintf(r, sizeof(r), tr(S_CARD_VIEW),
+             g_prefs.card_view ? tr(S_ON) : tr(S_OFF));
+    this->layout->AddRow(r);                      // 7
 }
 
 void MainApplication::GotoDownloads() {
@@ -1622,7 +1698,8 @@ void MainApplication::GotoSearch(const std::string &query) {
         std::string label = std::string(inst ? "* " : "") + "[" + h.target +
                             "] " + h.name;
         this->layout->AddRow2(label, human_size(h.size),
-                              g_theme->row_text, size_color(h.size));
+                              g_theme->row_text, size_color(h.size), -1.0f,
+                              console_icon(h.target.c_str()));
     }
     if (g_search_results.empty()) {
         this->layout->AddRow(tr(S_SEARCH_NO_RESULTS));
@@ -1666,8 +1743,10 @@ void MainApplication::GotoManage() {
                                    : pu::ui::Color(130, 225, 150, 255);
         pu::ui::Color hidden_c = lt ? pu::ui::Color(95, 95, 105, 255)
                                     : pu::ui::Color(150, 150, 162, 255);
+        char clabel[160];
+        console_label(g_cfg.consoles[i].console, clabel, sizeof(clabel));
         this->layout->AddRow2(
-            g_cfg.consoles[i].console, sh ? tr(S_SHOWN) : tr(S_HIDDEN),
+            clabel, sh ? tr(S_SHOWN) : tr(S_HIDDEN),
             g_theme->row_text, sh ? shown_c : hidden_c,
             -1.0f, console_icon(g_cfg.consoles[i].console));
     }
@@ -1730,7 +1809,24 @@ void MainApplication::GotoInstalled(const std::string &path) {
         shown = "roms" + shown.substr(strlen(roms_root(&g_tico)));
     }
     this->layout->SetTitle(std::string(tr(S_TITLE_INSTALLED)) + ": " + shown);
-    this->layout->SetSubtitle(tr(S_SUB_INSTALLED));
+    // Under a console folder: show that console's icon in the header (the
+    // first path segment below the roms root is the console key).
+    if (!is_root) {
+        std::string root = roms_root(&g_tico);
+        if (path.rfind(root, 0) == 0) {
+            std::string rel = path.substr(root.size());
+            while (!rel.empty() && rel[0] == '/') rel.erase(0, 1);
+            std::string cons = rel.substr(0, rel.find('/'));
+            if (!cons.empty()) {
+                this->layout->SetTitleIcon(console_icon(cons.c_str()));
+            }
+        }
+    }
+    // Card view applies to the roms root only (console folders); inside a
+    // folder the file table remains the right tool.
+    bool cards = g_prefs.card_view && is_root && !g_inst.empty();
+    this->layout->SetSubtitle(cards ? tr(S_SUB_INSTALLED_CARDS)
+                                    : tr(S_SUB_INSTALLED));
     this->layout->ClearMenu();
     for (int i = 0; i < (int)g_inst.size(); i++) {
         DirEnt &e = g_inst[i];
@@ -1742,10 +1838,19 @@ void MainApplication::GotoInstalled(const std::string &path) {
             if (path == roms_root(&g_tico) &&
                 prefs_dir_pinned(&g_prefs, e.name.c_str()))
                 label = "★ ";
-            label += tr(S_DIR_PREFIX);
             const char *full = (path == roms_root(&g_tico))
                                    ? console_full_name(e.name.c_str())
                                    : nullptr;
+            pu::sdl2::Texture ic = (path == roms_root(&g_tico))
+                                       ? console_icon(e.name.c_str())
+                                       : nullptr;
+            if (cards) {
+                // Card: full name title (wrappable) + app count beneath.
+                std::string title = label + (full ? full : e.name.c_str());
+                this->layout->AddCard(title, cnt, ic);
+                continue;
+            }
+            label += tr(S_DIR_PREFIX);
             if (full) {
                 label += full;
                 label += " (";
@@ -1754,12 +1859,15 @@ void MainApplication::GotoInstalled(const std::string &path) {
             } else {
                 label += e.name;
             }
-            pu::sdl2::Texture ic = (path == roms_root(&g_tico))
-                                       ? console_icon(e.name.c_str())
-                                       : nullptr;
-            this->layout->AddRow2(label, cnt,
-                                  g_theme->row_text,
-                                  count_color(), -1.0f, ic);
+            {
+                this->layout->AddRow2(label, cnt,
+                                      g_theme->row_text,
+                                      count_color(), -1.0f, ic);
+            }
+        } else if (cards) {
+            // Stray file at the roms root: still a card so indices match.
+            this->layout->AddCard(e.name, human_size(e.size),
+                                  console_icon(e.name.c_str()));
         } else {
             // File: right column is the size, tinted by magnitude.
             this->layout->AddRow2(e.name, human_size(e.size),
@@ -1769,6 +1877,8 @@ void MainApplication::GotoInstalled(const std::string &path) {
     }
     if (g_inst.empty()) {
         this->layout->AddRow(tr(S_EMPTY));
+    } else if (cards) {
+        this->layout->SetCardsMode(true);
     }
     if (g_inst_sort != SORT_DEFAULT) {
         this->layout->SetRomInfo(tr(g_sort_keys[g_inst_sort]));
@@ -1858,7 +1968,8 @@ void MainApplication::GotoInstSearch(const std::string &query) {
         std::string label =
             h.console.empty() ? h.name : "[" + h.console + "] " + h.name;
         this->layout->AddRow2(label, human_size(h.size), g_theme->row_text,
-                              size_color(h.size));
+                              size_color(h.size), -1.0f,
+                              console_icon(h.console.c_str()));
     }
     if (g_inst_hits.empty()) {
         this->layout->AddRow(tr(S_SEARCH_NO_RESULTS));
@@ -2304,9 +2415,12 @@ void MainApplication::HandleInput(u64 down, u64 held,
             } else if (it->total) {
                 snprintf(info, sizeof(info), "%s", human_size(it->total).c_str());
             }
+            // Status becomes the prefix column; the console icon sits between
+            // it and the "[target] name" text.
+            char pfx[16];
+            snprintf(pfx, sizeof(pfx), "%-8s", qstatus(it->status));
             char left[560];
-            snprintf(left, sizeof(left), "%-6s [%s] %s", qstatus(it->status),
-                     it->target, it->name);
+            snprintf(left, sizeof(left), "[%s] %s", it->target, it->name);
             pu::ui::Color c = qstatus_color(it->status);
             pu::ui::Color rc = c;
             // Colour the result column by outcome: orange = replaced, green = new.
@@ -2317,7 +2431,7 @@ void MainApplication::HandleInput(u64 down, u64 held,
                 rc = it->overwrote > 0 ? pu::ui::Color(245, 170, 90, 255) : newc;
             }
             this->layout->AddRow2(left, info, c, rc, prog,
-                                  console_icon(it->target));
+                                  console_icon(it->target), pfx);
         }
         if (n == 0) {
             this->layout->AddRow(tr(S_QUEUE_EMPTY));
@@ -2363,11 +2477,32 @@ void MainApplication::HandleInput(u64 down, u64 held,
     // left analog stick navigate. (TableList is passive, so the app owns it.)
     const u64 NAV_UP = HidNpadButton_Up | HidNpadButton_StickLUp;
     const u64 NAV_DOWN = HidNpadButton_Down | HidNpadButton_StickLDown;
+    const u64 NAV_LEFT = HidNpadButton_Left | HidNpadButton_StickLLeft;
+    const u64 NAV_RIGHT = HidNpadButton_Right | HidNpadButton_StickLRight;
+    const bool in_cards = this->layout->InCards();
     if (down & NAV_DOWN) {
-        this->layout->Step(1);
+        if (in_cards) {
+            this->layout->CardMove(0, 1);
+        } else {
+            this->layout->Step(1);
+        }
     }
     if (down & NAV_UP) {
-        this->layout->Step(-1);
+        if (in_cards) {
+            this->layout->CardMove(0, -1);
+        } else {
+            this->layout->Step(-1);
+        }
+    }
+    if (in_cards) {
+        // In the card grid the D-pad/stick moves in all four directions (the
+        // per-screen Left/Right actions are list-mode only).
+        if (down & NAV_LEFT) {
+            this->layout->CardMove(-1, 0);
+        }
+        if (down & NAV_RIGHT) {
+            this->layout->CardMove(1, 0);
+        }
     }
     {
         static int hold = 0;
@@ -2379,7 +2514,11 @@ void MainApplication::HandleInput(u64 down, u64 held,
         } else {
             hold++;
             if (hold > 22 && ((hold - 22) % 3) == 0) {
-                this->layout->Step(dir);
+                if (in_cards) {
+                    this->layout->CardMove(0, dir);
+                } else {
+                    this->layout->Step(dir);
+                }
             }
         }
     }
@@ -2422,8 +2561,11 @@ void MainApplication::HandleInput(u64 down, u64 held,
             bool valid = sel >= 0 && sel < (s32)g_home_map.size();
             if ((down & HidNpadButton_A) && valid) {
                 this->GotoRepos(g_home_map[sel]);
-            } else if ((down & HidNpadButton_Right) && valid) {
-                // Pin/unpin — D-pad Right, same as on every other screen.
+            } else if (valid &&
+                       (in_cards ? (down & HidNpadButton_X) != 0
+                                 : (down & HidNpadButton_Right) != 0)) {
+                // Pin/unpin — D-pad Right in the list; X in the card grid
+                // (where the D-pad navigates the grid).
                 int ci = g_home_map[sel];
                 ConsoleGroup *g = &g_cfg.consoles[ci];
                 bool was = console_has_pin(g);
@@ -2799,6 +2941,10 @@ void MainApplication::HandleInput(u64 down, u64 held,
                 g_prefs.net_check = !g_prefs.net_check;
                 prefs_save(&g_prefs);
                 break;
+            case 7: // console lists as a card grid
+                g_prefs.card_view = !g_prefs.card_view;
+                prefs_save(&g_prefs);
+                break;
             default:
                 break;
             }
@@ -3061,13 +3207,15 @@ void MainApplication::HandleInput(u64 down, u64 held,
                         {tr(S_OK)}, true, {}, style_dialog);
                 }
             }
-        } else if (down & HidNpadButton_Y) {
+        } else if ((down & HidNpadButton_Y) && !in_cards) {
             s32 i = this->layout->Sel();
             if (i >= 0 && i < (s32)g_inst.size()) {
                 this->layout->ToggleMark(i);
             }
-        } else if (down & HidNpadButton_Right) {
-            // Pin/unpin a top-level console folder to the top of the list.
+        } else if ((in_cards ? (down & HidNpadButton_X) != 0
+                             : (down & HidNpadButton_Right) != 0)) {
+            // Pin/unpin a top-level console folder — D-pad Right in the list,
+            // X in the card grid (where the D-pad navigates).
             s32 i = this->layout->Sel();
             if (this->inst_path == roms_root(&g_tico) && i >= 0 &&
                 i < (s32)g_inst.size() && g_inst[i].is_dir) {
@@ -3082,7 +3230,7 @@ void MainApplication::HandleInput(u64 down, u64 held,
                     }
                 }
             }
-        } else if (down & HidNpadButton_Left) {
+        } else if ((down & HidNpadButton_Left) && !in_cards) {
             // Cycle the list sort (name A-Z / Z-A / size); keep the selection.
             g_inst_sort = (g_inst_sort + 1) % SORT__COUNT;
             this->Toast(tr(g_sort_keys[g_inst_sort]));
@@ -3090,7 +3238,7 @@ void MainApplication::HandleInput(u64 down, u64 held,
             this->GotoInstalled(this->inst_path);
             if (keep >= 0 && keep < this->layout->RowCount())
                 this->layout->SetSel(keep);
-        } else if (down & HidNpadButton_X) {
+        } else if ((down & HidNpadButton_X) && !in_cards) {
             s32 i = this->layout->Sel();
             if (i >= 0 && i < (s32)g_inst.size()) {
                 char nm[256] = {0};

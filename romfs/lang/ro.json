@@ -181,5 +181,8 @@
   "retried_n": "%d readăugate",
   "toast_all_done": "Coadă gata: %d ok, %d eșuate",
   "title_inst_search": "Caută instalate",
-  "sub_inst_search": "A deschide  Y căutare nouă  B înapoi"
+  "sub_inst_search": "A deschide  Y căutare nouă  B înapoi",
+  "card_view": "Vizualizare carduri: %s",
+  "sub_home_cards": "A deschide  X fixează  Y adaugă repo  - căutare  L/R file  ZL/ZR pagină",
+  "sub_installed_cards": "A deschide  X fixează  - căutare  L/R file  B înapoi"
 }
