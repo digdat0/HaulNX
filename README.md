@@ -434,8 +434,11 @@ included, so **please keep the credit**.
 
 TicoDL+'s own code and the [Plutonium](https://github.com/XorTroll/Plutonium) UI
 library it builds on are both MIT-licensed, so the project is cleanly permissive.
-Third-party license notices (Plutonium © XorTroll, jsmn, etc.) are collected in
-[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) and ship with any distribution.
+Third-party license notices (Plutonium © XorTroll, jsmn, and the bundled Noto
+Sans font subset under the SIL Open Font License) are collected in
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md); the full OFL text ships at
+[`licenses/OFL-1.1.txt`](licenses/OFL-1.1.txt). These accompany any
+distribution.
 
 ---
 
