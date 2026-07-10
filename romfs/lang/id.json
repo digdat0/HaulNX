@@ -73,7 +73,7 @@
   "dl_queue_warn": "\n\nBeberapa ada di antrean unduhan dan akan dibatalkan.",
   "dl_cleared": "Unduhan dihapus",
   "title_installed": "Terpasang",
-  "sub_installed": "A buka  Y pilih  X ganti nama  Dpad< Urutan  Dpad> sematkan  - cari  L/R tab  B kembali",
+  "sub_installed": "A buka  Y pilih  X ganti nama  Dpad< menu  Dpad> sematkan  - hapus  L/R tab  B kembali",
   "dir_prefix": "[DIR] ",
   "delete_selected": "Hapus %d item terpilih?",
   "title_edit_repo": "Edit repo",
@@ -184,5 +184,6 @@
   "sub_inst_search": "A buka  Y pencarian baru  B kembali",
   "card_view": "Tampilan kartu: %s",
   "sub_home_cards": "A buka  X sematkan  Y tambah repo  - cari  L/R tab  ZL/ZR halaman",
-  "sub_installed_cards": "A buka  X sematkan  - cari  L/R tab  B kembali"
+  "sub_installed_cards": "A buka  X sematkan  - cari  L/R tab  B kembali",
+  "cant_undo": "Ini tidak dapat dibatalkan."
 }

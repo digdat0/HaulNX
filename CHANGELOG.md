@@ -4,6 +4,46 @@ Notes for each release. `release.sh` pulls the section matching the version in
 `VERSION` and attaches it to the GitHub release. Add a `## <version>` section
 here before running a release.
 
+## 1.5.0-beta
+
+**New app icon & branding**
+- Fresh TicoDL+ icon, with a small logo badge in the header next to the title
+  and a large one in the Credits dialog.
+
+**Look & feel overhaul (tables now match the cards)**
+- Table rows are floating rounded cards — no more edge-to-edge zebra stripes;
+  selection uses the same blue fill + outline as the card view.
+- Right-hand values (sizes, statuses, counts, settings) sit in subtle rounded
+  chips; capsule scrollbars everywhere.
+- Settings and Advanced show values in a colour-coded right column (green ON /
+  grey OFF / blue values) with › chevrons on rows that open a screen.
+- The active tab gets a rounded pill highlight; a soft pulsing dot appears on
+  the Queue tab while downloads run and you're on another tab.
+- The active download is a "hero" row: tinted background and a thicker
+  progress bar; text and pill sit cleanly above the bar; the status column has
+  a fixed width so icons align on every row.
+- Loading states show an animated spinner; empty screens show a big dimmed
+  icon with the hint message.
+
+**Usability**
+- Installed tab: **− now always deletes** (mark with Y for several at once);
+  search and sort moved to an actions menu on **D-pad Left**.
+- Destructive confirmations are red-titled, keep Cancel as the safe default,
+  and deleting installed games warns that it can't be undone (translated into
+  all 25 languages).
+
+**Fixes**
+- Downloads that fully arrived but hit a connection-close timeout (seen under
+  emulators) are salvaged instead of failing — MD5 still verifies them.
+- Card view: readable subtitles on selected cards, drag-scroll can no longer
+  strand the selection off-screen, and the selected card's icon no longer
+  touches two-line titles.
+
+**Tools**
+- New `tools/repo-editor`: a self-contained HTML editor for `dl_sources.json`
+  — import/export, add/edit/delete consoles and repos, browse an item's file
+  list and test downloads in the browser. Light mode + filtering in v0.0.2.
+
 ## 1.4.0-beta
 
 **Card view**

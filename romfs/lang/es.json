@@ -73,7 +73,7 @@
   "dl_queue_warn": "\n\nAlgunos están en la cola de descargas y serán cancelados.",
   "dl_cleared": "Descargas eliminadas",
   "title_installed": "Instalados",
-  "sub_installed": "A abrir  Y seleccionar  X renombrar  Dpad< Orden  Dpad> fijar  - buscar  L/R pestañas  B volver",
+  "sub_installed": "A abrir  Y seleccionar  X renombrar  Dpad< menú  Dpad> fijar  - eliminar  L/R pestañas  B volver",
   "dir_prefix": "[DIR] ",
   "delete_selected": "¿Eliminar %d elemento(s) seleccionado(s)?",
   "title_edit_repo": "Editar repositorio",
@@ -184,5 +184,6 @@
   "sub_inst_search": "A abrir  Y nueva búsqueda  B atrás",
   "card_view": "Vista de tarjetas: %s",
   "sub_home_cards": "A abrir  X fijar  Y añadir repo  - buscar  L/R pestañas  ZL/ZR página",
-  "sub_installed_cards": "A abrir  X fijar  - buscar  L/R pestañas  B volver"
+  "sub_installed_cards": "A abrir  X fijar  - buscar  L/R pestañas  B volver",
+  "cant_undo": "Esto no se puede deshacer."
 }

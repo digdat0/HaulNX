@@ -1,0 +1,614 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>TicoDL+ Repo Editor</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    --bg:#0e0f12; --panel:#171921; --panel2:#1e2129; --line:#2a2e39;
+    --text:#e7eaf0; --muted:#9aa2b4; --accent:#3f7bdc; --accent-lite:#5aa0f5;
+    --green:#8fd329; --amber:#e0a83c; --red:#e04e4e; --radius:12px;
+    /* Derived background layers */
+    --bg-header:#12141b; --bg-input:#0f1116; --bg-repo:#13151c;
+    --btn-danger-border:#402126; --btn-danger-hover:#2a1416;
+    --warn-bg:#2a2412; --warn-border:#4a3d18; --warn-text:#e7cf8a;
+    --tag-on-border:#274016;
+  }
+  
+  :root[data-theme="light"] {
+    --bg:#f8f9fa; --panel:#ffffff; --panel2:#f0f2f5; --line:#d1d5db;
+    --text:#111827; --muted:#6b7280; --accent:#2563eb; --accent-lite:#3b82f6;
+    --green:#16a34a; --amber:#d97706; --red:#dc2626;
+    /* Derived background layers for light mode */
+    --bg-header:#ffffff; --bg-input:#f9fafb; --bg-repo:#fbfbfc;
+    --btn-danger-border:#fca5a5; --btn-danger-hover:#fef2f2;
+    --warn-bg:#fefce8; --warn-border:#fef08a; --warn-text:#854d0e;
+    --tag-on-border:#bbf7d0;
+  }
+
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+    font:15px/1.45 system-ui,Segoe UI,Roboto,sans-serif; transition: background 0.2s, color 0.2s;}
+  a{color:var(--accent-lite)}
+  header{position:sticky;top:0;z-index:5;background:var(--bg-header);
+    border-bottom:1px solid var(--line);padding:12px 18px;
+    display:flex;gap:12px;align-items:center;flex-wrap:wrap; transition: background 0.2s;}
+  header h1{font-size:17px;margin:0;font-weight:700;letter-spacing:.3px}
+  header h1 b{color:var(--green)} header h1 i{color:var(--accent-lite);font-style:normal}
+  .sp{flex:1}
+  main{max-width:1080px;margin:0 auto;padding:18px}
+  .panel{background:var(--panel);border:1px solid var(--line);
+    border-radius:var(--radius);padding:16px;margin-bottom:16px; transition: background 0.2s;}
+  .panel h2{margin:0 0 12px;font-size:14px;text-transform:uppercase;
+    letter-spacing:.6px;color:var(--muted);font-weight:700}
+  button{font:inherit;font-weight:600;color:var(--text);cursor:pointer;
+    background:var(--panel2);border:1px solid var(--line);border-radius:9px;
+    padding:8px 14px; transition: background 0.2s, border-color 0.2s;}
+  button:hover{border-color:var(--accent)}
+  button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+  button.primary:hover{background:var(--accent-lite)}
+  button.ghost{background:transparent}
+  button.sm{padding:5px 10px;font-size:13px;border-radius:8px}
+  button.danger{color:var(--red);border-color:var(--btn-danger-border)}
+  button.danger:hover{background:var(--btn-danger-hover);border-color:var(--red)}
+  input,select{font:inherit;color:var(--text);background:var(--bg-input);
+    border:1px solid var(--line);border-radius:8px;padding:7px 9px;width:100%; transition: background 0.2s;}
+  input:focus,select:focus{outline:none;border-color:var(--accent)}
+  label.fld{display:block;font-size:12px;color:var(--muted);margin:0 0 4px}
+  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:end}
+  .grow{flex:1;min-width:120px}
+  .chk{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--muted);
+    white-space:nowrap;padding-bottom:8px}
+  .chk input{width:auto}
+  .muted{color:var(--muted)} .green{color:var(--green)} .amber{color:var(--amber)}
+  .pill{display:inline-block;background:var(--bg-input);border:1px solid var(--line);
+    border-radius:999px;padding:2px 9px;font-size:12px; transition: background 0.2s;}
+  
+  /* Filter specific styles */
+  .filter-pill { cursor:pointer; user-select:none; transition: background 0.2s, color 0.2s, border-color 0.2s; }
+  .filter-pill:hover { border-color: var(--accent); }
+  .filter-pill.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+  .group{border:1px solid var(--line);border-radius:var(--radius);
+    margin-bottom:14px;overflow:hidden}
+  .group-hd{background:var(--panel2);padding:12px;display:flex;gap:10px;
+    align-items:end;flex-wrap:wrap; transition: background 0.2s;}
+  .repos{padding:10px 12px 4px}
+  .repo{border:1px solid var(--line);border-radius:10px;padding:11px;
+    margin-bottom:9px;background:var(--bg-repo); transition: background 0.2s;}
+  .repo .row{margin-bottom:8px}
+  .tag{font-size:11px;padding:1px 7px;border-radius:6px;border:1px solid var(--line)}
+  .tag.on{color:var(--green);border-color:var(--tag-on-border)}
+  .tag.off{color:var(--muted)}
+  .empty{color:var(--muted);text-align:center;padding:22px;font-style:italic}
+  .warn{background:var(--warn-bg);border:1px solid var(--warn-border);color:var(--warn-text);
+    border-radius:9px;padding:10px 12px;margin-bottom:12px;font-size:13px;
+    white-space:pre-wrap; transition: background 0.2s;}
+  /* modal */
+  .modal{position:fixed;inset:0;background:rgba(0,0,0,.62);display:none;
+    z-index:20;padding:24px;overflow:auto}
+  .modal.on{display:block}
+  .sheet{max-width:920px;margin:0 auto;background:var(--panel);
+    border:1px solid var(--line);border-radius:14px; transition: background 0.2s;}
+  .sheet-hd{padding:14px 16px;border-bottom:1px solid var(--line);
+    display:flex;gap:10px;align-items:center;position:sticky;top:0;
+    background:var(--panel);border-radius:14px 14px 0 0; transition: background 0.2s;}
+  .sheet-bd{padding:8px 16px 16px}
+  table{width:100%;border-collapse:collapse}
+  th,td{text-align:left;padding:8px 8px;border-bottom:1px solid var(--line);
+    font-size:13px;vertical-align:top}
+  th{color:var(--muted);font-weight:600;position:sticky;top:56px;background:var(--panel); transition: background 0.2s;}
+  td.num{text-align:right;white-space:nowrap;color:var(--muted)}
+  .fname{word-break:break-all}
+  code{background:var(--bg-input);border:1px solid var(--line);border-radius:6px;
+    padding:1px 6px;font-size:12px; transition: background 0.2s;}
+  .status{font-size:13px}
+  .tabs{display:flex;gap:6px;margin-bottom:12px}
+  .tabs button{border-radius:999px}
+  .tabs button.act{background:var(--accent);border-color:var(--accent);color:#fff}
+  details summary{cursor:pointer;color:var(--muted);font-size:13px}
+  .hint{font-size:12px;color:var(--muted);margin-top:6px}
+  .group.collapsed .repos {
+  display: none;
+}
+
+.group-hd {
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.toggle-icon {
+  width: 20px;
+  display: inline-block;
+  font-size: 12px;
+}
+  
+</style>
+</head>
+<body>
+
+<header>
+  <h1><b>tico</b>dl<i>+</i> &nbsp;Repo Editor</h1>
+  <div class="sp"></div>
+  <button id="btnTheme" class="ghost" title="Toggle theme" style="font-size:16px; padding:4px 8px;">☀️</button>
+  <button id="btnImport">Import JSON…</button>
+  <button id="btnExport" class="primary">Export dl_sources.json</button>
+</header>
+
+<main>
+  <div id="warnBox"></div>
+
+  <div class="panel">
+    <details>
+      <summary>archive.org credentials (optional — only for restricted items)</summary>
+      <div class="row" style="margin-top:12px">
+        <div class="grow"><label class="fld">Access key</label>
+          <input id="ak" placeholder="S3 access key"></div>
+        <div class="grow"><label class="fld">Secret key</label>
+          <input id="sk" placeholder="S3 secret key"></div>
+        <button id="btnCreds">Export credentials.json</button>
+      </div>
+      <div class="hint">Public collections need no keys. For restricted items, the
+        surest route is to be logged in to archive.org in this browser (downloads
+        use your session). Keys here are exported to <code>credentials.json</code>
+        for the app, alongside your S3 login page at
+        <a href="https://archive.org/account/s3.php" target="_blank">archive.org/account/s3.php</a>.</div>
+    </details>
+  </div>
+
+  <div class="panel">
+    <h2>Supported consoles (tico_consoles)</h2>
+    <div id="tconsoles"></div>
+    <div class="row" style="margin-top:10px">
+      <input id="newConsole" class="grow" placeholder="add a console key, e.g. dc, psx, snes">
+      <button id="btnAddConsole" class="sm">Add console</button>
+    </div>
+    <div class="hint">These are the folders under <code>sdmc:/tico/roms/</code> the app lets you target.</div>
+  </div>
+
+  <div class="panel">
+    <h2>Quick test — any archive.org item</h2>
+    <div class="row">
+      <input id="qtId" class="grow" placeholder="paste an archive.org id or a details/download URL">
+      <button id="qtGo" class="primary">View files</button>
+    </div>
+    <div id="qtStatus" class="status muted" style="margin-top:8px"></div>
+  </div>
+
+  <div class="panel">
+    <div style="display:flex;align-items:center;flex-wrap:wrap;gap:10px">
+      <h2 style="margin:0">Console groups</h2><div class="sp" style="flex:1"></div>
+      <button id="btnAddGroup" class="sm">+ Add console group</button>
+    </div>
+    
+    <div id="groupFilter" style="margin-top:12px; display:none; gap:8px; flex-wrap:wrap; align-items:center;">
+       <span class="muted" style="font-size:13px;">Filter:</span>
+       <div id="filterPills" style="display:inline-flex; gap:6px; flex-wrap:wrap;"></div>
+    </div>
+
+    <div id="groups" style="margin-top:14px"></div>
+  </div>
+</main>
+
+<div class="modal" id="modal">
+  <div class="sheet">
+    <div class="sheet-hd">
+      <b id="mTitle">Files</b><span id="mSub" class="muted"></span>
+      <div class="sp" style="flex:1"></div>
+      <input id="mFilter" placeholder="filter files…" style="max-width:220px">
+      <button id="mClose" class="sm">Close</button>
+    </div>
+    <div class="sheet-bd">
+      <div id="mStatus" class="status muted" style="padding:8px 0"></div>
+      <div id="mFiles"></div>
+    </div>
+  </div>
+</div>
+
+<input type="file" id="fileInput" accept=".json,application/json" style="display:none">
+
+<script>
+"use strict";
+const $ = s => document.querySelector(s);
+const el = (t,c) => { const e=document.createElement(t); if(c)e.className=c; return e; };
+
+// ---- theme logic ----------------------------------------------------------
+const themeBtn = $("#btnTheme");
+let savedTheme = "dark";
+
+try {
+  savedTheme = localStorage.getItem("tico_theme") || "dark";
+} catch (e) {
+  console.warn("localStorage blocked. Theme preference won't be saved between reloads.");
+}
+
+if (savedTheme === "light") {
+  document.documentElement.setAttribute("data-theme", "light");
+}
+themeBtn.textContent = savedTheme === "light" ? "🌙" : "☀️";
+
+themeBtn.onclick = () => {
+  const isLight = document.documentElement.getAttribute("data-theme") === "light";
+  
+  if (isLight) {
+    document.documentElement.removeAttribute("data-theme");
+    themeBtn.textContent = "☀️";
+    try { localStorage.setItem("tico_theme", "dark"); } catch(e){}
+  } else {
+    document.documentElement.setAttribute("data-theme", "light");
+    themeBtn.textContent = "🌙";
+    try { localStorage.setItem("tico_theme", "light"); } catch(e){}
+  }
+};
+
+// ---- state (mirrors dl_sources.json) --------------------------------------
+let state = { creds:{accessKey:"",secret:""}, tico:[], groups:[] };
+let fileHandle = null; // File System Access API, when available
+let selectedFilters = new Set(); // Empty means "All" selected
+
+// ---- app-parity helpers ---------------------------------------------------
+function extractId(input){
+  if(!input) return "";
+  let s = input.trim().replace(/[\/\s]+$/,"");
+  const q = s.search(/[?#]/); if(q>=0) s=s.slice(0,q);
+  for(const m of ["/details/","/download/","/metadata/","/serve/"]){
+    const i = s.indexOf(m);
+    if(i>=0){ s = s.slice(i+m.length); break; }
+  }
+  if(s.includes("://")) { 
+    const parts = s.split("/"); s = parts[parts.length-1] || parts[parts.length-2] || "";
+  }
+  return s.split("/")[0];
+}
+function encodePath(p){ 
+  return String(p).split("").map(ch=>{
+    if(/[A-Za-z0-9\-_.~/]/.test(ch)) return ch;
+    return "%"+ch.charCodeAt(0).toString(16).toUpperCase().padStart(2,"0");
+  }).join("");
+}
+function downloadBase(repo){
+  const b = (repo.URL||"").trim();
+  return b ? b.replace(/\/+$/,"") : "https://archive.org/download/"+encodeURIComponent(repo.a_id);
+}
+function fileUrl(base, name){ return base + "/" + encodePath(name); }
+const ARCH = [".zip",".7z",".rar",".tar",".tgz",".tbz",".tbz2",".txz",".tar.gz",".tar.bz2",".tar.xz"];
+const isArchive = n => ARCH.some(x=>n.toLowerCase().endsWith(x));
+function human(b){ b=+b||0; const u=["B","KB","MB","GB","TB"]; let i=0;
+  while(b>=1024&&i<4){b/=1024;i++;} return b.toFixed(b<10&&i>0?1:0)+" "+u[i]; }
+
+// ---- rendering ------------------------------------------------------------
+function render(){ renderConsoles(); renderFilter(); renderGroups(); }
+
+function renderConsoles(){
+  const wrap = $("#tconsoles"); wrap.innerHTML="";
+  if(!state.tico.length){ wrap.innerHTML='<span class="muted">none yet</span>'; return; }
+  state.tico.forEach((c,i)=>{
+    const p = el("span","pill"); p.style.margin="0 6px 6px 0";
+    p.textContent=c+" ";
+    const x=el("a"); x.href="#"; x.textContent="✕"; x.style.marginLeft="4px";
+    x.onclick=e=>{e.preventDefault(); state.tico.splice(i,1); render();};
+    p.appendChild(x); wrap.appendChild(p);
+  });
+}
+
+function renderFilter() {
+  const filterBox = $("#groupFilter");
+  const filterPills = $("#filterPills");
+  
+  // Extract unique console names currently in use among groups
+  const activeConsoles = [...new Set(state.groups.map(g => g.console).filter(Boolean))].sort();
+  
+  if (activeConsoles.length === 0) {
+    filterBox.style.display = "none";
+    return;
+  }
+  
+  filterBox.style.display = "flex";
+  filterPills.innerHTML = "";
+  
+  // "All" button
+  const btnAll = el("span", "pill filter-pill" + (selectedFilters.size === 0 ? " active" : ""));
+  btnAll.textContent = "All";
+  btnAll.onclick = () => { 
+    selectedFilters.clear(); 
+    render(); 
+  };
+  filterPills.appendChild(btnAll);
+  
+  // Individual console buttons
+  activeConsoles.forEach(c => {
+    const btn = el("span", "pill filter-pill" + (selectedFilters.has(c) ? " active" : ""));
+    btn.textContent = c;
+    btn.onclick = () => {
+      if (selectedFilters.has(c)) {
+        selectedFilters.delete(c);
+      } else {
+        selectedFilters.add(c);
+      }
+      render();
+    };
+    filterPills.appendChild(btn);
+  });
+}
+
+function consoleOptions(sel){
+  const opts = state.tico.slice();
+  if(sel && !opts.includes(sel)) opts.unshift(sel);
+  return opts.map(c=>`<option${c===sel?" selected":""}>${c}</option>`).join("");
+}
+
+// Add a persistent state to track collapsed groups
+const collapsedGroups = new Set(); 
+
+function renderGroups(){
+  const box = $("#groups"); box.innerHTML="";
+  
+  if(!state.groups.length){ 
+    box.innerHTML='<div class="empty">No console groups. Import a file or add one.</div>'; 
+    return; 
+  }
+
+  const visibleGroups = state.groups.map((g, index) => ({g, index}))
+    .filter(item => selectedFilters.size === 0 || selectedFilters.has(item.g.console));
+
+  if(!visibleGroups.length){
+    box.innerHTML='<div class="empty">No console groups match the selected filter.</div>';
+    return;
+  }
+
+  visibleGroups.forEach(({g, index}) => {
+    const gi = index;
+    const isCollapsed = collapsedGroups.has(gi);
+    
+    const G = el("div", "group" + (isCollapsed ? " collapsed" : ""));
+    const hd = el("div", "group-hd");
+    
+    // Add a toggle icon/click area
+    hd.innerHTML = `
+      <span class="toggle-icon">${isCollapsed ? "▶" : "▼"}</span>
+      <div style="min-width:150px"><label class="fld">Console</label>
+        <select data-g="${gi}" data-f="console">${consoleOptions(g.console)}</select></div>
+      <div style="min-width:150px"><label class="fld">Target folder</label>
+        <input data-g="${gi}" data-f="target" value="${esc(g.target)}"></div>
+      <label class="chk"><input type="checkbox" data-g="${gi}" data-f="shown" ${g.shown?"checked":""}> shown</label>
+      <div class="sp" style="flex:1"></div>
+      <span class="pill">${g.repos.length} repo${g.repos.length===1?"":"s"}</span>
+      <button class="sm" data-add-repo="${gi}">+ repo</button>
+      <button class="sm danger" data-del-group="${gi}">Delete group</button>`;
+
+    // Toggle logic
+    hd.addEventListener('click', (e) => {
+      // Don't toggle if clicking form elements
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'BUTTON') return;
+      
+      if (collapsedGroups.has(gi)) {
+        collapsedGroups.delete(gi);
+      } else {
+        collapsedGroups.add(gi);
+      }
+      renderGroups(); // Re-render to update state
+    });
+
+    G.appendChild(hd);
+    const rs = el("div", "repos");
+    if(!g.repos.length) rs.innerHTML='<div class="empty" style="padding:12px">No repos in this console.</div>';
+    g.repos.forEach((r,ri)=>rs.appendChild(renderRepo(g,gi,r,ri)));
+    G.appendChild(rs); 
+    box.appendChild(G);
+  });
+}
+
+function renderRepo(g,gi,r,ri){
+  const R = el("div","repo");
+  R.innerHTML = `
+    <div class="row">
+      <div class="grow"><label class="fld">Label</label>
+        <input data-g="${gi}" data-r="${ri}" data-f="label" value="${esc(r.label)}" placeholder="e.g. No-Intro"></div>
+      <div class="grow"><label class="fld">archive.org item id (a_id)</label>
+        <input data-g="${gi}" data-r="${ri}" data-f="a_id" value="${esc(r.a_id)}" placeholder="item id or paste a details URL"></div>
+    </div>
+    <div class="row">
+      <div class="grow"><label class="fld">URL override (blank = archive.org/download/&lt;id&gt;)</label>
+        <input data-g="${gi}" data-r="${ri}" data-f="URL" value="${esc(r.URL)}" placeholder="optional custom download base"></div>
+      <label class="chk"><input type="checkbox" data-g="${gi}" data-r="${ri}" data-f="active" ${r.active?"checked":""}> active</label>
+      <label class="chk"><input type="checkbox" data-g="${gi}" data-r="${ri}" data-f="pinned" ${r.pinned?"checked":""}> pinned</label>
+    </div>
+    <div class="row" style="margin-bottom:0">
+      <button class="sm primary" data-view="${gi}.${ri}">View files &amp; test</button>
+      <div class="sp" style="flex:1"></div>
+      <button class="sm danger" data-del-repo="${gi}.${ri}">Delete repo</button>
+    </div>`;
+  return R;
+}
+function esc(s){ return String(s==null?"":s).replace(/"/g,"&quot;").replace(/</g,"&lt;"); }
+
+// ---- edits (event delegation, no re-render on keystroke) ------------------
+$("#groups").addEventListener("input", e=>{
+  const t=e.target, gi=t.dataset.g, ri=t.dataset.r, f=t.dataset.f;
+  if(gi==null||!f) return;
+  const val = t.type==="checkbox" ? t.checked : t.value;
+  if(ri==null){ state.groups[+gi][f]=val; if(f==="console"){/*keep target as-is*/} }
+  else state.groups[+gi].repos[+ri][f]=val;
+});
+$("#groups").addEventListener("change", e=>{ 
+  if(e.target.dataset.f==="console") { 
+    render(); // Re-render everything to update filter options if console changed
+  }
+});
+$("#groups").addEventListener("click", e=>{
+  const t=e.target;
+  if(t.dataset.addRepo!=null){ state.groups[+t.dataset.addRepo].repos.push(
+      {label:"",a_id:"",URL:"",active:true,pinned:false}); renderGroups(); }
+  else if(t.dataset.delGroup!=null){ if(confirm("Delete this whole console group?")){
+      state.groups.splice(+t.dataset.delGroup,1); render(); } }
+  else if(t.dataset.delRepo!=null){ const [gi,ri]=t.dataset.delRepo.split(".").map(Number);
+      state.groups[gi].repos.splice(ri,1); renderGroups(); }
+  else if(t.dataset.view!=null){ const [gi,ri]=t.dataset.view.split(".").map(Number);
+      const r=state.groups[gi].repos[ri]; openFiles(r.a_id, downloadBase(r), r.label); }
+});
+
+$("#btnAddGroup").onclick=()=>{ const c=state.tico[0]||"";
+  state.groups.push({console:c,target:c,shown:true,repos:[]}); 
+  collapsedGroups.add(state.groups.length - 1); // Mark new group as collapsed
+  render(); 
+};
+$("#btnAddConsole").onclick=()=>{ const v=$("#newConsole").value.trim();
+  if(v&&!state.tico.includes(v)){ state.tico.push(v); $("#newConsole").value=""; render(); } };
+$("#ak").oninput=e=>state.creds.accessKey=e.target.value;
+$("#sk").oninput=e=>state.creds.secret=e.target.value;
+
+// ---- files modal / download test -----------------------------------------
+let lastFiles=[];
+async function openFiles(id, base, label){
+  id = extractId(id);
+  if(!id){ alert("Enter an archive.org item id first."); return; }
+  $("#mTitle").textContent = label||id;
+  $("#mSub").textContent = "  ·  "+id;
+  $("#mFiles").innerHTML=""; $("#mFilter").value=""; lastFiles=[];
+  $("#mStatus").textContent="Fetching metadata…";
+  $("#modal").classList.add("on");
+  try{
+    const res = await fetch("https://archive.org/metadata/"+encodeURIComponent(id));
+    if(!res.ok){ $("#mStatus").innerHTML=`<span class="amber">HTTP ${res.status} — item not found or not public.</span>`; return; }
+    const j = await res.json();
+    const files = (j.files||[]).filter(f=>f.name);
+    if(!files.length){ $("#mStatus").innerHTML='<span class="amber">No files in this item.</span>'; return; }
+    lastFiles = files.map(f=>({name:f.name, size:+f.size||0, format:f.format||"", md5:f.md5||"", url:fileUrl(base,f.name)}));
+    let tot=lastFiles.reduce((a,f)=>a+f.size,0);
+    $("#mStatus").innerHTML=`<span class="green">${lastFiles.length} files · ${human(tot)}</span> &nbsp; base: <code>${esc(base)}</code>`;
+    drawFiles();
+  }catch(err){
+    $("#mStatus").innerHTML=`<span class="amber">Fetch failed (CORS or network). ${esc(err.message)}</span>`;
+  }
+}
+function drawFiles(){
+  const q=$("#mFilter").value.toLowerCase();
+  const rows = lastFiles.filter(f=>!q||f.name.toLowerCase().includes(q));
+  const t=el("table");
+  t.innerHTML="<thead><tr><th>Name</th><th>Size</th><th>md5</th><th></th></tr></thead>";
+  const tb=el("tbody");
+  rows.forEach(f=>{
+    const tr=el("tr");
+    tr.innerHTML=`<td class="fname">${esc(f.name)} ${isArchive(f.name)?'<span class="tag on">archive</span>':''}
+        ${f.md5?'':'<span class="tag off">no md5</span>'}</td>
+      <td class="num">${human(f.size)}</td>
+      <td class="num" style="max-width:120px;overflow:hidden;text-overflow:ellipsis">${esc(f.md5)}</td>
+      <td style="white-space:nowrap"></td>`;
+    const td=tr.lastChild;
+    const dl=el("button","sm primary"); dl.textContent="Download";
+    dl.onclick=()=>triggerDownload(f.url, f.name);
+    const cp=el("button","sm ghost"); cp.textContent="URL"; cp.title="Copy download URL";
+    cp.onclick=()=>navigator.clipboard.writeText(f.url).then(()=>{cp.textContent="✓";setTimeout(()=>cp.textContent="URL",900);});
+    td.append(dl," ",cp);
+    tb.appendChild(tr);
+  });
+  $("#mFiles").innerHTML=""; $("#mFiles").appendChild(t); t.appendChild(tb);
+}
+$("#mFilter").oninput=drawFiles;
+$("#mClose").onclick=()=>$("#modal").classList.remove("on");
+$("#modal").onclick=e=>{ if(e.target.id==="modal") $("#modal").classList.remove("on"); };
+function triggerDownload(url,name){
+  const a=el("a"); a.href=url; a.target="_blank"; a.rel="noopener";
+  a.download=name; document.body.appendChild(a); a.click(); a.remove();
+}
+$("#qtGo").onclick=()=>{ const v=$("#qtId").value.trim(); if(!v){return;}
+  const id=extractId(v); $("#qtStatus").textContent="id → "+id;
+  openFiles(id, "https://archive.org/download/"+encodeURIComponent(id), id); };
+
+// ---- import / export ------------------------------------------------------
+function loadModel(obj){
+  state.tico = Array.isArray(obj.tico_consoles)? obj.tico_consoles.slice():[];
+  state.groups = [];
+  selectedFilters.clear(); // Reset filter on new load
+  collapsedGroups.clear(); // Collapse groups on new load
+  const gs = obj.console_list_groups;
+  if(Array.isArray(gs)){
+    gs.forEach((g, index)=>{
+      const target = g.target||g.console||"";
+      const console_ = g.console||g.target||"";
+      collapsedGroups.add(index);
+      state.groups.push({
+        console:console_, target, shown: g.shown!==false,
+        repos:(Array.isArray(g.repos)?g.repos:[]).map(r=>({
+          label:r.label||"", a_id:r.a_id||"", URL:r.URL||"",
+          active:r.active!==false, pinned:!!r.pinned }))
+      });
+      if(console_ && !state.tico.includes(console_)) state.tico.push(console_);
+    });
+  }
+  render();
+}
+function buildJson(){
+  return {
+    console_list_groups: state.groups.map(g=>({
+      console:g.console, target:g.target||g.console, shown:!!g.shown,
+      repos:g.repos.map(r=>({label:r.label||r.a_id, a_id:r.a_id, URL:r.URL||"",
+        active:!!r.active, pinned:!!r.pinned}))
+    })),
+    tico_consoles: state.tico.slice()
+  };
+}
+function validate(){
+  const w=[];
+  state.groups.forEach((g,i)=>{
+    if(!g.console) w.push(`Group ${i+1}: no console selected.`);
+    if(!g.target) w.push(`Group "${g.console||i+1}": empty target folder.`);
+    if(g.console && !state.tico.includes(g.console))
+      w.push(`Console "${g.console}" is not in tico_consoles (the app may not offer it in-app).`);
+    g.repos.forEach((r,j)=>{ if(!r.a_id.trim())
+      w.push(`Group "${g.console}", repo ${j+1}: empty archive.org id.`); });
+  });
+  return w;
+}
+function showWarnings(){
+  const w=validate(), box=$("#warnBox");
+  box.innerHTML = w.length ? '<div class="warn">⚠ '+w.join("\n⚠ ")+"</div>" : "";
+}
+
+$("#btnImport").onclick=async()=>{
+  if(window.showOpenFilePicker){
+    try{
+      const [h]=await window.showOpenFilePicker({types:[{description:"JSON",accept:{"application/json":[".json"]}}]});
+      fileHandle=h; const f=await h.getFile(); loadModel(JSON.parse(await f.text())); showWarnings(); return;
+    }catch(e){ if(e.name==="AbortError") return; }
+  }
+  $("#fileInput").click();
+};
+$("#fileInput").onchange=e=>{ const f=e.target.files[0]; if(!f) return;
+  const rd=new FileReader(); rd.onload=()=>{ try{ loadModel(JSON.parse(rd.result)); showWarnings(); }
+    catch(err){ alert("Invalid JSON: "+err.message); } }; rd.readAsText(f); };
+
+$("#btnExport").onclick=async()=>{
+  showWarnings();
+  const txt=JSON.stringify(buildJson(),null,2);
+  if(fileHandle && window.showSaveFilePicker){
+    try{ const w=await fileHandle.createWritable(); await w.write(txt); await w.close();
+      flash($("#btnExport"),"Saved ✓"); return; }catch(e){}
+  }
+  if(window.showSaveFilePicker){
+    try{ const h=await window.showSaveFilePicker({suggestedName:"dl_sources.json",
+        types:[{description:"JSON",accept:{"application/json":[".json"]}}]});
+      fileHandle=h; const w=await h.createWritable(); await w.write(txt); await w.close();
+      flash($("#btnExport"),"Saved ✓"); return; }catch(e){ if(e.name==="AbortError") return; }
+  }
+  downloadText("dl_sources.json", txt);
+};
+$("#btnCreds").onclick=()=>{
+  downloadText("credentials.json", JSON.stringify(
+    {accessKey:state.creds.accessKey, secret:state.creds.secret}, null, 2));
+};
+function downloadText(name, txt){
+  const b=new Blob([txt],{type:"application/json"});
+  const a=el("a"); a.href=URL.createObjectURL(b); a.download=name;
+  document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+}
+function flash(btn,msg){ const o=btn.textContent; btn.textContent=msg; setTimeout(()=>btn.textContent=o,1200); }
+
+// ---- boot: start with an empty doc ---------------------------------------
+loadModel({console_list_groups:[], tico_consoles:[]});
+</script>
+</body>
+</html>

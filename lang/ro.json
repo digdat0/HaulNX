@@ -73,7 +73,7 @@
   "dl_queue_warn": "\n\nUnele sunt în coada de descărcări și vor fi anulate.",
   "dl_cleared": "Descărcări șterse",
   "title_installed": "Instalate",
-  "sub_installed": "A deschide  Y selectează  X redenumește  Dpad< Sortare  Dpad> fixează  - căutare  L/R file  B înapoi",
+  "sub_installed": "A deschide  Y selectează  X redenumește  Dpad< meniu  Dpad> fixează  - șterge  L/R file  B înapoi",
   "dir_prefix": "[DIR] ",
   "delete_selected": "Ștergi %d elemente selectate?",
   "title_edit_repo": "Editează depozitul",
@@ -184,5 +184,6 @@
   "sub_inst_search": "A deschide  Y căutare nouă  B înapoi",
   "card_view": "Vizualizare carduri: %s",
   "sub_home_cards": "A deschide  X fixează  Y adaugă repo  - căutare  L/R file  ZL/ZR pagină",
-  "sub_installed_cards": "A deschide  X fixează  - căutare  L/R file  B înapoi"
+  "sub_installed_cards": "A deschide  X fixează  - căutare  L/R file  B înapoi",
+  "cant_undo": "Această acțiune nu poate fi anulată."
 }

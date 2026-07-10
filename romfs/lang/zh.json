@@ -73,7 +73,7 @@
   "dl_queue_warn": "\n\n部分文件在队列中，将被取消。",
   "dl_cleared": "下载已清除",
   "title_installed": "已安装",
-  "sub_installed": "A 打开  Y 选择  X 重命名  Dpad< 排序  Dpad> 置顶  - 搜索  L/R 标签  B 返回",
+  "sub_installed": "A 打开  Y 选择  X 重命名  Dpad< 菜单  Dpad> 置顶  - 删除  L/R 标签  B 返回",
   "dir_prefix": "[DIR] ",
   "delete_selected": "删除选中的 %d 个项目？",
   "title_edit_repo": "编辑仓库",
@@ -184,5 +184,6 @@
   "sub_inst_search": "A 打开  Y 新搜索  B 返回",
   "card_view": "卡片视图: %s",
   "sub_home_cards": "A 打开  X 置顶  Y 添加仓库  - 搜索  L/R 标签  ZL/ZR 翻页",
-  "sub_installed_cards": "A 打开  X 置顶  - 搜索  L/R 标签  B 返回"
+  "sub_installed_cards": "A 打开  X 置顶  - 搜索  L/R 标签  B 返回",
+  "cant_undo": "此操作无法撤销。"
 }

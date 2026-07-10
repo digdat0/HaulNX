@@ -73,7 +73,7 @@
   "dl_queue_warn": "\n\nBazıları indirme kuyruğunda ve iptal edilecek.",
   "dl_cleared": "İndirmeler silindi",
   "title_installed": "Yüklü",
-  "sub_installed": "A aç  Y seç  X yeniden adlandır  Dpad< Sıralama  Dpad> sabitle  - ara  L/R sekmeler  B geri",
+  "sub_installed": "A aç  Y seç  X yeniden adlandır  Dpad< menü  Dpad> sabitle  - sil  L/R sekmeler  B geri",
   "dir_prefix": "[DIR] ",
   "delete_selected": "Seçilen %d öğe silinsin mi?",
   "title_edit_repo": "Depoyu düzenle",
@@ -184,5 +184,6 @@
   "sub_inst_search": "A aç  Y yeni arama  B geri",
   "card_view": "Kart görünümü: %s",
   "sub_home_cards": "A aç  X sabitle  Y repo ekle  - ara  L/R sekmeler  ZL/ZR sayfa",
-  "sub_installed_cards": "A aç  X sabitle  - ara  L/R sekmeler  B geri"
+  "sub_installed_cards": "A aç  X sabitle  - ara  L/R sekmeler  B geri",
+  "cant_undo": "Bu geri alınamaz."
 }

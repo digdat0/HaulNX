@@ -73,7 +73,7 @@
   "dl_queue_warn": "\n\nCertains sont dans la file de téléchargement et seront annulés.",
   "dl_cleared": "Téléchargements supprimés",
   "title_installed": "Installés",
-  "sub_installed": "A ouvrir  Y sélectionner  X renommer  Dpad< Tri  Dpad> épingler  - rechercher  L/R onglets  B retour",
+  "sub_installed": "A ouvrir  Y sélectionner  X renommer  Dpad< menu  Dpad> épingler  - supprimer  L/R onglets  B retour",
   "dir_prefix": "[DIR] ",
   "delete_selected": "Supprimer %d élément(s) sélectionné(s) ?",
   "title_edit_repo": "Modifier le dépôt",
@@ -184,5 +184,6 @@
   "sub_inst_search": "A ouvrir  Y nouvelle recherche  B retour",
   "card_view": "Vue cartes : %s",
   "sub_home_cards": "A ouvrir  X épingler  Y ajouter repo  - rechercher  L/R onglets  ZL/ZR page",
-  "sub_installed_cards": "A ouvrir  X épingler  - rechercher  L/R onglets  B retour"
+  "sub_installed_cards": "A ouvrir  X épingler  - rechercher  L/R onglets  B retour",
+  "cant_undo": "Cette action est irréversible."
 }

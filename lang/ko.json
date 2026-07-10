@@ -73,7 +73,7 @@
   "dl_queue_warn": "\n\n일부가 대기열에 있으며 취소됩니다.",
   "dl_cleared": "다운로드 삭제됨",
   "title_installed": "설치됨",
-  "sub_installed": "A 열기  Y 선택  X 이름 변경  Dpad< 정렬  Dpad> 고정  - 검색  L/R 탭  B 뒤로",
+  "sub_installed": "A 열기  Y 선택  X 이름 변경  Dpad< 메뉴  Dpad> 고정  - 삭제  L/R 탭  B 뒤로",
   "dir_prefix": "[DIR] ",
   "delete_selected": "선택한 %d개 항목을 삭제할까요?",
   "title_edit_repo": "저장소 편집",
@@ -184,5 +184,6 @@
   "sub_inst_search": "A 열기  Y 새 검색  B 뒤로",
   "card_view": "카드 보기: %s",
   "sub_home_cards": "A 열기  X 고정  Y 저장소 추가  - 검색  L/R 탭  ZL/ZR 페이지",
-  "sub_installed_cards": "A 열기  X 고정  - 검색  L/R 탭  B 뒤로"
+  "sub_installed_cards": "A 열기  X 고정  - 검색  L/R 탭  B 뒤로",
+  "cant_undo": "이 작업은 되돌릴 수 없습니다."
 }

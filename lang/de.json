@@ -73,7 +73,7 @@
   "dl_queue_warn": "\n\nEinige befinden sich in der Warteschlange und werden abgebrochen.",
   "dl_cleared": "Downloads gelöscht",
   "title_installed": "Installiert",
-  "sub_installed": "A öffnen  Y auswählen  X umbenennen  Dpad< Sortierung  Dpad> anheften  - suchen  L/R Tabs  B zurück",
+  "sub_installed": "A öffnen  Y auswählen  X umbenennen  Dpad< Menü  Dpad> anheften  - löschen  L/R Tabs  B zurück",
   "dir_prefix": "[DIR] ",
   "delete_selected": "%d ausgewählte(s) Element(e) löschen?",
   "title_edit_repo": "Repo bearbeiten",
@@ -184,5 +184,6 @@
   "sub_inst_search": "A öffnen  Y neue Suche  B zurück",
   "card_view": "Kartenansicht: %s",
   "sub_home_cards": "A öffnen  X anheften  Y Repo hinzufügen  - suchen  L/R Tabs  ZL/ZR Seite",
-  "sub_installed_cards": "A öffnen  X anheften  - suchen  L/R Tabs  B zurück"
+  "sub_installed_cards": "A öffnen  X anheften  - suchen  L/R Tabs  B zurück",
+  "cant_undo": "Dies kann nicht rückgängig gemacht werden."
 }

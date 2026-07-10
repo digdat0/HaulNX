@@ -1,6 +1,7 @@
 #pragma once
 
 #include <pu/Plutonium>
+#include <cmath>
 #include <string>
 #include <vector>
 #include <set>
@@ -37,11 +38,150 @@ class IconElement : public pu::ui::elm::Element {
                  const pu::ui::TouchPoint) override {}
 };
 
+// A filled rounded rectangle at a settable position/size/colour. Used as the
+// active-tab "pill" behind the tab label.
+class PillElement : public pu::ui::elm::Element {
+    s32 x, y, w, h, radius;
+    pu::ui::Color clr;
+    bool visible;
+
+  public:
+    PillElement(s32 x, s32 y, s32 w, s32 h, s32 radius, pu::ui::Color clr)
+        : x(x), y(y), w(w), h(h), radius(radius), clr(clr), visible(true) {}
+    PU_SMART_CTOR(PillElement)
+    void SetBounds(s32 nx, s32 ny, s32 nw, s32 nh) {
+        this->x = nx; this->y = ny; this->w = nw; this->h = nh;
+    }
+    void SetColor(pu::ui::Color c) { this->clr = c; }
+    void SetVisible(bool v) { this->visible = v; }
+    s32 GetX() override { return this->x; }
+    s32 GetY() override { return this->y; }
+    s32 GetWidth() override { return this->w; }
+    s32 GetHeight() override { return this->h; }
+    void OnRender(pu::ui::render::Renderer::Ref &drawer, const s32 rx,
+                  const s32 ry) override {
+        if (!this->visible) {
+            return;
+        }
+        drawer->RenderRoundedRectangleFill(this->clr, rx, ry, this->w, this->h,
+                                           this->radius);
+    }
+    void OnInput(const u64, const u64, const u64,
+                 const pu::ui::TouchPoint) override {}
+};
+
+// An animated ring-of-dots spinner with an optional caption below it, centred
+// in a region. Shown while metadata / refresh work runs in the background.
+class SpinnerElement : public pu::ui::elm::Element {
+    s32 x, y, w, h;          // region the spinner centres itself in
+    bool active;
+    pu::ui::Color dot_clr, text_clr;
+    std::string msg, cached_msg, font;
+    pu::sdl2::Texture msg_tex; // owned; re-rendered when msg changes
+
+  public:
+    SpinnerElement(s32 x, s32 y, s32 w, s32 h)
+        : x(x), y(y), w(w), h(h), active(false), dot_clr(120, 170, 245, 255),
+          text_clr(150, 160, 185, 255), msg_tex(nullptr) {
+        this->font = pu::ui::GetDefaultFont(pu::ui::DefaultFontSize::MediumLarge);
+    }
+    PU_SMART_CTOR(SpinnerElement)
+    ~SpinnerElement() {
+        if (this->msg_tex) {
+            pu::ui::render::DeleteTexture(this->msg_tex);
+        }
+    }
+    void SetColors(pu::ui::Color dot, pu::ui::Color text) {
+        this->dot_clr = dot; this->text_clr = text;
+    }
+    void Show(const std::string &message) {
+        this->active = true; this->msg = message;
+    }
+    void Hide() { this->active = false; }
+    s32 GetX() override { return this->x; }
+    s32 GetY() override { return this->y; }
+    s32 GetWidth() override { return this->w; }
+    s32 GetHeight() override { return this->h; }
+    void OnRender(pu::ui::render::Renderer::Ref &drawer, const s32 rx,
+                  const s32 ry) override {
+        if (!this->active) {
+            return;
+        }
+        const s32 cx = rx + this->w / 2;
+        const s32 cy = ry + this->h / 2 - 30;
+        const s32 ring = 34, dot = 7, n = 8;
+        // Rotating "head": the dot nearest it is brightest, trailing dots fade.
+        u64 phase = (armTicksToNs(armGetSystemTick()) / 90000000ULL) % n;
+        for (s32 i = 0; i < n; i++) {
+            double ang = 2.0 * 3.14159265 * i / n - 3.14159265 / 2.0;
+            s32 dx = cx + (s32)(ring * cos(ang));
+            s32 dy = cy + (s32)(ring * sin(ang));
+            s32 dist = (i - (s32)phase + n) % n;   // 0 = head
+            u8 a = (u8)(255 - dist * 26);
+            auto c = this->dot_clr; c.a = a;
+            drawer->RenderCircleFill(c, dx, dy, dot);
+        }
+        if (this->msg != this->cached_msg) {
+            if (this->msg_tex) {
+                pu::ui::render::DeleteTexture(this->msg_tex);
+                this->msg_tex = nullptr;
+            }
+            if (!this->msg.empty()) {
+                this->msg_tex = pu::ui::render::RenderText(this->font, this->msg,
+                                                           this->text_clr);
+            }
+            this->cached_msg = this->msg;
+        }
+        if (this->msg_tex) {
+            s32 mw = pu::ui::render::GetTextureWidth(this->msg_tex);
+            drawer->RenderTexture(this->msg_tex, cx - mw / 2, cy + ring + 24);
+        }
+    }
+    void OnInput(const u64, const u64, const u64,
+                 const pu::ui::TouchPoint) override {}
+};
+
+// A small filled dot that gently pulses (slow alpha ramp) while active — the
+// "downloads running" indicator on the Queue tab. Kept slow and shallow so it
+// reads as a soft breath, never a flash.
+class PulseDotElement : public pu::ui::elm::Element {
+    s32 x, y, r;
+    pu::ui::Color clr;
+    bool active;
+
+  public:
+    PulseDotElement(s32 x, s32 y, s32 r)
+        : x(x), y(y), r(r), clr(100, 170, 245, 255), active(false) {}
+    PU_SMART_CTOR(PulseDotElement)
+    void SetActive(bool a) { this->active = a; }
+    void SetPos(s32 nx, s32 ny) { this->x = nx; this->y = ny; }
+    void SetColor(pu::ui::Color c) { this->clr = c; }
+    s32 GetX() override { return this->x; }
+    s32 GetY() override { return this->y; }
+    s32 GetWidth() override { return 2 * this->r; }
+    s32 GetHeight() override { return 2 * this->r; }
+    void OnRender(pu::ui::render::Renderer::Ref &drawer, const s32 rx,
+                  const s32 ry) override {
+        if (!this->active) {
+            return;
+        }
+        // Alpha eases between ~150 and 255 over ~1.7s (a calm breath).
+        double t = (double)armTicksToNs(armGetSystemTick()) / 1.0e9;
+        double s = 0.5 + 0.5 * sin(t * 2.0 * 3.14159265 / 1.7);
+        pu::ui::Color c = this->clr;
+        c.a = (u8)(150 + s * 105);
+        drawer->RenderCircleFill(c, rx + this->r, ry + this->r, this->r);
+    }
+    void OnInput(const u64, const u64, const u64,
+                 const pu::ui::TouchPoint) override {}
+};
+
 class MainLayout : public pu::ui::Layout {
   private:
     pu::ui::elm::Rectangle::Ref header;
     pu::ui::elm::Rectangle::Ref tab_bar;
     pu::ui::elm::Rectangle::Ref footer;
+    IconElement::Ref header_logo; // app badge, top-left of the title
     pu::ui::elm::TextBlock::Ref title;
     IconElement::Ref title_icon; // console icon shown after the title text
     pu::ui::elm::TextBlock::Ref status;
@@ -53,11 +193,22 @@ class MainLayout : public pu::ui::Layout {
     CardGrid::Ref grid;    // card view for the console lists
     bool cards_mode = false; // which of list/grid is active for this screen
     std::vector<pu::ui::elm::TextBlock::Ref> tabs;
-    pu::ui::elm::Rectangle::Ref tab_underline;
+    PillElement::Ref tab_pill;        // rounded highlight behind the active tab
+    PulseDotElement::Ref queue_dot;   // "downloads running" pulse on the Queue tab
+    IconElement::Ref empty_icon;      // big dimmed icon for empty states
+    pu::ui::elm::TextBlock::Ref empty_text;
+    SpinnerElement::Ref spinner;      // background-work indicator
 
   public:
     MainLayout();
     PU_SMART_CTOR(MainLayout)
+
+    // Empty state (big centred icon + message) shown when a list has nothing.
+    void SetEmptyState(pu::sdl2::Texture icon, const std::string &msg);
+    void ClearEmptyState();
+    // Loading spinner overlay.
+    void ShowSpinner(const std::string &msg);
+    void HideSpinner();
 
     void SetTitle(const std::string &t);
     void SetTitleIcon(pu::sdl2::Texture tex); // console icon after the title
@@ -68,6 +219,7 @@ class MainLayout : public pu::ui::Layout {
     void SetSubtitle(const std::string &t);
     void SetRomInfo(const std::string &t);
     void SetActiveTab(int idx); // 0=Browse 1=Installed 2=Queue 3=Settings
+    void SetQueueActivity(bool active); // pulse the Queue tab while downloading
     void RefreshTabs();
     void ApplyTheme();
     void ClearMenu();
@@ -77,7 +229,8 @@ class MainLayout : public pu::ui::Layout {
     void AddRow2(const std::string &left, const std::string &right,
                  pu::ui::Color lclr, pu::ui::Color rclr, float progress = -1.0f,
                  pu::sdl2::Texture icon = nullptr,
-                 const std::string &prefix = "");
+                 const std::string &prefix = "", bool accent = false,
+                 bool pill = true);
     // Card view (console lists). ClearMenu resets to list mode; a screen that
     // wants cards calls SetCardsMode(true) and AddCard instead of AddRow.
     void SetCardsMode(bool on);
@@ -206,6 +359,10 @@ class MainApplication : public pu::ui::Application {
     void Toast(const std::string &msg);
     void ToastErr(const std::string &msg);
     bool Confirm(const std::string &title, const std::string &msg);
+    // Confirm for a destructive action: red-accented dialog, Cancel is the
+    // default. If `permanent`, appends an "unrecoverable" warning line.
+    bool ConfirmDanger(const std::string &title, const std::string &msg,
+                       bool permanent = false);
 
     void GotoHome();
     void GotoRepos(int ci);

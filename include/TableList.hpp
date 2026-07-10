@@ -27,6 +27,12 @@ class TableList : public pu::ui::elm::Element {
         // Optional short text drawn BEFORE the icon (e.g. a queue status), so
         // the icon becomes the second column. Uses lclr.
         std::string prefix;
+        // Accent row (e.g. the active download): a distinct tinted background
+        // and a taller progress bar, so it stands out even when not selected.
+        bool accent;
+        // Draw a subtle rounded "pill" behind the right cell (size/status/value
+        // badges). Off for bare markers like a chevron.
+        bool pill;
     };
 
   private:
@@ -44,7 +50,8 @@ class TableList : public pu::ui::elm::Element {
     // the blue eases in instead of teleporting between rows.
     s32 anim_sel = -1;
     s32 sel_alpha = 255;
-    pu::ui::Color row_bg, row_alt_bg, focus_bg, scroll_clr, mark_bg, prog_clr;
+    pu::ui::Color row_bg, row_alt_bg, focus_bg, scroll_clr, mark_bg, prog_clr,
+        accent_bg, pill_bg;
     std::set<s32> marked;
     std::string font;
     std::vector<Row> rows;
@@ -68,6 +75,14 @@ class TableList : public pu::ui::elm::Element {
     static constexpr s32 PadX = 26;
     static constexpr s32 DragThreshold = 16; // px before a touch counts as a drag
     static constexpr s32 IconGap = 12;       // gap between a row icon and its text
+    // Rows render as floating rounded rectangles (matching the card view):
+    // inset from the screen edges with a small gap between rows.
+    static constexpr s32 RowMargin = 18;
+    static constexpr s32 RowGap = 6;
+    static constexpr s32 RowRadius = 12;
+    // Fixed width reserved for the optional prefix column (e.g. queue status),
+    // so the icon/text after it line up vertically across all rows.
+    static constexpr s32 PrefixColW = 118;
 
     // Square draw size for a row icon (fits within the row height).
     s32 IconPx() const { return this->row_h - 28; }
@@ -132,10 +147,10 @@ class TableList : public pu::ui::elm::Element {
                     pc.w = pu::ui::render::GetTextureWidth(pc.tex);
                     pc.h = pu::ui::render::GetTextureHeight(pc.tex);
                 }
-                s32 prefix_inset = pc.tex ? (pc.w + IconGap) : 0;
+                s32 prefix_inset = pc.tex ? PrefixColW : 0;
                 s32 icon_inset = r.icon ? (this->IconPx() + IconGap) : 0;
-                s32 left_max = this->w - 2 * PadX - prefix_inset - icon_inset -
-                               (rc.tex ? rc.w + PadX : 0);
+                s32 left_max = this->w - 2 * (RowMargin + PadX) - prefix_inset -
+                               icon_inset - (rc.tex ? rc.w + PadX : 0);
                 if (left_max < 60) {
                     left_max = 60;
                 }
@@ -160,6 +175,7 @@ class TableList : public pu::ui::elm::Element {
           // Blue selection highlight (theme overrides via SetThemeColors).
           focus_bg(45, 95, 180, 255), scroll_clr(80, 86, 100, 255),
           mark_bg(60, 80, 120, 255), prog_clr(100, 170, 245, 255),
+          accent_bg(30, 60, 85, 255), pill_bg(255, 255, 255, 20),
           cache_top(-1), dirty(true) {
         this->font = pu::ui::GetDefaultFont(pu::ui::DefaultFontSize::MediumLarge);
     }
@@ -169,10 +185,12 @@ class TableList : public pu::ui::elm::Element {
 
     void SetThemeColors(pu::ui::Color bg, pu::ui::Color alt, pu::ui::Color focus,
                         pu::ui::Color scroll, pu::ui::Color mark,
-                        pu::ui::Color prog = {100, 170, 245, 255}) {
+                        pu::ui::Color prog = {100, 170, 245, 255},
+                        pu::ui::Color accent = {30, 60, 85, 255},
+                        pu::ui::Color pill = {255, 255, 255, 20}) {
         this->row_bg = bg; this->row_alt_bg = alt; this->focus_bg = focus;
         this->scroll_clr = scroll; this->mark_bg = mark;
-        this->prog_clr = prog;
+        this->prog_clr = prog; this->accent_bg = accent; this->pill_bg = pill;
         this->dirty = true;
     }
 
@@ -190,16 +208,18 @@ class TableList : public pu::ui::elm::Element {
     }
     void AddRow(const std::string &left, const pu::ui::Color lclr,
                 pu::sdl2::Texture icon = nullptr) {
-        this->rows.push_back(Row{left, "", lclr, lclr, false, -1.0f, icon, ""});
+        this->rows.push_back(
+            Row{left, "", lclr, lclr, false, -1.0f, icon, "", false, false});
         this->dirty = true;
     }
     void AddRow2(const std::string &left, const std::string &right,
                  const pu::ui::Color lclr, const pu::ui::Color rclr,
                  const float progress = -1.0f,
                  pu::sdl2::Texture icon = nullptr,
-                 const std::string &prefix = "") {
-        this->rows.push_back(
-            Row{left, right, lclr, rclr, true, progress, icon, prefix});
+                 const std::string &prefix = "", bool accent = false,
+                 bool pill = true) {
+        this->rows.push_back(Row{left, right, lclr, rclr, true, progress, icon,
+                                 prefix, accent, pill});
         this->dirty = true;
     }
 
@@ -266,20 +286,43 @@ class TableList : public pu::ui::elm::Element {
             s32 ridx = this->scroll_top + i;
             s32 rowy = ry + i * this->row_h;
             bool has = (ridx >= 0 && ridx < (s32)this->rows.size());
-            bool is_marked = has && this->marked.count(ridx);
-            pu::ui::Color bg = is_marked
-                                   ? this->mark_bg
-                                   : ((ridx % 2) ? this->row_alt_bg
-                                                 : this->row_bg);
-            drawer->RenderRectangleFill(bg, rx, rowy, this->w, this->row_h);
-            if (has && ridx == this->sel) {
-                // Highlight overlays the base row and eases in.
+            if (!has) {
+                continue; // empty slots stay bare page background
+            }
+            bool is_marked = this->marked.count(ridx) > 0;
+            bool is_accent = this->rows[ridx].accent;
+            bool has_bar = this->rows[ridx].progress >= 0.0f;
+            s32 bar_bh = is_accent ? 12 : 8; // active download gets a thicker bar
+            // Floating rounded row (single fill colour, like the cards).
+            s32 rrx = rx + RowMargin;
+            s32 rry = rowy + RowGap / 2;
+            s32 rrw = this->w - 2 * RowMargin;
+            s32 rrh = this->row_h - RowGap;
+            // Vertical band for text/icon/pill: the whole row, or the space
+            // above the progress bar when present (so nothing overlaps it).
+            s32 cont_top = rry;
+            s32 cont_h = rrh - (has_bar ? (bar_bh + 5) : 0);
+            pu::ui::Color base = is_marked ? this->mark_bg
+                                 : is_accent ? this->accent_bg
+                                             : this->row_alt_bg;
+            drawer->RenderRoundedRectangleFill(base, rrx, rry, rrw, rrh,
+                                               RowRadius);
+            if (ridx == this->sel) {
+                // Selection: fading blue fill + lighter outline (card style).
                 auto f = this->focus_bg;
                 f.a = (u8)this->sel_alpha;
-                drawer->RenderRectangleFill(f, rx, rowy, this->w, this->row_h);
-            }
-            if (!has) {
-                continue;
+                drawer->RenderRoundedRectangleFill(f, rrx, rry, rrw, rrh,
+                                                   RowRadius);
+                auto edge = this->focus_bg;
+                edge.r = (u8)(edge.r + 70 > 255 ? 255 : edge.r + 70);
+                edge.g = (u8)(edge.g + 70 > 255 ? 255 : edge.g + 70);
+                edge.b = (u8)(edge.b + 70 > 255 ? 255 : edge.b + 70);
+                edge.a = (u8)this->sel_alpha;
+                for (s32 t = 0; t < 3; t++) {
+                    drawer->RenderRoundedRectangle(
+                        edge, rrx + t, rry + t, rrw - 2 * t, rrh - 2 * t,
+                        RowRadius - t > 4 ? RowRadius - t : 4);
+                }
             }
             // Progress bar (e.g. active download): rounded track at the bottom.
             float prog = this->rows[ridx].progress;
@@ -287,10 +330,10 @@ class TableList : public pu::ui::elm::Element {
                 if (prog > 1.0f) {
                     prog = 1.0f;
                 }
-                s32 bh = 8;
-                s32 by = rowy + this->row_h - bh - 5;
-                s32 bx = rx + PadX;
-                s32 bw = this->w - 2 * PadX;
+                s32 bh = bar_bh;
+                s32 by = rry + rrh - bh - 5;
+                s32 bx = rrx + PadX;
+                s32 bw = rrw - 2 * PadX;
                 drawer->RenderRoundedRectangleFill(pu::ui::Color(0, 0, 0, 90),
                                                    bx, by, bw, bh, 4);
                 s32 fw = (s32)(bw * prog);
@@ -303,17 +346,26 @@ class TableList : public pu::ui::elm::Element {
             Cell &lc = this->cache_l[i];
             Cell &rc = this->cache_r[i];
             if (rc.tex) {
-                drawer->RenderTexture(rc.tex, rx + this->w - PadX - rc.w,
-                                      rowy + (this->row_h - rc.h) / 2);
+                s32 tex_x = rx + this->w - RowMargin - PadX - rc.w;
+                s32 tex_y = cont_top + (cont_h - rc.h) / 2;
+                if (this->rows[ridx].pill) {
+                    // Subtle rounded chip behind the right value.
+                    s32 padx = 14, pady = 7;
+                    s32 pw = rc.w + 2 * padx;
+                    s32 ph = rc.h + 2 * pady;
+                    drawer->RenderRoundedRectangleFill(
+                        this->pill_bg, tex_x - padx, tex_y - pady, pw, ph,
+                        ph / 2);
+                }
+                drawer->RenderTexture(rc.tex, tex_x, tex_y);
             }
             // Columns, left to right: optional prefix text, optional icon,
             // then the main left text.
             Cell &pc = this->cache_p[i];
-            s32 tx = rx + PadX;
+            s32 tx = rx + RowMargin + PadX;
             if (pc.tex) {
-                drawer->RenderTexture(pc.tex, tx,
-                                      rowy + (this->row_h - pc.h) / 2);
-                tx += pc.w + IconGap;
+                drawer->RenderTexture(pc.tex, tx, cont_top + (cont_h - pc.h) / 2);
+                tx += PrefixColW; // fixed column: icon lines up on every row
             }
             if (this->rows[ridx].icon) {
                 s32 isz = this->IconPx();
@@ -321,12 +373,11 @@ class TableList : public pu::ui::elm::Element {
                 o.width = isz;
                 o.height = isz;
                 drawer->RenderTexture(this->rows[ridx].icon, tx,
-                                      rowy + (this->row_h - isz) / 2, o);
+                                      cont_top + (cont_h - isz) / 2, o);
                 tx += isz + IconGap;
             }
             if (lc.tex) {
-                drawer->RenderTexture(lc.tex, tx,
-                                      rowy + (this->row_h - lc.h) / 2);
+                drawer->RenderTexture(lc.tex, tx, cont_top + (cont_h - lc.h) / 2);
             }
         }
         // Scrollbar thumb when the list overflows.
@@ -344,8 +395,8 @@ class TableList : public pu::ui::elm::Element {
                 ry + (maxtop > 0 ? (s32)((double)(track_h - thumb_h) *
                                          this->scroll_top / maxtop)
                                  : 0);
-            drawer->RenderRectangleFill(this->scroll_clr, sb_x, thumb_y, sb_w,
-                                        thumb_h);
+            drawer->RenderRoundedRectangleFill(this->scroll_clr, sb_x, thumb_y,
+                                               sb_w, thumb_h, 3);
         }
     }
 
@@ -412,6 +463,20 @@ class TableList : public pu::ui::elm::Element {
                     this->tch_activate = true; // second tap = activate
                 } else {
                     this->SetSelected(this->tch_row);
+                }
+            } else if (this->tch_dragged && !this->rows.empty()) {
+                // Drag scrolled the selection out of view: pull it to the
+                // nearest visible row so a following A press acts on
+                // something the user can see.
+                s32 lo = this->scroll_top;
+                s32 hi = this->scroll_top + this->rows_visible - 1;
+                if (hi >= (s32)this->rows.size()) {
+                    hi = (s32)this->rows.size() - 1;
+                }
+                if (this->sel < lo) {
+                    this->sel = lo;
+                } else if (this->sel > hi) {
+                    this->sel = hi;
                 }
             }
         }

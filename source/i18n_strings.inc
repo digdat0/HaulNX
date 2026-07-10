@@ -76,7 +76,7 @@ static const char *const g_en[S__COUNT] = {
     /* S_DL_QUEUE_WARN */ "\n\nSome are in the download queue and will be cancelled.",
     /* S_DL_CLEARED */ "Downloads cleared",
     /* S_TITLE_INSTALLED */ "Installed",
-    /* S_SUB_INSTALLED */ "A open  Y select  X rename  Dpad< Sort  Dpad> pin  - search  L/R tabs  B back",
+    /* S_SUB_INSTALLED */ "A open  Y select  X rename  Dpad< menu  Dpad> pin  - delete  L/R tabs  B back",
     /* S_DIR_PREFIX */ "[DIR] ",
     /* S_DELETE_SELECTED */ "Delete %d selected item(s)?",
     /* S_TITLE_EDIT_REPO */ "Edit repo",
@@ -185,6 +185,7 @@ static const char *const g_en[S__COUNT] = {
     /* S_CARD_VIEW */ "Card view: %s",
     /* S_SUB_HOME_CARDS */ "A open  X pin  Y add repo  - search  L/R tabs  ZL/ZR page",
     /* S_SUB_INSTALLED_CARDS */ "A open  X pin  - search  L/R tabs  B back",
+    /* S_CANT_UNDO */ "This can't be undone.",
 };
 
 static const char *const g_key_names[S__COUNT] = {
@@ -371,4 +372,5 @@ static const char *const g_key_names[S__COUNT] = {
     [S_CARD_VIEW] = "card_view",
     [S_SUB_HOME_CARDS] = "sub_home_cards",
     [S_SUB_INSTALLED_CARDS] = "sub_installed_cards",
+    [S_CANT_UNDO] = "cant_undo",
 };

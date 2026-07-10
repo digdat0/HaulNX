@@ -73,7 +73,7 @@
   "dl_queue_warn": "\n\nNéhány a letöltési várólistán van és megszakad.",
   "dl_cleared": "Letöltések törölve",
   "title_installed": "Telepített",
-  "sub_installed": "A megnyit  Y kiválaszt  X átnevez  Dpad< Rendezés  Dpad> kitűzés  - keresés  L/R fülek  B vissza",
+  "sub_installed": "A megnyit  Y kiválaszt  X átnevez  Dpad< menü  Dpad> kitűzés  - töröl  L/R fülek  B vissza",
   "dir_prefix": "[DIR] ",
   "delete_selected": "Töröl %d kiválasztott elemet?",
   "title_edit_repo": "Tároló szerkesztése",
@@ -184,5 +184,6 @@
   "sub_inst_search": "A megnyit  Y új keresés  B vissza",
   "card_view": "Kártyanézet: %s",
   "sub_home_cards": "A megnyitás  X kitűzés  Y repo hozzáadása  - keresés  L/R lapok  ZL/ZR oldal",
-  "sub_installed_cards": "A megnyit  X kitűzés  - keresés  L/R fülek  B vissza"
+  "sub_installed_cards": "A megnyit  X kitűzés  - keresés  L/R fülek  B vissza",
+  "cant_undo": "Ez nem vonható vissza."
 }

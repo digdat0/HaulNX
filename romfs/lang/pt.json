@@ -73,7 +73,7 @@
   "dl_queue_warn": "\n\nAlguns estão na fila de downloads e serão cancelados.",
   "dl_cleared": "Downloads excluídos",
   "title_installed": "Instalados",
-  "sub_installed": "A abrir  Y selecionar  X renomear  Dpad< Ordem  Dpad> fixar  - pesquisar  L/R abas  B voltar",
+  "sub_installed": "A abrir  Y selecionar  X renomear  Dpad< menu  Dpad> fixar  - excluir  L/R abas  B voltar",
   "dir_prefix": "[DIR] ",
   "delete_selected": "Excluir %d item(ns) selecionado(s)?",
   "title_edit_repo": "Editar repositório",
@@ -184,5 +184,6 @@
   "sub_inst_search": "A abrir  Y nova pesquisa  B voltar",
   "card_view": "Visualização em cartões: %s",
   "sub_home_cards": "A abrir  X fixar  Y adicionar repo  - pesquisar  L/R abas  ZL/ZR página",
-  "sub_installed_cards": "A abrir  X fixar  - pesquisar  L/R abas  B voltar"
+  "sub_installed_cards": "A abrir  X fixar  - pesquisar  L/R abas  B voltar",
+  "cant_undo": "Isto não pode ser desfeito."
 }

@@ -451,6 +451,19 @@ static void process_item(QueueItem *it) {
         log_download(it, "cancelled");
         return;
     }
+    /* Salvage a transfer that delivered the whole file but then errored while
+     * waiting for the connection to close (e.g. curl timeout with http 200,
+     * seen on some servers and under emulators): if the .part already matches
+     * the expected size, the download is genuinely complete. The MD5 check
+     * below still guards against a truncated/corrupt file. Done before the
+     * pause check so a completed-but-timed-out item finishes rather than
+     * needlessly parking. */
+    if (!ok && it->size > 0) {
+        struct stat cst;
+        if (stat(tmp, &cst) == 0 && (uint64_t)cst.st_size == it->size) {
+            ok = true;
+        }
+    }
     if (it->pause) {
         it->pause = false;
         /* Preempted (download limit lowered): keep the .part and park the item

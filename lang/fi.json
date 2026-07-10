@@ -73,7 +73,7 @@
   "dl_queue_warn": "\n\nOsa on latausjonossa ja peruutetaan.",
   "dl_cleared": "Lataukset poistettu",
   "title_installed": "Asennettu",
-  "sub_installed": "A avaa  Y valitse  X nimeä uudelleen  Dpad< Lajittelu  Dpad> kiinnitä  - hae  L/R välilehdet  B takaisin",
+  "sub_installed": "A avaa  Y valitse  X nimeä uudelleen  Dpad< valikko  Dpad> kiinnitä  - poista  L/R välilehdet  B takaisin",
   "dir_prefix": "[DIR] ",
   "delete_selected": "Poista %d valittua kohdetta?",
   "title_edit_repo": "Muokkaa repoa",
@@ -184,5 +184,6 @@
   "sub_inst_search": "A avaa  Y uusi haku  B takaisin",
   "card_view": "Korttinäkymä: %s",
   "sub_home_cards": "A avaa  X kiinnitä  Y lisää repo  - hae  L/R välilehdet  ZL/ZR sivu",
-  "sub_installed_cards": "A avaa  X kiinnitä  - hae  L/R välilehdet  B takaisin"
+  "sub_installed_cards": "A avaa  X kiinnitä  - hae  L/R välilehdet  B takaisin",
+  "cant_undo": "Tätä ei voi kumota."
 }

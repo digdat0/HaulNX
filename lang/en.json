@@ -81,7 +81,7 @@
   "dl_cleared": "Downloads cleared",
 
   "title_installed": "Installed",
-  "sub_installed": "A open  Y select  X rename  Dpad< Sort  Dpad> pin  - search  L/R tabs  B back",
+  "sub_installed": "A open  Y select  X rename  Dpad< menu  Dpad> pin  - delete  L/R tabs  B back",
   "dir_prefix": "[DIR] ",
   "delete_selected": "Delete %d selected item(s)?",
 
@@ -210,5 +210,6 @@
   "sub_inst_search": "A open  Y new search  B back",
   "card_view": "Card view: %s",
   "sub_home_cards": "A open  X pin  Y add repo  - search  L/R tabs  ZL/ZR page",
-  "sub_installed_cards": "A open  X pin  - search  L/R tabs  B back"
+  "sub_installed_cards": "A open  X pin  - search  L/R tabs  B back",
+  "cant_undo": "This can't be undone."
 }

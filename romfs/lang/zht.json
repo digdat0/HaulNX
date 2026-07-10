@@ -73,7 +73,7 @@
   "dl_queue_warn": "\n\n部分檔案在佇列中，將被取消。",
   "dl_cleared": "下載已清除",
   "title_installed": "已安裝",
-  "sub_installed": "A 開啟  Y 選擇  X 重新命名  Dpad< 排序  Dpad> 置頂  - 搜尋  L/R 分頁  B 返回",
+  "sub_installed": "A 開啟  Y 選擇  X 重新命名  Dpad< 選單  Dpad> 置頂  - 刪除  L/R 分頁  B 返回",
   "dir_prefix": "[DIR] ",
   "delete_selected": "刪除選取的 %d 個項目？",
   "title_edit_repo": "編輯儲存庫",
@@ -184,5 +184,6 @@
   "sub_inst_search": "A 開啟  Y 新搜尋  B 返回",
   "card_view": "卡片檢視: %s",
   "sub_home_cards": "A 開啟  X 置頂  Y 新增倉庫  - 搜尋  L/R 分頁  ZL/ZR 翻頁",
-  "sub_installed_cards": "A 開啟  X 置頂  - 搜尋  L/R 分頁  B 返回"
+  "sub_installed_cards": "A 開啟  X 置頂  - 搜尋  L/R 分頁  B 返回",
+  "cant_undo": "此操作無法復原。"
 }

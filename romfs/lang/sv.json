@@ -73,7 +73,7 @@
   "dl_queue_warn": "\n\nNågra finns i nedladdningskön och kommer att avbrytas.",
   "dl_cleared": "Nedladdningar borttagna",
   "title_installed": "Installerat",
-  "sub_installed": "A öppna  Y välj  X döp om  Dpad< Sortering  Dpad> fäst  - sök  L/R flikar  B tillbaka",
+  "sub_installed": "A öppna  Y välj  X döp om  Dpad< meny  Dpad> fäst  - ta bort  L/R flikar  B tillbaka",
   "dir_prefix": "[DIR] ",
   "delete_selected": "Ta bort %d valda objekt?",
   "title_edit_repo": "Redigera repo",
@@ -184,5 +184,6 @@
   "sub_inst_search": "A öppna  Y ny sökning  B tillbaka",
   "card_view": "Kortvy: %s",
   "sub_home_cards": "A öppna  X fäst  Y lägg till repo  - sök  L/R flikar  ZL/ZR sida",
-  "sub_installed_cards": "A öppna  X fäst  - sök  L/R flikar  B tillbaka"
+  "sub_installed_cards": "A öppna  X fäst  - sök  L/R flikar  B tillbaka",
+  "cant_undo": "Detta kan inte ångras."
 }

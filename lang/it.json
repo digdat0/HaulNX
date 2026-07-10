@@ -73,7 +73,7 @@
   "dl_queue_warn": "\n\nAlcuni sono nella coda di download e verranno annullati.",
   "dl_cleared": "Download eliminati",
   "title_installed": "Installati",
-  "sub_installed": "A apri  Y seleziona  X rinomina  Dpad< Ordine  Dpad> fissa  - cerca  L/R schede  B indietro",
+  "sub_installed": "A apri  Y seleziona  X rinomina  Dpad< menu  Dpad> fissa  - elimina  L/R schede  B indietro",
   "dir_prefix": "[DIR] ",
   "delete_selected": "Eliminare %d elementi selezionati?",
   "title_edit_repo": "Modifica repository",
@@ -184,5 +184,6 @@
   "sub_inst_search": "A apri  Y nuova ricerca  B indietro",
   "card_view": "Vista a schede: %s",
   "sub_home_cards": "A apri  X fissa  Y aggiungi repo  - cerca  L/R schede  ZL/ZR pagina",
-  "sub_installed_cards": "A apri  X fissa  - cerca  L/R schede  B indietro"
+  "sub_installed_cards": "A apri  X fissa  - cerca  L/R schede  B indietro",
+  "cant_undo": "L'azione non può essere annullata."
 }

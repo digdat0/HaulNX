@@ -354,9 +354,11 @@ class CardGrid : public pu::ui::elm::Element {
                     pu::ui::render::TextureRenderOptions o;
                     o.width = isz;
                     o.height = isz;
+                    // Grow upward only: the bottom edge stays fixed so the
+                    // enlarged icon never touches a two-line title below it.
                     drawer->RenderTexture(this->cards[idx].icon,
                                           cx + (cw - isz) / 2,
-                                          cy + 10 - (isz - IconPx) / 2, o);
+                                          cy + 10 - (isz - IconPx), o);
                 }
                 Cell &ce = this->cache[idx];
                 // One-line titles centre in the two-line band; the small info
@@ -388,8 +390,8 @@ class CardGrid : public pu::ui::elm::Element {
             s32 ty = ry + (maxs > 0 ? (s32)((double)(track_h - thumb_h) *
                                             this->scroll_row / maxs)
                                     : 0);
-            drawer->RenderRectangleFill(this->sub_clr, rx + this->w - 6, ty, 6,
-                                        thumb_h);
+            drawer->RenderRoundedRectangleFill(this->sub_clr, rx + this->w - 6,
+                                               ty, 6, thumb_h, 3);
         }
     }
 
@@ -440,6 +442,22 @@ class CardGrid : public pu::ui::elm::Element {
                     this->tch_activate = true; // second tap = activate
                 } else {
                     this->SetSelected(this->tch_card);
+                }
+            } else if (this->tch_dragged) {
+                // Drag scrolled the viewport away from the selection: pull the
+                // selection to the nearest visible card (keep the column) so
+                // a following A press acts on something the user can see.
+                s32 row = this->sel / Cols;
+                s32 col = this->sel % Cols;
+                s32 lo = this->scroll_row;
+                s32 hi = this->scroll_row + this->VisRows() - 1;
+                if (row < lo || row > hi) {
+                    s32 nrow = row < lo ? lo : hi;
+                    s32 ns = nrow * Cols + col;
+                    if (ns >= (s32)this->cards.size()) {
+                        ns = (s32)this->cards.size() - 1;
+                    }
+                    this->sel = ns; // in view already: no EnsureVisible snap
                 }
             }
         }

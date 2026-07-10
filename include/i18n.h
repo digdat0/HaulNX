@@ -259,6 +259,9 @@ enum {
     S_SUB_HOME_CARDS,
     S_SUB_INSTALLED_CARDS,
 
+    /* ---- destructive-action warning ---- */
+    S_CANT_UNDO,
+
     S__COUNT
 };
 

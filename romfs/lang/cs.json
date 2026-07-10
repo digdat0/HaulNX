@@ -73,7 +73,7 @@
   "dl_queue_warn": "\n\nNěkteré jsou ve frontě stahování a budou zrušeny.",
   "dl_cleared": "Stahování smazána",
   "title_installed": "Nainstalováno",
-  "sub_installed": "A otevřít  Y vybrat  X přejmenovat  Dpad< Řazení  Dpad> připnout  - hledat  L/R karty  B zpět",
+  "sub_installed": "A otevřít  Y vybrat  X přejmenovat  Dpad< nabídka  Dpad> připnout  - smazat  L/R karty  B zpět",
   "dir_prefix": "[DIR] ",
   "delete_selected": "Smazat %d vybraných položek?",
   "title_edit_repo": "Upravit repozitář",
@@ -184,5 +184,6 @@
   "sub_inst_search": "A otevřít  Y nové hledání  B zpět",
   "card_view": "Zobrazení karet: %s",
   "sub_home_cards": "A otevřít  X připnout  Y přidat repo  - hledat  L/R karty  ZL/ZR stránka",
-  "sub_installed_cards": "A otevřít  X připnout  - hledat  L/R karty  B zpět"
+  "sub_installed_cards": "A otevřít  X připnout  - hledat  L/R karty  B zpět",
+  "cant_undo": "Tuto akci nelze vrátit zpět."
 }

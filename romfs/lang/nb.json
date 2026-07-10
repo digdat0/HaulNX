@@ -73,7 +73,7 @@
   "dl_queue_warn": "\n\nNoen er i nedlastingskøen og vil bli avbrutt.",
   "dl_cleared": "Nedlastinger slettet",
   "title_installed": "Installert",
-  "sub_installed": "A åpne  Y velg  X omdøp  Dpad< Sortering  Dpad> fest  - søk  L/R faner  B tilbake",
+  "sub_installed": "A åpne  Y velg  X omdøp  Dpad< meny  Dpad> fest  - slett  L/R faner  B tilbake",
   "dir_prefix": "[DIR] ",
   "delete_selected": "Slette %d valgte elementer?",
   "title_edit_repo": "Rediger repo",
@@ -184,5 +184,6 @@
   "sub_inst_search": "A åpne  Y nytt søk  B tilbake",
   "card_view": "Kortvisning: %s",
   "sub_home_cards": "A åpne  X fest  Y legg til repo  - søk  L/R faner  ZL/ZR side",
-  "sub_installed_cards": "A åpne  X fest  - søk  L/R faner  B tilbake"
+  "sub_installed_cards": "A åpne  X fest  - søk  L/R faner  B tilbake",
+  "cant_undo": "Dette kan ikke angres."
 }

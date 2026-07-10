@@ -73,7 +73,7 @@
   "dl_queue_warn": "\n\nMột số đang trong hàng đợi và sẽ bị hủy.",
   "dl_cleared": "Đã xóa tải xuống",
   "title_installed": "Đã cài",
-  "sub_installed": "A mở  Y chọn  X đổi tên  Dpad< Sắp xếp  Dpad> ghim  - tìm kiếm  L/R tab  B quay lại",
+  "sub_installed": "A mở  Y chọn  X đổi tên  Dpad< menu  Dpad> ghim  - xóa  L/R tab  B quay lại",
   "dir_prefix": "[DIR] ",
   "delete_selected": "Xóa %d mục đã chọn?",
   "title_edit_repo": "Sửa kho",
@@ -184,5 +184,6 @@
   "sub_inst_search": "A mở  Y tìm mới  B quay lại",
   "card_view": "Chế độ thẻ: %s",
   "sub_home_cards": "A mở  X ghim  Y thêm repo  - tìm kiếm  L/R tab  ZL/ZR trang",
-  "sub_installed_cards": "A mở  X ghim  - tìm kiếm  L/R tab  B quay lại"
+  "sub_installed_cards": "A mở  X ghim  - tìm kiếm  L/R tab  B quay lại",
+  "cant_undo": "Không thể hoàn tác."
 }

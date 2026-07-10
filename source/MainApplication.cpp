@@ -110,6 +110,7 @@ static bool is_light_theme() { return strcmp(g_prefs.theme, "light") == 0; }
 // ---- console icons --------------------------------------------------------
 // Loaded once from romfs at startup and shared (borrowed) into list rows.
 static std::map<std::string, pu::sdl2::Texture> g_console_icons;
+static pu::sdl2::Texture g_header_logo = nullptr; // app badge in the header
 
 static std::string icon_key(const char *s) {
     std::string r;
@@ -131,6 +132,7 @@ static void load_console_icons() {
             g_console_icons[k] = tex;
         }
     }
+    g_header_logo = pu::ui::render::LoadImageFromFile("romfs:/header_logo.png");
 }
 
 // Icon for a console folder key (e.g. "snes"); the generic "default" icon for
@@ -241,6 +243,16 @@ static void console_label(const char *abbr, char *out, size_t out_sz) {
 static void style_dialog(pu::ui::Dialog::Ref &d) {
     d->SetDialogColor(g_theme->dialog_bg);
     d->SetTitleColor(g_theme->dialog_title);
+    d->SetContentColor(g_theme->dialog_body);
+    d->SetOptionColor(g_theme->dialog_opt);
+    d->SetOverColor(g_theme->dialog_over);
+}
+
+// Destructive-action dialog: same as style_dialog but with a red title so it
+// clearly reads as "danger" at a glance.
+static void style_dialog_danger(pu::ui::Dialog::Ref &d) {
+    d->SetDialogColor(g_theme->dialog_bg);
+    d->SetTitleColor(pu::ui::Color(224, 78, 78, 255));
     d->SetContentColor(g_theme->dialog_body);
     d->SetOptionColor(g_theme->dialog_opt);
     d->SetOverColor(g_theme->dialog_over);
@@ -514,7 +526,7 @@ void MainApplication::StartMetaLoad(const std::string &id,
 
     this->layout->SetSubtitle(tr(S_LOADING_META));
     this->layout->ClearMenu();
-    this->layout->AddRow(tr(S_LOADING_META));
+    this->layout->ShowSpinner(tr(S_LOADING_META));
 
     Result rc = threadCreate(&this->meta_thread, &MainApplication::MetaThread,
                              this, NULL, 0x40000, 0x2C, -2);
@@ -538,13 +550,9 @@ void MainApplication::StartMetaLoad(const std::string &id,
 
 void MainApplication::MetaTick() {
     if (!this->meta_done) {
-        // Animate the dots (~3/sec) so it's clearly working, not stuck.
-        int dots = (int)((armTicksToNs(armGetSystemTick()) / 350000000ULL) % 4);
-        this->layout->ClearMenu();
-        this->layout->AddRow(std::string(tr(S_LOADING_META)) +
-                             std::string(dots, '.'));
-        return;
+        return; // the spinner overlay animates itself
     }
+    this->layout->HideSpinner();
     threadWaitForExit(&this->meta_thread);
     threadClose(&this->meta_thread);
     this->meta_running = false;
@@ -727,7 +735,14 @@ MainLayout::MainLayout() : Layout::Layout() {
     this->header = pu::ui::elm::Rectangle::New(0, 0, sw, 150, g_theme->header_bg);
     this->Add(this->header);
 
-    this->title = pu::ui::elm::TextBlock::New(45, 24, "TicoDL+");
+    // App badge in the top-left, then the title text to its right.
+    const s32 logo_sz = 60, logo_x = 40, logo_y = 16;
+    this->header_logo = IconElement::New(logo_x, logo_y, logo_sz);
+    this->header_logo->SetTexture(g_header_logo);
+    this->Add(this->header_logo);
+
+    const s32 title_x = g_header_logo ? logo_x + logo_sz + 16 : 45;
+    this->title = pu::ui::elm::TextBlock::New(title_x, 24, "TicoDL+");
     this->title->SetColor(g_theme->title_clr);
     this->Add(this->title);
 
@@ -753,6 +768,12 @@ MainLayout::MainLayout() : Layout::Layout() {
         0, strip_y, sw, strip_h, g_theme->tab_bar_bg);
     this->Add(this->tab_bar);
 
+    // Rounded highlight behind the active tab label (added before the labels
+    // so it renders underneath them).
+    this->tab_pill = PillElement::New(0, strip_y + 8, 120, strip_h - 16, 11,
+                                      g_theme->tab_under);
+    this->Add(this->tab_pill);
+
     const char *labels[] = {tr(S_TAB_BROWSE), tr(S_TAB_INSTALLED), tr(S_TAB_QUEUE), tr(S_TAB_SETTINGS)};
     const s32 tab_y = strip_y + 16;
     const s32 seg = sw / 4;
@@ -763,9 +784,6 @@ MainLayout::MainLayout() : Layout::Layout() {
         this->Add(tb);
         this->tabs.push_back(tb);
     }
-    this->tab_underline = pu::ui::elm::Rectangle::New(
-        0, strip_y + strip_h - 5, 120, 5, g_theme->tab_under);
-    this->Add(this->tab_underline);
 
     const s32 footer_h = 64;
     const s32 list_y = 158;
@@ -779,6 +797,20 @@ MainLayout::MainLayout() : Layout::Layout() {
     // screen populates it via SetCardsMode(true) + AddCard.
     this->grid = CardGrid::New(0, list_y, sw, avail);
     this->Add(this->grid);
+
+    // Empty-state visuals (big centred icon + message), hidden by default.
+    this->empty_icon = IconElement::New(sw / 2 - 90, list_y + avail / 2 - 150,
+                                        180);
+    this->empty_icon->SetTexture(nullptr);
+    this->Add(this->empty_icon);
+    this->empty_text = pu::ui::elm::TextBlock::New(0, list_y + avail / 2 + 50,
+                                                   "");
+    this->empty_text->SetColor(g_theme->rom_info_clr);
+    this->Add(this->empty_text);
+
+    // Background-work spinner overlay, centred in the content area.
+    this->spinner = SpinnerElement::New(0, list_y, sw, avail);
+    this->Add(this->spinner);
 
     this->rom_info = pu::ui::elm::TextBlock::New(45, sh - footer_h - 38, "");
     this->rom_info->SetColor(g_theme->rom_info_clr);
@@ -794,6 +826,11 @@ MainLayout::MainLayout() : Layout::Layout() {
         this->footer_segs.push_back(seg);
     }
 
+    // "Downloads running" pulse on the Queue tab (positioned in SetActiveTab).
+    this->queue_dot = PulseDotElement::New(0, 0, 6);
+    this->queue_dot->SetColor(g_theme->tab_under);
+    this->Add(this->queue_dot);
+
     this->SetActiveTab(0);
 }
 
@@ -806,7 +843,13 @@ void MainLayout::ApplyTheme() {
     this->status->SetColor(g_theme->status_clr);
     this->bat_info->SetColor(g_theme->status_clr);
     this->rom_info->SetColor(g_theme->rom_info_clr);
-    this->tab_underline->SetColor(g_theme->tab_under);
+    this->tab_pill->SetColor(g_theme->tab_under);
+    this->queue_dot->SetColor(g_theme->tab_under);
+    this->empty_text->SetColor(g_theme->rom_info_clr);
+    this->spinner->SetColors(is_light_theme()
+                                 ? pu::ui::Color(35, 100, 200, 255)
+                                 : pu::ui::Color(120, 170, 245, 255),
+                             g_theme->rom_info_clr);
     for (auto &s : this->footer_segs)
         s->SetColor(g_theme->footer_clr);
     for (auto &t : this->tabs)
@@ -816,9 +859,23 @@ void MainLayout::ApplyTheme() {
                                g_theme->tl_mark,
                                is_light_theme()
                                    ? pu::ui::Color(35, 100, 200, 255)
-                                   : pu::ui::Color(100, 170, 245, 255));
+                                   : pu::ui::Color(100, 170, 245, 255),
+                               is_light_theme()
+                                   ? pu::ui::Color(200, 214, 238, 255)
+                                   : pu::ui::Color(30, 60, 85, 255),
+                               // Darkening chip: reads consistently on normal,
+                               // accent (active-download) and selected rows —
+                               // and never matches the blue progress bar.
+                               is_light_theme()
+                                   ? pu::ui::Color(0, 0, 0, 34)
+                                   : pu::ui::Color(0, 0, 0, 95));
+    // Card subtitle must stay readable on BOTH the card background and the
+    // blue selection fill, so it gets its own shade per theme.
     this->grid->SetThemeColors(g_theme->tl_row_alt, g_theme->tl_focus,
-                               g_theme->row_text, g_theme->rom_info_clr);
+                               g_theme->row_text,
+                               is_light_theme()
+                                   ? pu::ui::Color(45, 55, 75, 255)
+                                   : pu::ui::Color(195, 205, 225, 255));
 }
 
 void MainLayout::SetActiveTab(int idx) {
@@ -830,8 +887,20 @@ void MainLayout::SetActiveTab(int idx) {
                                     ? g_theme->tab_active
                                     : g_theme->tab_clr);
     }
-    this->tab_underline->SetX(this->tabs[idx]->GetX());
-    this->tab_underline->SetWidth(this->tabs[idx]->GetWidth());
+    // Pill wraps the active label with a little horizontal padding.
+    const s32 pad = 26;
+    s32 lx = this->tabs[idx]->GetX();
+    s32 lw = this->tabs[idx]->GetWidth();
+    this->tab_pill->SetBounds(lx - pad, 88, lw + 2 * pad, 54);
+    // Park the Queue-tab pulse just after the Queue (index 2) label.
+    if (this->tabs.size() > 2) {
+        this->queue_dot->SetPos(this->tabs[2]->GetX() +
+                                    this->tabs[2]->GetWidth() + 10,
+                                92);
+    }
+}
+void MainLayout::SetQueueActivity(bool active) {
+    this->queue_dot->SetActive(active);
 }
 
 void MainLayout::RefreshTabs() {
@@ -940,7 +1009,24 @@ void MainLayout::ClearMenu() {
     this->grid->Clear();
     this->cards_mode = false; // card screens opt back in after ClearMenu
     this->rom_info->SetText("");
+    this->ClearEmptyState();
+    this->HideSpinner();
 }
+void MainLayout::SetEmptyState(pu::sdl2::Texture icon, const std::string &msg) {
+    this->empty_icon->SetTexture(icon);
+    this->empty_text->SetText(msg);
+    // Centre the message under the icon.
+    this->empty_text->SetX((s32)pu::ui::render::ScreenWidth / 2 -
+                           this->empty_text->GetWidth() / 2);
+}
+void MainLayout::ClearEmptyState() {
+    this->empty_icon->SetTexture(nullptr);
+    this->empty_text->SetText("");
+}
+void MainLayout::ShowSpinner(const std::string &msg) {
+    this->spinner->Show(msg);
+}
+void MainLayout::HideSpinner() { this->spinner->Hide(); }
 void MainLayout::SetCardsMode(bool on) { this->cards_mode = on; }
 void MainLayout::AddCard(const std::string &title, const std::string &subtitle,
                          pu::sdl2::Texture icon) {
@@ -956,8 +1042,10 @@ void MainLayout::AddRow(const std::string &name, pu::ui::Color clr,
 }
 void MainLayout::AddRow2(const std::string &left, const std::string &right,
                          pu::ui::Color lclr, pu::ui::Color rclr, float progress,
-                         pu::sdl2::Texture icon, const std::string &prefix) {
-    this->list->AddRow2(left, right, lclr, rclr, progress, icon, prefix);
+                         pu::sdl2::Texture icon, const std::string &prefix,
+                         bool accent, bool pill) {
+    this->list->AddRow2(left, right, lclr, rclr, progress, icon, prefix, accent,
+                        pill);
 }
 s32 MainLayout::Sel() {
     return this->cards_mode ? this->grid->GetSelected()
@@ -1020,6 +1108,19 @@ void MainApplication::ToastErr(const std::string &msg) {
 bool MainApplication::Confirm(const std::string &title, const std::string &msg) {
     // "Cancel" first so it's the default-highlighted (safe) option; B cancels.
     int r = this->CreateShowDialog(title, msg, {tr(S_CANCEL), tr(S_YES)}, false, {}, style_dialog);
+    return r == 1;
+}
+
+bool MainApplication::ConfirmDanger(const std::string &title,
+                                    const std::string &msg, bool permanent) {
+    std::string m = msg;
+    if (permanent) {
+        m += "\n\n";
+        m += tr(S_CANT_UNDO);
+    }
+    // Cancel first (safe default); the red title flags the destructive intent.
+    int r = this->CreateShowDialog(title, m, {tr(S_CANCEL), tr(S_YES)}, false,
+                                   {}, style_dialog_danger);
     return r == 1;
 }
 
@@ -1133,7 +1234,8 @@ void MainApplication::GotoHome() {
             g_home_map.push_back(row.idx);
         }
         if (g_home_map.empty()) {
-            this->layout->AddRow(tr(S_NO_COLLECTIONS));
+            this->layout->SetEmptyState(console_icon("default"),
+                                        tr(S_NO_COLLECTIONS));
         } else if (cards) {
             this->layout->SetCardsMode(true);
         }
@@ -1158,7 +1260,8 @@ void MainApplication::GotoHome() {
             this->layout->AddRow(fr.label, g_theme->row_text,
                                  console_icon(fr.key.c_str()));
         if (flat_count() == 0) {
-            this->layout->AddRow(tr(S_NO_REPOS));
+            this->layout->SetEmptyState(console_icon("default"),
+                                        tr(S_NO_REPOS));
         }
     }
     this->layout->SetSel(this->home_sel); // restore place
@@ -1286,28 +1389,73 @@ static const char *lang_display_name(const char *code) {
     return code;
 }
 
+// Strip the trailing value placeholder from a "Label: %s" settings string so
+// label and value can live in separate columns; also trims a trailing colon.
+static std::string settings_label(const char *fmt) {
+    std::string s = fmt ? fmt : "";
+    size_t pct = s.find('%');
+    if (pct != std::string::npos) {
+        s.erase(pct);
+    }
+    while (!s.empty()) {
+        char c = s.back();
+        if (c == ' ' || c == '\t' || c == ':') {
+            s.pop_back();
+            continue;
+        }
+        // Fullwidth colon U+FF1A (EF BC 9A), used by CJK strings.
+        if (s.size() >= 3 && (unsigned char)s[s.size() - 3] == 0xEF &&
+            (unsigned char)s[s.size() - 2] == 0xBC &&
+            (unsigned char)s[s.size() - 1] == 0x9A) {
+            s.erase(s.size() - 3);
+            continue;
+        }
+        break;
+    }
+    return s;
+}
+// Value column colours (theme-aware).
+static pu::ui::Color onoff_color(bool on) {
+    bool light = is_light_theme();
+    if (on) {
+        return light ? pu::ui::Color(16, 95, 44, 255)
+                     : pu::ui::Color(130, 225, 150, 255);
+    }
+    return light ? pu::ui::Color(120, 122, 132, 255)
+                 : pu::ui::Color(135, 140, 155, 255);
+}
+static pu::ui::Color value_color() {
+    return is_light_theme() ? pu::ui::Color(40, 90, 155, 255)
+                            : pu::ui::Color(150, 190, 240, 255);
+}
+static pu::ui::Color chevron_color() {
+    return pu::ui::Color(125, 132, 150, 255);
+}
+static const char *CHEVRON = "›"; // › — marks a row that opens a screen
+
 void MainApplication::GotoSettings() {
     this->screen = Screen::Settings;
     this->layout->SetTitle(std::string(tr(S_TITLE_SETTINGS)) + "   (v" + APP_VERSION_STR + ")");
     this->layout->SetSubtitle(tr(S_SUB_SETTINGS));
     this->layout->ClearMenu();
-    this->layout->AddRow(tr(S_CHECK_UPDATES));          // 0
-    this->layout->AddRow(tr(S_ADVANCED));               // 1
-    this->layout->AddRow(tr(S_VIEW_LOGS));              // 2
-    this->layout->AddRow(tr(S_MANAGE_DATA));            // 3
-    {
-        char lb[64];
-        const char *cur = g_prefs.lang[0] ? g_prefs.lang : "en";
-        snprintf(lb, sizeof(lb), tr(S_LANGUAGE), lang_display_name(cur));
-        this->layout->AddRow(lb);                       // 4
-    }
-    {
-        char tb[64];
-        snprintf(tb, sizeof(tb), tr(S_THEME),
-                 is_light_theme() ? tr(S_THEME_LIGHT) : tr(S_THEME_DARK));
-        this->layout->AddRow(tb);                       // 5
-    }
-    this->layout->AddRow(tr(S_CREDITS));                // 6
+    pu::ui::Color lbl = g_theme->row_text;
+    pu::ui::Color chv = chevron_color();
+    this->layout->AddRow2(tr(S_CHECK_UPDATES), CHEVRON, lbl, chv, -1.0f,
+                          nullptr, "", false, false);                          // 0
+    this->layout->AddRow2(tr(S_ADVANCED), CHEVRON, lbl, chv, -1.0f, nullptr,
+                          "", false, false);                                  // 1
+    this->layout->AddRow2(tr(S_VIEW_LOGS), CHEVRON, lbl, chv, -1.0f, nullptr,
+                          "", false, false);                                  // 2
+    this->layout->AddRow2(tr(S_MANAGE_DATA), CHEVRON, lbl, chv, -1.0f, nullptr,
+                          "", false, false);                                  // 3
+    const char *cur = g_prefs.lang[0] ? g_prefs.lang : "en";
+    this->layout->AddRow2(settings_label(tr(S_LANGUAGE)), lang_display_name(cur),
+                          lbl, value_color());                                 // 4
+    this->layout->AddRow2(settings_label(tr(S_THEME)),
+                          is_light_theme() ? tr(S_THEME_LIGHT) : tr(S_THEME_DARK),
+                          lbl, value_color());                                 // 5
+    this->layout->AddRow2(tr(S_CREDITS), CHEVRON, lbl, chv, -1.0f, nullptr, "",
+                          false, false);                                       // 6
     char ri[600];
     snprintf(ri, sizeof(ri), tr(S_ROM_FOLDER), roms_root(&g_tico));
     this->layout->SetRomInfo(ri);
@@ -1318,27 +1466,34 @@ void MainApplication::GotoAdvanced() {
     this->layout->SetTitle(tr(S_TITLE_ADVANCED));
     this->layout->SetSubtitle(tr(S_SUB_ADVANCED));
     this->layout->ClearMenu();
-    this->layout->AddRow(tr(S_MANAGE_CONSOLES));  // 0
-    char r[96];
-    snprintf(r, sizeof(r), tr(S_STAY_AWAKE),
-             g_prefs.prevent_sleep ? tr(S_ON) : tr(S_OFF));
-    this->layout->AddRow(r);                      // 1
-    snprintf(r, sizeof(r), tr(S_GROUP_CONSOLES),
-             g_prefs.group_consoles ? tr(S_ON) : tr(S_OFF));
-    this->layout->AddRow(r);                      // 2
-    snprintf(r, sizeof(r), tr(S_ARCHIVE_CREDS),
-             g_creds.access_key[0] ? tr(S_SET) : tr(S_UNSET));
-    this->layout->AddRow(r);                      // 3
-    snprintf(r, sizeof(r), tr(S_META_CACHE), g_prefs.use_cache ? tr(S_ON) : tr(S_OFF));
-    this->layout->AddRow(r);                      // 4
-    snprintf(r, sizeof(r), tr(S_MAX_DOWNLOADS), g_prefs.max_downloads);
-    this->layout->AddRow(r);                      // 5
-    snprintf(r, sizeof(r), tr(S_NET_CHECK_STARTUP),
-             g_prefs.net_check ? tr(S_ON) : tr(S_OFF));
-    this->layout->AddRow(r);                      // 6
-    snprintf(r, sizeof(r), tr(S_CARD_VIEW),
-             g_prefs.card_view ? tr(S_ON) : tr(S_OFF));
-    this->layout->AddRow(r);                      // 7
+    pu::ui::Color lbl = g_theme->row_text;
+    this->layout->AddRow2(tr(S_MANAGE_CONSOLES), CHEVRON, lbl, chevron_color(),
+                          -1.0f, nullptr, "", false, false);       // 0
+    bool b;
+    b = g_prefs.prevent_sleep;
+    this->layout->AddRow2(settings_label(tr(S_STAY_AWAKE)),
+                          b ? tr(S_ON) : tr(S_OFF), lbl, onoff_color(b)); // 1
+    b = g_prefs.group_consoles;
+    this->layout->AddRow2(settings_label(tr(S_GROUP_CONSOLES)),
+                          b ? tr(S_ON) : tr(S_OFF), lbl, onoff_color(b)); // 2
+    b = g_creds.access_key[0] != '\0';
+    this->layout->AddRow2(settings_label(tr(S_ARCHIVE_CREDS)),
+                          b ? tr(S_SET) : tr(S_UNSET), lbl, onoff_color(b)); // 3
+    b = g_prefs.use_cache;
+    this->layout->AddRow2(settings_label(tr(S_META_CACHE)),
+                          b ? tr(S_ON) : tr(S_OFF), lbl, onoff_color(b)); // 4
+    {
+        char v[16];
+        snprintf(v, sizeof(v), "%d", g_prefs.max_downloads);
+        this->layout->AddRow2(settings_label(tr(S_MAX_DOWNLOADS)), v, lbl,
+                              value_color());                      // 5
+    }
+    b = g_prefs.net_check;
+    this->layout->AddRow2(settings_label(tr(S_NET_CHECK_STARTUP)),
+                          b ? tr(S_ON) : tr(S_OFF), lbl, onoff_color(b)); // 6
+    b = g_prefs.card_view;
+    this->layout->AddRow2(settings_label(tr(S_CARD_VIEW)),
+                          b ? tr(S_ON) : tr(S_OFF), lbl, onoff_color(b)); // 7
 }
 
 void MainApplication::GotoDownloads() {
@@ -1487,7 +1642,7 @@ void MainApplication::RaStart() {
     this->ra_running = true;
     this->layout->SetTitle(tr(S_REFRESH_ALL));
     this->layout->ClearMenu();
-    this->layout->AddRow(tr(S_REFRESH_ALL));
+    this->layout->ShowSpinner(tr(S_REFRESH_ALL));
 }
 
 void MainApplication::RaTick() {
@@ -1702,7 +1857,8 @@ void MainApplication::GotoSearch(const std::string &query) {
                               console_icon(h.target.c_str()));
     }
     if (g_search_results.empty()) {
-        this->layout->AddRow(tr(S_SEARCH_NO_RESULTS));
+        this->layout->SetEmptyState(console_icon("default"),
+                                    tr(S_SEARCH_NO_RESULTS));
     } else {
         char info[128];
         if (capped) {
@@ -1727,7 +1883,8 @@ void MainApplication::GotoLanguage() {
             g_langs[i].label, active ? "◀" : "",
             g_theme->row_text,
             is_light_theme() ? pu::ui::Color(20, 115, 165, 255)
-                             : pu::ui::Color(100, 210, 255, 255));
+                             : pu::ui::Color(100, 210, 255, 255),
+            -1.0f, nullptr, "", false, false);
     }
 }
 
@@ -1876,7 +2033,7 @@ void MainApplication::GotoInstalled(const std::string &path) {
         }
     }
     if (g_inst.empty()) {
-        this->layout->AddRow(tr(S_EMPTY));
+        this->layout->SetEmptyState(console_icon("default"), tr(S_EMPTY));
     } else if (cards) {
         this->layout->SetCardsMode(true);
     }
@@ -1972,7 +2129,8 @@ void MainApplication::GotoInstSearch(const std::string &query) {
                               console_icon(h.console.c_str()));
     }
     if (g_inst_hits.empty()) {
-        this->layout->AddRow(tr(S_SEARCH_NO_RESULTS));
+        this->layout->SetEmptyState(console_icon("default"),
+                                    tr(S_SEARCH_NO_RESULTS));
     } else {
         char info[64];
         if (capped) {
@@ -2259,6 +2417,9 @@ void MainApplication::HandleInput(u64 down, u64 held,
 
     // Keep the tab bar highlight in sync with whatever screen we're on.
     this->SyncTab();
+    // Pulse the Queue tab when downloads are active and you're looking elsewhere.
+    this->layout->SetQueueActivity(queue_active_count() > 0 &&
+                                   this->CurrentTab() != Tab::Queue);
 
     // Remember the current selection per browseable list so backing out and
     // returning keeps your place.
@@ -2416,9 +2577,9 @@ void MainApplication::HandleInput(u64 down, u64 held,
                 snprintf(info, sizeof(info), "%s", human_size(it->total).c_str());
             }
             // Status becomes the prefix column; the console icon sits between
-            // it and the "[target] name" text.
-            char pfx[16];
-            snprintf(pfx, sizeof(pfx), "%-8s", qstatus(it->status));
+            // it and the "[target] name" text. The column has a fixed width
+            // (TableList), so the icon aligns on every row.
+            const char *pfx = qstatus(it->status);
             char left[560];
             snprintf(left, sizeof(left), "[%s] %s", it->target, it->name);
             pu::ui::Color c = qstatus_color(it->status);
@@ -2430,11 +2591,15 @@ void MainApplication::HandleInput(u64 down, u64 held,
                                          : pu::ui::Color(130, 225, 150, 255);
                 rc = it->overwrote > 0 ? pu::ui::Color(245, 170, 90, 255) : newc;
             }
+            // The active download is the "hero" row: accent background + a
+            // thicker progress bar.
+            bool accent = (it->status == Q_DOWNLOADING);
             this->layout->AddRow2(left, info, c, rc, prog,
-                                  console_icon(it->target), pfx);
+                                  console_icon(it->target), pfx, accent);
         }
         if (n == 0) {
-            this->layout->AddRow(tr(S_QUEUE_EMPTY));
+            this->layout->SetEmptyState(console_icon("default"),
+                                        tr(S_QUEUE_EMPTY));
         }
         this->layout->SetSel(keep);
         // Offline with work pending: say why nothing is moving (items sit at
@@ -2596,7 +2761,7 @@ void MainApplication::HandleInput(u64 down, u64 held,
                 this->GotoPicker(Pending::AddRepo);
             } else if ((down & HidNpadButton_Minus) &&
                        flat_ref(this->layout->Sel(), &ci, &ri)) {
-                if (this->Confirm(tr(S_DELETE_REPO), tr(S_DELETE_REPO_CONFIRM))) {
+                if (this->ConfirmDanger(tr(S_DELETE_REPO), tr(S_DELETE_REPO_CONFIRM))) {
                     config_remove_repo(&g_cfg.consoles[ci], ri);
                     config_save(&g_cfg);
                     this->Toast(tr(S_DELETED));
@@ -2653,7 +2818,7 @@ void MainApplication::HandleInput(u64 down, u64 held,
             }
             this->GotoRepos(this->sel_ci);
         } else if ((down & HidNpadButton_Minus) && g->repo_count > 0) {
-            if (this->Confirm(tr(S_DELETE_REPO), tr(S_DELETE_REPO_CONFIRM))) {
+            if (this->ConfirmDanger(tr(S_DELETE_REPO), tr(S_DELETE_REPO_CONFIRM))) {
                 config_remove_repo(g, this->layout->Sel());
                 config_save(&g_cfg);
                 this->Toast(tr(S_DELETED));
@@ -2890,14 +3055,24 @@ void MainApplication::HandleInput(u64 down, u64 held,
                 this->SyncTab();
                 break;
             }
-            case 6: // Credits
+            case 6: { // Credits
+                // Big app badge beside the text. Loaded fresh into a handle the
+                // dialog owns and frees on close (so it can't touch the shared
+                // header/console icon cache).
+                pu::sdl2::TextureHandle::Ref logo = {};
+                auto tex = pu::ui::render::LoadImageFromFile(
+                    "romfs:/credits_logo.png");
+                if (tex) {
+                    logo = pu::sdl2::TextureHandle::New(tex);
+                }
                 this->CreateShowDialog(
                     tr(S_CREDITS),
                     std::string("TicoDL+ v") + APP_VERSION_STR + " by digdat0\n\n"
                     "Plutonium UI library provided by XorTroll\n\n"
                     "TICO emulator - https://ticoverse.com/",
-                    {tr(S_OK)}, true, {}, style_dialog);
+                    {tr(S_OK)}, true, logo, style_dialog);
                 break;
+            }
             default:
                 break;
             }
@@ -3030,7 +3205,7 @@ void MainApplication::HandleInput(u64 down, u64 held,
         if (down & HidNpadButton_B) {
             this->GotoViewLogs();
         } else if (down & HidNpadButton_X) {
-            if (this->Confirm(tr(S_CLEAR_LOG), tr(S_CLEAR_DEBUG_CONFIRM))) {
+            if (this->ConfirmDanger(tr(S_CLEAR_LOG), tr(S_CLEAR_DEBUG_CONFIRM))) {
                 remove(LOG_PATH);
                 this->Toast(tr(S_LOG_CLEARED));
                 this->GotoDebugLog();
@@ -3068,7 +3243,7 @@ void MainApplication::HandleInput(u64 down, u64 held,
                 snprintf(wmsg, sizeof(wmsg), tr(S_DL_ACTIVE_WARN), qc);
                 msg += wmsg;
             }
-            if (this->Confirm(tr(S_DELETE_ALL), msg)) {
+            if (this->ConfirmDanger(tr(S_DELETE_ALL), msg)) {
                 if (qc > 0) {
                     for (auto &e : g_dlfiles)
                         queue_cancel_by_part(e.name.c_str(), true);
@@ -3098,7 +3273,7 @@ void MainApplication::HandleInput(u64 down, u64 held,
                 std::string full = msg;
                 if (has_queued)
                     full += tr(S_DL_QUEUE_WARN);
-                if (this->Confirm(tr(S_DELETE), full)) {
+                if (this->ConfirmDanger(tr(S_DELETE), full)) {
                     for (auto it = marks.rbegin(); it != marks.rend(); ++it) {
                         s32 idx = *it;
                         if (idx >= 0 && idx < (s32)g_dlfiles.size()) {
@@ -3120,7 +3295,7 @@ void MainApplication::HandleInput(u64 down, u64 held,
                     bool in_queue = queue_cancel_by_part(g_dlfiles[i].name.c_str(), false) > 0;
                     if (in_queue)
                         msg += tr(S_DL_QUEUE_WARN);
-                    if (this->Confirm(tr(S_DELETE), msg)) {
+                    if (this->ConfirmDanger(tr(S_DELETE), msg)) {
                         if (in_queue)
                             queue_cancel_by_part(g_dlfiles[i].name.c_str(), true);
                         std::string fp = std::string(DL_TMP_DIR) + "/" + g_dlfiles[i].name;
@@ -3156,7 +3331,7 @@ void MainApplication::HandleInput(u64 down, u64 held,
             char dmsg[256];
             snprintf(dmsg, sizeof(dmsg), tr(S_CLEAR_CACHE_CONFIRM),
                      (int)g_cache_files.size());
-            if (this->Confirm(tr(S_CLEAR_CACHE), dmsg)) {
+            if (this->ConfirmDanger(tr(S_CLEAR_CACHE), dmsg)) {
                 for (auto &e : g_cache_files) {
                     std::string fp = std::string(CACHE_DIR) + "/" + e.name;
                     remove(fp.c_str());
@@ -3167,9 +3342,9 @@ void MainApplication::HandleInput(u64 down, u64 held,
         } else if (down & HidNpadButton_Minus) {
             s32 i = this->layout->Sel();
             if (i >= 0 && i < (s32)g_cache_files.size()) {
-                if (this->Confirm(tr(S_DELETE),
-                                  std::string(tr(S_DELETE)) + " '" +
-                                      g_cache_files[i].name + "'?")) {
+                if (this->ConfirmDanger(tr(S_DELETE),
+                                        std::string(tr(S_DELETE)) + " '" +
+                                            g_cache_files[i].name + "'?")) {
                     std::string fp =
                         std::string(CACHE_DIR) + "/" + g_cache_files[i].name;
                     remove(fp.c_str());
@@ -3231,13 +3406,33 @@ void MainApplication::HandleInput(u64 down, u64 held,
                 }
             }
         } else if ((down & HidNpadButton_Left) && !in_cards) {
-            // Cycle the list sort (name A-Z / Z-A / size); keep the selection.
-            g_inst_sort = (g_inst_sort + 1) % SORT__COUNT;
-            this->Toast(tr(g_sort_keys[g_inst_sort]));
-            s32 keep = this->layout->Sel();
-            this->GotoInstalled(this->inst_path);
-            if (keep >= 0 && keep < this->layout->RowCount())
-                this->layout->SetSel(keep);
+            // Actions menu: the less-frequent list actions (search, sort) live
+            // here so the face buttons stay simple and − can just mean delete.
+            int r = this->CreateShowDialog(
+                tr(S_TITLE_INSTALLED), "",
+                {tr(S_TITLE_INST_SEARCH), tr(g_sort_keys[g_inst_sort]),
+                 tr(S_CANCEL)}, false, {}, style_dialog);
+            if (r == 0) {
+                char q[256] = {0};
+                if (prompt_raw(tr(S_SEARCH_PROMPT), g_inst_query.c_str(), q,
+                               sizeof(q)) && q[0]) {
+                    this->GotoInstSearch(q);
+                    return;
+                }
+            } else if (r == 1) {
+                int s = this->CreateShowDialog(
+                    tr(g_sort_keys[g_inst_sort]), "",
+                    {tr(S_SORT_DEFAULT), tr(S_SORT_NAME_AZ), tr(S_SORT_NAME_ZA),
+                     tr(S_SORT_SIZE_DESC), tr(S_SORT_SIZE_ASC), tr(S_CANCEL)},
+                    false, {}, style_dialog);
+                if (s >= 0 && s < SORT__COUNT) {
+                    g_inst_sort = s;
+                    s32 keep = this->layout->Sel();
+                    this->GotoInstalled(this->inst_path);
+                    if (keep >= 0 && keep < this->layout->RowCount())
+                        this->layout->SetSel(keep);
+                }
+            }
         } else if ((down & HidNpadButton_X) && !in_cards) {
             s32 i = this->layout->Sel();
             if (i >= 0 && i < (s32)g_inst.size()) {
@@ -3273,7 +3468,7 @@ void MainApplication::HandleInput(u64 down, u64 held,
                 // Marked items: delete them (mark with Y first for a single).
                 char msg[64];
                 snprintf(msg, sizeof(msg), tr(S_DELETE_SELECTED), mc);
-                if (this->Confirm(tr(S_DELETE), msg)) {
+                if (this->ConfirmDanger(tr(S_DELETE), msg, true)) {
                     // Delete in reverse order so indices stay valid
                     auto marks = this->layout->Marked();
                     for (auto it = marks.rbegin(); it != marks.rend(); ++it) {
@@ -3288,12 +3483,22 @@ void MainApplication::HandleInput(u64 down, u64 held,
                     this->GotoInstalled(this->inst_path);
                 }
             } else {
-                // Nothing marked: search installed games (like the Browse tab).
-                char q[256] = {0};
-                if (prompt_raw(tr(S_SEARCH_PROMPT), g_inst_query.c_str(), q,
-                               sizeof(q)) && q[0]) {
-                    this->GotoInstSearch(q);
-                    return;
+                // Nothing marked: delete the selected item (− means delete
+                // everywhere; mark with Y first to delete several at once).
+                s32 i = this->layout->Sel();
+                if (i >= 0 && i < (s32)g_inst.size()) {
+                    if (this->ConfirmDanger(tr(S_DELETE),
+                                            std::string(tr(S_DELETE)) + " '" +
+                                                g_inst[i].name + "'?",
+                                            true)) {
+                        fs_rm_rf((this->inst_path + "/" + g_inst[i].name).c_str());
+                        this->Toast(tr(S_DELETED));
+                        s32 keep = i;
+                        this->GotoInstalled(this->inst_path);
+                        if (keep >= (s32)g_inst.size())
+                            keep = (s32)g_inst.size() - 1;
+                        if (keep >= 0) this->layout->SetSel(keep);
+                    }
                 }
             }
         }
@@ -3368,7 +3573,7 @@ void MainApplication::HandleInput(u64 down, u64 held,
                 this->GotoFiles(this->sel_ci, this->sel_ri, true);
                 return;
             case 5:
-                if (this->Confirm(tr(S_DELETE_REPO), tr(S_DELETE_REPO_CONFIRM))) {
+                if (this->ConfirmDanger(tr(S_DELETE_REPO), tr(S_DELETE_REPO_CONFIRM))) {
                     config_remove_repo(&g_cfg.consoles[this->sel_ci],
                                        this->sel_ri);
                     config_save(&g_cfg);
@@ -3448,8 +3653,8 @@ void MainApplication::HandleInput(u64 down, u64 held,
                     this->ToastErr(tr(S_QUEUE_FULL));
             }
         } else if (down & HidNpadButton_X) {
-            if (this->Confirm(tr(S_CLEAR_LOG),
-                              tr(S_CLEAR_LOG_CONFIRM))) {
+            if (this->ConfirmDanger(tr(S_CLEAR_LOG),
+                                    tr(S_CLEAR_LOG_CONFIRM))) {
                 remove(DLLOG_PATH);
                 remove(DLLOG_JSON);
                 this->Toast(tr(S_LOG_CLEARED));
@@ -3495,8 +3700,8 @@ void MainApplication::HandleInput(u64 down, u64 held,
                     this->Toast(tr(S_SAVED));
                 }
             } else if (i == 2) {
-                if (this->Confirm(tr(S_CLEAR_CREDS),
-                                  tr(S_CLEAR_CREDS_CONFIRM))) {
+                if (this->ConfirmDanger(tr(S_CLEAR_CREDS),
+                                        tr(S_CLEAR_CREDS_CONFIRM))) {
                     g_creds.access_key[0] = '\0';
                     g_creds.secret[0] = '\0';
                     creds_save(&g_creds);
