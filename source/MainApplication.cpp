@@ -3,6 +3,8 @@
 #include "version.h"
 
 #include <algorithm>
+#include <cerrno>
+#include <cstdarg>
 #include <fstream>
 #include <map>
 #include <string>
@@ -1240,6 +1242,7 @@ void MainLayout::AddCard(const std::string &title, const std::string &subtitle,
                          pu::sdl2::Texture icon, bool pinned, bool dim) {
     this->grid->AddCard(title, subtitle, icon, pinned, dim);
 }
+void MainLayout::SetSingleCard(bool on) { this->grid->SetSingle(on); }
 void MainLayout::SetQueueCount(s32 n) { this->grid->SetQueueCount(n); }
 void MainLayout::SetQueueCard(s32 i, const std::string &console,
                               pu::sdl2::Texture icon,
@@ -4550,6 +4553,31 @@ void MainApplication::UpdThread(void *arg) {
     self->upd_done = true;
 }
 
+// Append a line to the debug log: the self-updater's install steps must be
+// diagnosable on-device (a failure here previously left no trace at all).
+static void upd_log(const char *fmt, ...) {
+    FILE *f = fopen(LOG_PATH, "a");
+    if (!f) {
+        return;
+    }
+    va_list ap;
+    va_start(ap, fmt);
+    vfprintf(f, fmt, ap);
+    va_end(ap);
+    fputc('\n', f);
+    fclose(f);
+}
+
+// App badge for the update-download card, loaded once (200px master, crisp
+// at the enlarged card's icon size). Falls back to the header logo.
+static pu::sdl2::Texture upd_card_icon() {
+    static pu::sdl2::Texture t = nullptr;
+    if (!t) {
+        t = pu::ui::render::LoadImageFromFile("romfs:/credits_logo.png");
+    }
+    return t ? t : g_header_logo;
+}
+
 void MainApplication::UpdStart(const std::string &url, const std::string &dl,
                                const std::string &tag) {
     this->upd_url = url;
@@ -4565,7 +4593,19 @@ void MainApplication::UpdStart(const std::string &url, const std::string &dl,
     this->layout->SetTitle(tr(S_UPDATING));
     this->layout->SetSubtitle(std::string("Downloading ") + tag + "...  (B to cancel)");
     this->layout->ClearMenu();
-    this->layout->AddRow(tr(S_UPDATE_DL_CANCEL));
+    if (g_prefs.card_view) {
+        // Card mode: one enlarged queue-style card, centred, with the app
+        // badge as its icon — same look as the download-queue cards.
+        this->layout->SetCardsMode(true);
+        this->layout->SetSingleCard(true);
+        this->layout->SetQueueCount(1);
+        this->layout->SetQueueCard(0, "TicoDL+", upd_card_icon(),
+                                   qstatus(Q_DOWNLOADING),
+                                   qstatus_color(Q_DOWNLOADING), tag, "", "",
+                                   "TicoDLplus.nro", 0.0f, true);
+    } else {
+        this->layout->AddRow(tr(S_UPDATE_DL_CANCEL));
+    }
 
     Result rc = threadCreate(&this->upd_thread, &MainApplication::UpdThread, this,
                              NULL, 0x40000, 0x2C, -2);
@@ -4588,6 +4628,22 @@ void MainApplication::UpdTick() {
                  this->upd_tag.c_str(), pct, human_size(now).c_str(),
                  total ? human_size(total).c_str() : "?");
         this->layout->SetSubtitle(s);
+        if (g_prefs.card_view) {
+            // ...and on the centred card: status corner gets "dl NN%", the
+            // chip gets "vX.Y.Z · now / total", the ring fills.
+            char st[32];
+            snprintf(st, sizeof(st), "%s %d%%", qstatus(Q_DOWNLOADING), pct);
+            char c1[64];
+            snprintf(c1, sizeof(c1), "%s / %s", human_size(now).c_str(),
+                     total ? human_size(total).c_str() : "?");
+            this->layout->SetQueueCard(0, "TicoDL+", upd_card_icon(), st,
+                                       qstatus_color(Q_DOWNLOADING),
+                                       this->upd_tag, c1, "",
+                                       "TicoDLplus.nro",
+                                       total ? (float)now / (float)total
+                                             : 0.0f,
+                                       true);
+        }
         return;
     }
 
@@ -4609,25 +4665,21 @@ void MainApplication::UpdTick() {
         ok = false;
     }
     if (ok) {
-        romfsExit();
+        // Don't touch the running NRO: the loader keeps it open for the
+        // app's whole lifetime, so delete/rename/overwrite of it all fail
+        // while we run. Instead stage the new build as "<self>.new"; main()
+        // finishes the swap on the next launch, before anything opens us.
         std::string selfp = resolve_self_path();
-        const char *self = selfp.c_str();
-        char prev[1100], stage[1100];
-        snprintf(prev, sizeof(prev), "%s.previous", self);
-        snprintf(stage, sizeof(stage), "%s.new", self);
-        install_over(self, prev); // best-effort backup
-        // Stage the new build next to the old one, then swap with a rename —
-        // a crash/power loss mid-copy can't leave a half-written app file.
-        bool inst = install_over(dl.c_str(), stage);
-        if (inst) {
-            remove(self);
-            inst = (rename(stage, self) == 0);
-            if (!inst) {
-                install_over(prev, self); // try to restore the backup
-            }
+        char stage[1100];
+        snprintf(stage, sizeof(stage), "%s.new", selfp.c_str());
+        remove(stage); // clear a stale stage so the rename can land
+        bool inst = (rename(dl.c_str(), stage) == 0);
+        if (!inst) {
+            upd_log("upd: rename dl->stage failed (errno=%d), copying",
+                    errno);
+            inst = install_over(dl.c_str(), stage) && looks_like_nro(stage);
         }
-        remove(stage);
-        romfsInit();
+        upd_log("upd: staged '%s' %s", stage, inst ? "ok" : "FAILED");
         if (inst) {
             remove(dl.c_str());
             char umsg[512];
@@ -4635,8 +4687,11 @@ void MainApplication::UpdTick() {
             this->CreateShowDialog(tr(S_TITLE_UPDATE), umsg,
                                    {tr(S_OK)}, true, {}, style_dialog);
         } else {
+            remove(stage); // don't leave a half-written stage behind
             this->CreateShowDialog(
-                tr(S_TITLE_UPDATE), std::string("Install failed. New build kept at:\n") + dl,
+                tr(S_TITLE_UPDATE),
+                std::string("Could not stage the update (details in debug "
+                            "log).\nDownloaded build kept at:\n") + dl,
                 {tr(S_OK)}, true, {}, style_dialog);
         }
     } else {

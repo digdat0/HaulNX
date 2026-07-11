@@ -93,6 +93,13 @@ class CardGrid : public pu::ui::elm::Element {
     static constexpr s32 IconPx = 130;
     static constexpr s32 CardRadius = 14;
     static constexpr s32 DragThreshold = 16;
+    // Single-card mode (self-update download): one enlarged queue-style card
+    // centred in the element.
+    static constexpr s32 SingleW = 420;
+    static constexpr s32 SingleH = 340;
+    static constexpr s32 SingleRadius = 18;
+    static constexpr s32 SingleIconPx = 176;
+    bool single = false;
 
     s32 CardW() const { return (this->w - 2 * Margin - (Cols - 1) * Gap) / Cols; }
     s32 RowsTotal() const { return ((s32)this->cards.size() + Cols - 1) / Cols; }
@@ -283,6 +290,124 @@ class CardGrid : public pu::ui::elm::Element {
         this->dirty = false;
     }
 
+    // Download/unzip progress traced around a rounded card outline clockwise
+    // in the signature green->blue gradient: straight runs as short gradient
+    // rects, corners as stamped dots (no arc primitive). ring: 0 live
+    // gradient, 1 done (solid green), 2 failed (solid red).
+    void DrawRing(pu::ui::render::Renderer::Ref &drawer, const s32 cx,
+                  const s32 cy, const s32 cw, const s32 ch, const s32 rad,
+                  const s32 inset, const s32 bt, const float prog,
+                  const s32 ring) {
+        const s32 x0 = cx + inset, y0 = cy + inset;
+        const s32 pw = cw - 2 * inset, ph = ch - 2 * inset;
+        const s32 R = rad - inset;
+        const pu::ui::Color trk = this->trk_clr;
+        for (s32 t = 0; t < bt; t++) {
+            drawer->RenderRoundedRectangle(trk, x0 + t, y0 + t, pw - 2 * t,
+                                           ph - 2 * t, R - t > 1 ? R - t : 1);
+        }
+        const s32 rc = R - bt / 2; // centerline corner radius
+        const s32 lx = x0 + bt / 2, ty = y0 + bt / 2;
+        const s32 rxr = x0 + pw - bt / 2;
+        const s32 by = y0 + ph - bt / 2;
+        const s32 hs = (rxr - lx) - 2 * rc;
+        const s32 vs = (by - ty) - 2 * rc;
+        const s32 q = (s32)(1.5708f * (float)rc + 0.5f);
+        const s32 L = 2 * hs + 2 * vs + 4 * q;
+        s32 fill = (s32)(prog * (float)L + 0.5f);
+        if (fill > L) {
+            fill = L;
+        }
+        // Terminal states swap the live gradient for a solid ring: green
+        // when done, red when failed.
+        pu::ui::Color g0(146, 214, 36, 255);
+        pu::ui::Color g1(56, 130, 225, 255);
+        if (ring == 1) {
+            g1 = g0;
+        } else if (ring == 2) {
+            g0 = g1 = pu::ui::Color(224, 82, 82, 255);
+        }
+        auto grad = [&](s32 dd) {
+            float t = (float)dd / (float)L;
+            return pu::ui::Color((u8)(g0.r + ((s32)g1.r - g0.r) * t),
+                                 (u8)(g0.g + ((s32)g1.g - g0.g) * t),
+                                 (u8)(g0.b + ((s32)g1.b - g0.b) * t), 255);
+        };
+        s32 d = 0;
+        // edge: 0 top(->right) 1 right(->down) 2 bottom(->left) 3 left(->up)
+        auto straight = [&](s32 len, int edge) {
+            s32 done = 0;
+            while (done < len && d < fill) {
+                s32 seg = fill - d < 6 ? fill - d : 6;
+                if (seg > len - done) {
+                    seg = len - done;
+                }
+                auto c = grad(d);
+                switch (edge) {
+                case 0:
+                    drawer->RenderRectangleFill(c, lx + rc + done, ty - bt / 2,
+                                                seg, bt);
+                    break;
+                case 1:
+                    drawer->RenderRectangleFill(c, rxr - bt / 2, ty + rc + done,
+                                                bt, seg);
+                    break;
+                case 2:
+                    drawer->RenderRectangleFill(c, rxr - rc - done - seg,
+                                                by - bt / 2, seg, bt);
+                    break;
+                default:
+                    drawer->RenderRectangleFill(c, lx - bt / 2,
+                                                by - rc - done - seg, bt, seg);
+                    break;
+                }
+                done += seg;
+                d += seg;
+            }
+            d += len - done;
+        };
+        // corner: 0 TR, 1 BR, 2 BL, 3 TL (clockwise order)
+        auto arc = [&](s32 ccx, s32 ccy, int corner) {
+            for (s32 a = 0; a < q; a += 2) {
+                if (d + a >= fill) {
+                    break;
+                }
+                float p = ((float)a + 1.0f) / (float)q * 1.5708f;
+                s32 ds = (s32)((float)rc * sinf(p) + 0.5f);
+                s32 dc = (s32)((float)rc * cosf(p) + 0.5f);
+                s32 px, py;
+                switch (corner) {
+                case 0:
+                    px = ccx + ds;
+                    py = ccy - dc;
+                    break;
+                case 1:
+                    px = ccx + dc;
+                    py = ccy + ds;
+                    break;
+                case 2:
+                    px = ccx - ds;
+                    py = ccy + dc;
+                    break;
+                default:
+                    px = ccx - dc;
+                    py = ccy - ds;
+                    break;
+                }
+                drawer->RenderCircleFill(grad(d + a), px, py, bt / 2);
+            }
+            d += q;
+        };
+        straight(hs, 0);
+        arc(rxr - rc, ty + rc, 0);
+        straight(vs, 1);
+        arc(rxr - rc, by - rc, 1);
+        straight(hs, 2);
+        arc(lx + rc, by - rc, 2);
+        straight(vs, 3);
+        arc(lx + rc, ty + rc, 3);
+    }
+
     // Card index under an absolute screen point, or -1.
     s32 HitCard(const s32 px, const s32 py) {
         s32 gx = px - this->x - Margin;
@@ -338,11 +463,14 @@ class CardGrid : public pu::ui::elm::Element {
         this->dirty = true;
     }
 
+    void SetSingle(const bool on) { this->single = on; }
+
     void Clear() {
         this->cards.clear();
         this->FreeCache();
         this->sel = 0;
         this->scroll_row = 0;
+        this->single = false;
         this->enter_alpha = 0; // next populate fades the grid in
         this->dirty = true;
         this->tch_active = false;
@@ -395,7 +523,7 @@ class CardGrid : public pu::ui::elm::Element {
         cd.prog = prog;
         cd.hero = hero;
         cd.ring = ring;
-        const s32 cw = this->CardW();
+        const s32 cw = this->single ? SingleW : this->CardW();
         const bool recolor = cd.st_clr.r != st_clr.r ||
                              cd.st_clr.g != st_clr.g ||
                              cd.st_clr.b != st_clr.b ||
@@ -505,6 +633,88 @@ class CardGrid : public pu::ui::elm::Element {
         if (this->enter_alpha < 255) {
             s32 e = this->enter_alpha + 32;
             this->enter_alpha = e > 255 ? 255 : e;
+        }
+        if (this->single) {
+            // One enlarged queue-style card, centred: the self-update
+            // download. Always drawn "lit" (hero tint + green edge + icon
+            // glow) since it is the whole screen's focus.
+            const Card &cd = this->cards[0];
+            Cell &qc = this->cache[0];
+            const s32 scw = SingleW, sch = SingleH, rad = SingleRadius;
+            const s32 cx = rx + (this->w - scw) / 2;
+            const s32 cy = ry + (this->h - sch) / 2;
+            drawer->RenderRoundedRectangleFill(this->card_bg, cx, cy, scw,
+                                               sch, rad);
+            auto hc = this->glow_clr;
+            hc.a = 30;
+            drawer->RenderRoundedRectangleFill(hc, cx, cy, scw, sch, rad);
+            for (s32 g = 1; g <= 4; g++) {
+                auto gc = this->glow_clr;
+                gc.a = (u8)(40 - g * 9);
+                drawer->RenderRoundedRectangle(gc, cx - g, cy - g,
+                                               scw + 2 * g, sch + 2 * g,
+                                               rad + g);
+            }
+            for (s32 t = 0; t < 2; t++) {
+                drawer->RenderRoundedRectangle(this->glow_clr, cx + t, cy + t,
+                                               scw - 2 * t, sch - 2 * t,
+                                               rad - t);
+            }
+            drawer->RenderRectangleFill(pu::ui::Color(255, 255, 255, 45),
+                                        cx + rad, cy, scw - 2 * rad, 1);
+            drawer->RenderRectangleFill(pu::ui::Color(0, 0, 0, 50), cx + rad,
+                                        cy + sch - 1, scw - 2 * rad, 1);
+            if (qc.t1_tex) {
+                drawer->RenderTexture(qc.t1_tex, cx + 24, cy + 22);
+            }
+            if (qc.st_tex) {
+                drawer->RenderTexture(qc.st_tex, cx + scw - 24 - qc.stw,
+                                      cy + 20);
+            }
+            if (cd.icon) {
+                const s32 isz = SingleIconPx;
+                s32 gcx = cx + scw / 2;
+                s32 gcy = cy + 24 + isz / 2;
+                for (s32 g = 0; g < 4; g++) {
+                    auto gc = this->glow_clr;
+                    gc.a = (u8)(14 + 5 * g);
+                    drawer->RenderCircleFill(gc, gcx, gcy,
+                                             isz / 2 + 2 - 6 * g);
+                }
+                pu::ui::render::TextureRenderOptions o;
+                o.width = isz;
+                o.height = isz;
+                drawer->RenderTexture(cd.icon, cx + (scw - isz) / 2, cy + 24,
+                                      o);
+            }
+            if (qc.f_tex) {
+                s32 fy = qc.f2_tex ? cy + 218 : cy + 232;
+                drawer->RenderTexture(qc.f_tex, cx + (scw - qc.fw) / 2, fy);
+                if (qc.f2_tex) {
+                    drawer->RenderTexture(qc.f2_tex,
+                                          cx + (scw - qc.f2w) / 2,
+                                          fy + qc.fh + 2);
+                }
+            }
+            if (qc.ch_tex) {
+                s32 sx = cx + (scw - qc.chw) / 2;
+                const s32 padx = 12, pady = 4;
+                drawer->RenderRoundedRectangleFill(
+                    this->pill_clr, sx - padx, cy + 292 - pady,
+                    qc.chw + 2 * padx, qc.chh + 2 * pady,
+                    (qc.chh + 2 * pady) / 2);
+                drawer->RenderTexture(qc.ch_tex, sx, cy + 292);
+            }
+            if (cd.prog >= 0.0f) {
+                this->DrawRing(drawer, cx, cy, scw, sch, rad, 5, 8, cd.prog,
+                               cd.ring);
+            }
+            if (this->enter_alpha < 255 && this->page_bg.a > 0) {
+                auto veil = this->page_bg;
+                veil.a = (u8)(255 - this->enter_alpha);
+                drawer->RenderRectangleFill(veil, rx, ry, this->w, this->h);
+            }
+            return;
         }
         // Advance the selection fade (restart when the selection moved).
         if (this->anim_sel != this->sel) {
@@ -640,129 +850,9 @@ class CardGrid : public pu::ui::elm::Element {
                         drawer->RenderTexture(qc.qp_tex, cx + 14 + padx,
                                               cy + 222);
                     }
-                    // Download/unzip progress traces the card's rounded
-                    // outline clockwise in the signature green->blue
-                    // gradient: straight runs as short gradient rects,
-                    // corners as stamped dots (no arc primitive).
                     if (cd.prog >= 0.0f) {
-                        const s32 inset = 4, bt = 6;
-                        const s32 x0 = cx + inset, y0 = cy + inset;
-                        const s32 pw = cw - 2 * inset, ph = CardH - 2 * inset;
-                        const s32 R = CardRadius - inset;
-                        const pu::ui::Color trk = this->trk_clr;
-                        for (s32 t = 0; t < bt; t++) {
-                            drawer->RenderRoundedRectangle(
-                                trk, x0 + t, y0 + t, pw - 2 * t, ph - 2 * t,
-                                R - t > 1 ? R - t : 1);
-                        }
-                        const s32 rc = R - bt / 2; // centerline corner radius
-                        const s32 lx = x0 + bt / 2, ty = y0 + bt / 2;
-                        const s32 rxr = x0 + pw - bt / 2;
-                        const s32 by = y0 + ph - bt / 2;
-                        const s32 hs = (rxr - lx) - 2 * rc;
-                        const s32 vs = (by - ty) - 2 * rc;
-                        const s32 q = (s32)(1.5708f * (float)rc + 0.5f);
-                        const s32 L = 2 * hs + 2 * vs + 4 * q;
-                        s32 fill = (s32)(cd.prog * (float)L + 0.5f);
-                        if (fill > L) {
-                            fill = L;
-                        }
-                        // Terminal states swap the live gradient for a solid
-                        // ring: green when done, red when failed.
-                        pu::ui::Color g0(146, 214, 36, 255);
-                        pu::ui::Color g1(56, 130, 225, 255);
-                        if (cd.ring == 1) {
-                            g1 = g0;
-                        } else if (cd.ring == 2) {
-                            g0 = g1 = pu::ui::Color(224, 82, 82, 255);
-                        }
-                        auto grad = [&](s32 dd) {
-                            float t = (float)dd / (float)L;
-                            return pu::ui::Color(
-                                (u8)(g0.r + ((s32)g1.r - g0.r) * t),
-                                (u8)(g0.g + ((s32)g1.g - g0.g) * t),
-                                (u8)(g0.b + ((s32)g1.b - g0.b) * t), 255);
-                        };
-                        s32 d = 0;
-                        // edge: 0 top(->right) 1 right(->down) 2 bottom(->left)
-                        // 3 left(->up)
-                        auto straight = [&](s32 len, int edge) {
-                            s32 done = 0;
-                            while (done < len && d < fill) {
-                                s32 seg = fill - d < 6 ? fill - d : 6;
-                                if (seg > len - done) {
-                                    seg = len - done;
-                                }
-                                auto c = grad(d);
-                                switch (edge) {
-                                case 0:
-                                    drawer->RenderRectangleFill(
-                                        c, lx + rc + done, ty - bt / 2, seg,
-                                        bt);
-                                    break;
-                                case 1:
-                                    drawer->RenderRectangleFill(
-                                        c, rxr - bt / 2, ty + rc + done, bt,
-                                        seg);
-                                    break;
-                                case 2:
-                                    drawer->RenderRectangleFill(
-                                        c, rxr - rc - done - seg, by - bt / 2,
-                                        seg, bt);
-                                    break;
-                                default:
-                                    drawer->RenderRectangleFill(
-                                        c, lx - bt / 2, by - rc - done - seg,
-                                        bt, seg);
-                                    break;
-                                }
-                                done += seg;
-                                d += seg;
-                            }
-                            d += len - done;
-                        };
-                        // corner: 0 TR, 1 BR, 2 BL, 3 TL (clockwise order)
-                        auto arc = [&](s32 ccx, s32 ccy, int corner) {
-                            for (s32 a = 0; a < q; a += 2) {
-                                if (d + a >= fill) {
-                                    break;
-                                }
-                                float p = ((float)a + 1.0f) / (float)q *
-                                          1.5708f;
-                                s32 ds = (s32)((float)rc * sinf(p) + 0.5f);
-                                s32 dc = (s32)((float)rc * cosf(p) + 0.5f);
-                                s32 px, py;
-                                switch (corner) {
-                                case 0:
-                                    px = ccx + ds;
-                                    py = ccy - dc;
-                                    break;
-                                case 1:
-                                    px = ccx + dc;
-                                    py = ccy + ds;
-                                    break;
-                                case 2:
-                                    px = ccx - ds;
-                                    py = ccy + dc;
-                                    break;
-                                default:
-                                    px = ccx - dc;
-                                    py = ccy - ds;
-                                    break;
-                                }
-                                drawer->RenderCircleFill(grad(d + a), px, py,
-                                                         bt / 2);
-                            }
-                            d += q;
-                        };
-                        straight(hs, 0);
-                        arc(rxr - rc, ty + rc, 0);
-                        straight(vs, 1);
-                        arc(rxr - rc, by - rc, 1);
-                        straight(hs, 2);
-                        arc(lx + rc, by - rc, 2);
-                        straight(vs, 3);
-                        arc(lx + rc, ty + rc, 3);
+                        this->DrawRing(drawer, cx, cy, cw, CardH, CardRadius,
+                                       4, 6, cd.prog, cd.ring);
                     }
                     continue;
                 }
@@ -859,8 +949,8 @@ class CardGrid : public pu::ui::elm::Element {
 
     void OnInput(const u64, const u64, const u64,
                  const pu::ui::TouchPoint tch) override {
-        if (this->cards.empty()) {
-            return;
+        if (this->cards.empty() || this->single) {
+            return; // single mode: nothing to select or scroll
         }
         if (!tch.IsEmpty()) {
             if (!this->tch_active) {

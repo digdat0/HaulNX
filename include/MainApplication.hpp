@@ -521,6 +521,8 @@ class MainLayout : public pu::ui::Layout {
                  pu::sdl2::Texture icon, bool pinned = false,
                  bool dim = false);
     // Queue card view: per-frame diff updates instead of Clear + AddCard.
+    // Single-card mode shows one enlarged centred card (self-update).
+    void SetSingleCard(bool on);
     void SetQueueCount(s32 n);
     void SetQueueCard(s32 i, const std::string &console,
                       pu::sdl2::Texture icon, const std::string &status,
