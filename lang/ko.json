@@ -51,6 +51,9 @@
   "manage_consoles": "콘솔 관리 (표시/숨기기)",
   "manage_downloads": "다운로드 폴더 관리",
   "advanced": "고급 설정",
+  "ui_settings": "인터페이스 설정",
+  "title_ui_settings": "인터페이스 설정",
+  "sub_ui_settings": "A 전환/편집  B 뒤로",
   "controls_help": "조작법 / 도움말",
   "credits": "크레딧",
   "rom_folder": "ROM 폴더: %s",
@@ -184,6 +187,8 @@
   "sub_inst_search": "A 열기  Y 새 검색  B 뒤로",
   "card_view": "카드 보기: %s",
   "sub_home_cards": "A 열기  X 고정  Y 저장소 추가  - 검색  L/R 탭  ZL/ZR 페이지",
+  "sub_home_flat_cards": "A 열기  Y 저장소 추가  X 편집  - 삭제  L/R 탭  ZL/ZR 페이지",
   "sub_installed_cards": "A 열기  X 고정  - 검색  L/R 탭  B 뒤로",
+  "sub_queue_cards": "A 취소  X 재시도  ZL/ZR 이동  Y 메뉴  - 로그  B 뒤로",
   "cant_undo": "이 작업은 되돌릴 수 없습니다."
 }

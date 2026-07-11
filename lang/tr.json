@@ -51,6 +51,9 @@
   "manage_consoles": "Konsolları yönet (göster/gizle)",
   "manage_downloads": "İndirme klasörünü yönet",
   "advanced": "Gelişmiş ayarlar",
+  "ui_settings": "Arayüz ayarları",
+  "title_ui_settings": "Arayüz ayarları",
+  "sub_ui_settings": "A değiştir/düzenle  B geri",
   "controls_help": "Kontroller / Yardım",
   "credits": "Katkıda Bulunanlar",
   "rom_folder": "ROM klasörü: %s",
@@ -184,6 +187,8 @@
   "sub_inst_search": "A aç  Y yeni arama  B geri",
   "card_view": "Kart görünümü: %s",
   "sub_home_cards": "A aç  X sabitle  Y repo ekle  - ara  L/R sekmeler  ZL/ZR sayfa",
+  "sub_home_flat_cards": "A aç  Y depo ekle  X düzenle  - sil  L/R sekmeler  ZL/ZR sayfa",
   "sub_installed_cards": "A aç  X sabitle  - ara  L/R sekmeler  B geri",
+  "sub_queue_cards": "A iptal  X tekrar dene  ZL/ZR taşı  Y menü  - günlük  B geri",
   "cant_undo": "Bu geri alınamaz."
 }

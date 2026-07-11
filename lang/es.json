@@ -51,6 +51,9 @@
   "manage_consoles": "Gestionar consolas (mostrar/ocultar)",
   "manage_downloads": "Gestionar carpeta de descargas",
   "advanced": "Configuración avanzada",
+  "ui_settings": "Ajustes de interfaz",
+  "title_ui_settings": "Ajustes de interfaz",
+  "sub_ui_settings": "A alternar/editar  B volver",
   "controls_help": "Controles / Ayuda",
   "credits": "Créditos",
   "rom_folder": "Carpeta de ROMs: %s",
@@ -184,6 +187,8 @@
   "sub_inst_search": "A abrir  Y nueva búsqueda  B atrás",
   "card_view": "Vista de tarjetas: %s",
   "sub_home_cards": "A abrir  X fijar  Y añadir repo  - buscar  L/R pestañas  ZL/ZR página",
+  "sub_home_flat_cards": "A abrir  Y añadir repo  X editar  - eliminar  L/R pestañas  ZL/ZR página",
   "sub_installed_cards": "A abrir  X fijar  - buscar  L/R pestañas  B volver",
+  "sub_queue_cards": "A cancelar  X reintentar  ZL/ZR mover  Y menú  - registro  B volver",
   "cant_undo": "Esto no se puede deshacer."
 }

@@ -51,6 +51,9 @@
   "manage_consoles": "Gérer les consoles (afficher/masquer)",
   "manage_downloads": "Gérer le dossier de téléchargements",
   "advanced": "Paramètres avancés",
+  "ui_settings": "Paramètres d'interface",
+  "title_ui_settings": "Paramètres d'interface",
+  "sub_ui_settings": "A basculer/modifier  B retour",
   "controls_help": "Contrôles / Aide",
   "credits": "Crédits",
   "rom_folder": "Dossier ROMs : %s",
@@ -184,6 +187,8 @@
   "sub_inst_search": "A ouvrir  Y nouvelle recherche  B retour",
   "card_view": "Vue cartes : %s",
   "sub_home_cards": "A ouvrir  X épingler  Y ajouter repo  - rechercher  L/R onglets  ZL/ZR page",
+  "sub_home_flat_cards": "A ouvrir  Y ajouter dépôt  X modifier  - supprimer  L/R onglets  ZL/ZR page",
   "sub_installed_cards": "A ouvrir  X épingler  - rechercher  L/R onglets  B retour",
+  "sub_queue_cards": "A annuler  X réessayer  ZL/ZR déplacer  Y menu  - journal  B retour",
   "cant_undo": "Cette action est irréversible."
 }

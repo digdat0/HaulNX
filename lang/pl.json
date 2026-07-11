@@ -51,6 +51,9 @@
   "manage_consoles": "Zarządzaj konsolami (pokaż/ukryj)",
   "manage_downloads": "Zarządzaj folderem pobierania",
   "advanced": "Ustawienia zaawansowane",
+  "ui_settings": "Ustawienia interfejsu",
+  "title_ui_settings": "Ustawienia interfejsu",
+  "sub_ui_settings": "A przełącz/edytuj  B wstecz",
   "controls_help": "Sterowanie / Pomoc",
   "credits": "Twórcy",
   "rom_folder": "Folder ROM: %s",
@@ -184,6 +187,8 @@
   "sub_inst_search": "A otwórz  Y nowe wyszukiwanie  B wstecz",
   "card_view": "Widok kart: %s",
   "sub_home_cards": "A otwórz  X przypnij  Y dodaj repo  - szukaj  L/R karty  ZL/ZR strona",
+  "sub_home_flat_cards": "A otwórz  Y dodaj repo  X edytuj  - usuń  L/R karty  ZL/ZR strona",
   "sub_installed_cards": "A otwórz  X przypnij  - szukaj  L/R karty  B wstecz",
+  "sub_queue_cards": "A anuluj  X ponów  ZL/ZR przesuń  Y menu  - dziennik  B wstecz",
   "cant_undo": "Tej operacji nie można cofnąć."
 }

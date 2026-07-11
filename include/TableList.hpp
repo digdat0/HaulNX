@@ -33,6 +33,8 @@ class TableList : public pu::ui::elm::Element {
         // Draw a subtle rounded "pill" behind the right cell (size/status/value
         // badges). Off for bare markers like a chevron.
         bool pill;
+        // Pinned item: a small logo-green dot in the row's left padding.
+        bool pin;
     };
 
   private:
@@ -238,9 +240,9 @@ class TableList : public pu::ui::elm::Element {
         this->tch_activate = false;
     }
     void AddRow(const std::string &left, const pu::ui::Color lclr,
-                pu::sdl2::Texture icon = nullptr) {
-        this->rows.push_back(
-            Row{left, "", lclr, lclr, false, -1.0f, icon, "", false, false});
+                pu::sdl2::Texture icon = nullptr, bool pin = false) {
+        this->rows.push_back(Row{left, "", lclr, lclr, false, -1.0f, icon, "",
+                                 false, false, pin});
         this->dirty = true;
     }
     void AddRow2(const std::string &left, const std::string &right,
@@ -248,9 +250,9 @@ class TableList : public pu::ui::elm::Element {
                  const float progress = -1.0f,
                  pu::sdl2::Texture icon = nullptr,
                  const std::string &prefix = "", bool accent = false,
-                 bool pill = true) {
+                 bool pill = true, bool pin = false) {
         this->rows.push_back(Row{left, right, lclr, rclr, true, progress, icon,
-                                 prefix, accent, pill});
+                                 prefix, accent, pill, pin});
         this->dirty = true;
     }
 
@@ -376,6 +378,11 @@ class TableList : public pu::ui::elm::Element {
             if (is_marked) {
                 drawer->RenderRoundedRectangleFill(this->prog_clr, rrx + 9,
                                                    rry + 9, 5, rrh - 18, 2);
+            }
+            // Pinned rows: small logo-green dot in the left padding.
+            if (this->rows[ridx].pin) {
+                drawer->RenderCircleFill(this->prog_clr, rrx + 13,
+                                         rry + rrh / 2, 4);
             }
             // Progress bar (e.g. active download): rounded track at the bottom.
             float prog = this->rows[ridx].progress;

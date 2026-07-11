@@ -51,6 +51,9 @@
   "manage_consoles": "Quản lý máy chơi game (hiện/ẩn)",
   "manage_downloads": "Quản lý thư mục tải xuống",
   "advanced": "Cài đặt nâng cao",
+  "ui_settings": "Cài đặt giao diện",
+  "title_ui_settings": "Cài đặt giao diện",
+  "sub_ui_settings": "A bật tắt/sửa  B quay lại",
   "controls_help": "Điều khiển / Trợ giúp",
   "credits": "Ghi công",
   "rom_folder": "Thư mục ROM: %s",
@@ -184,6 +187,8 @@
   "sub_inst_search": "A mở  Y tìm mới  B quay lại",
   "card_view": "Chế độ thẻ: %s",
   "sub_home_cards": "A mở  X ghim  Y thêm repo  - tìm kiếm  L/R tab  ZL/ZR trang",
+  "sub_home_flat_cards": "A mở  Y thêm kho  X sửa  - xóa  L/R tab  ZL/ZR trang",
   "sub_installed_cards": "A mở  X ghim  - tìm kiếm  L/R tab  B quay lại",
+  "sub_queue_cards": "A hủy  X thử lại  ZL/ZR di chuyển  Y menu  - nhật ký  B quay lại",
   "cant_undo": "Không thể hoàn tác."
 }

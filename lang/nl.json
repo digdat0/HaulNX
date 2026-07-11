@@ -51,6 +51,9 @@
   "manage_consoles": "Consoles beheren (tonen/verbergen)",
   "manage_downloads": "Downloadmap beheren",
   "advanced": "Geavanceerde instellingen",
+  "ui_settings": "Interface-instellingen",
+  "title_ui_settings": "Interface-instellingen",
+  "sub_ui_settings": "A schakelen/bewerken  B terug",
   "controls_help": "Bediening / Help",
   "credits": "Credits",
   "rom_folder": "ROM-map: %s",
@@ -184,6 +187,8 @@
   "sub_inst_search": "A openen  Y nieuwe zoekopdracht  B terug",
   "card_view": "Kaartweergave: %s",
   "sub_home_cards": "A openen  X vastzetten  Y repo toevoegen  - zoeken  L/R tabbladen  ZL/ZR pagina",
+  "sub_home_flat_cards": "A openen  Y repo toevoegen  X bewerken  - verwijderen  L/R tabbladen  ZL/ZR pagina",
   "sub_installed_cards": "A openen  X vastzetten  - zoeken  L/R tabbladen  B terug",
+  "sub_queue_cards": "A annuleren  X opnieuw  ZL/ZR verplaatsen  Y menu  - logboek  B terug",
   "cant_undo": "Dit kan niet ongedaan worden gemaakt."
 }

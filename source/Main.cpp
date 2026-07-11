@@ -22,6 +22,8 @@ int main(int argc, char **argv) {
     // before shared fonts, hence the aggressive subsetting).
     opts.AddDefaultFontPath("romfs:/fonts/viet-fallback.ttf");
     opts.AddDefaultAllSharedFonts();
+    // Tiny size for the queue cards' chip/filename (defaults start at 27).
+    opts.AddExtraDefaultFontSize(21);
 
     opts.SetInputPlayerCount(1);
     opts.AddInputNpadStyleTag(HidNpadStyleSet_NpadStandard);

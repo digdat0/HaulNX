@@ -51,6 +51,9 @@
   "manage_consoles": "管理主機（顯示/隱藏）",
   "manage_downloads": "管理下載資料夾",
   "advanced": "進階設定",
+  "ui_settings": "介面設定",
+  "title_ui_settings": "介面設定",
+  "sub_ui_settings": "A 切換/編輯  B 返回",
   "controls_help": "操作說明 / 說明",
   "credits": "致謝",
   "rom_folder": "ROM 資料夾：%s",
@@ -184,6 +187,8 @@
   "sub_inst_search": "A 開啟  Y 新搜尋  B 返回",
   "card_view": "卡片檢視: %s",
   "sub_home_cards": "A 開啟  X 置頂  Y 新增倉庫  - 搜尋  L/R 分頁  ZL/ZR 翻頁",
+  "sub_home_flat_cards": "A 開啟  Y 新增儲存庫  X 編輯  - 刪除  L/R 分頁  ZL/ZR 翻頁",
   "sub_installed_cards": "A 開啟  X 置頂  - 搜尋  L/R 分頁  B 返回",
+  "sub_queue_cards": "A 取消  X 重試  ZL/ZR 移動  Y 選單  - 記錄  B 返回",
   "cant_undo": "此操作無法復原。"
 }

@@ -51,6 +51,9 @@
   "manage_consoles": "Hallitse konsoleita (näytä/piilota)",
   "manage_downloads": "Hallitse latauskansiota",
   "advanced": "Lisäasetukset",
+  "ui_settings": "Käyttöliittymän asetukset",
+  "title_ui_settings": "Käyttöliittymän asetukset",
+  "sub_ui_settings": "A vaihda/muokkaa  B takaisin",
   "controls_help": "Ohjaimet / Ohje",
   "credits": "Tekijät",
   "rom_folder": "ROM-kansio: %s",
@@ -184,6 +187,8 @@
   "sub_inst_search": "A avaa  Y uusi haku  B takaisin",
   "card_view": "Korttinäkymä: %s",
   "sub_home_cards": "A avaa  X kiinnitä  Y lisää repo  - hae  L/R välilehdet  ZL/ZR sivu",
+  "sub_home_flat_cards": "A avaa  Y lisää repo  X muokkaa  - poista  L/R välilehdet  ZL/ZR sivu",
   "sub_installed_cards": "A avaa  X kiinnitä  - hae  L/R välilehdet  B takaisin",
+  "sub_queue_cards": "A peruuta  X yritä uudelleen  ZL/ZR siirrä  Y valikko  - loki  B takaisin",
   "cant_undo": "Tätä ei voi kumota."
 }

@@ -51,6 +51,9 @@
   "manage_consoles": "Kelola konsol (tampil/sembunyikan)",
   "manage_downloads": "Kelola folder unduhan",
   "advanced": "Pengaturan lanjutan",
+  "ui_settings": "Pengaturan antarmuka",
+  "title_ui_settings": "Pengaturan antarmuka",
+  "sub_ui_settings": "A alihkan/edit  B kembali",
   "controls_help": "Kontrol / Bantuan",
   "credits": "Kredit",
   "rom_folder": "Folder ROM: %s",
@@ -184,6 +187,8 @@
   "sub_inst_search": "A buka  Y pencarian baru  B kembali",
   "card_view": "Tampilan kartu: %s",
   "sub_home_cards": "A buka  X sematkan  Y tambah repo  - cari  L/R tab  ZL/ZR halaman",
+  "sub_home_flat_cards": "A buka  Y tambah repo  X edit  - hapus  L/R tab  ZL/ZR halaman",
   "sub_installed_cards": "A buka  X sematkan  - cari  L/R tab  B kembali",
+  "sub_queue_cards": "A batal  X coba lagi  ZL/ZR pindah  Y menu  - log  B kembali",
   "cant_undo": "Ini tidak dapat dibatalkan."
 }

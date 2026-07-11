@@ -51,6 +51,9 @@
   "manage_consoles": "Gestisci console (mostra/nascondi)",
   "manage_downloads": "Gestisci cartella download",
   "advanced": "Impostazioni avanzate",
+  "ui_settings": "Impostazioni interfaccia",
+  "title_ui_settings": "Impostazioni interfaccia",
+  "sub_ui_settings": "A attiva/modifica  B indietro",
   "controls_help": "Controlli / Aiuto",
   "credits": "Crediti",
   "rom_folder": "Cartella ROM: %s",
@@ -184,6 +187,8 @@
   "sub_inst_search": "A apri  Y nuova ricerca  B indietro",
   "card_view": "Vista a schede: %s",
   "sub_home_cards": "A apri  X fissa  Y aggiungi repo  - cerca  L/R schede  ZL/ZR pagina",
+  "sub_home_flat_cards": "A apri  Y aggiungi repo  X modifica  - elimina  L/R schede  ZL/ZR pagina",
   "sub_installed_cards": "A apri  X fissa  - cerca  L/R schede  B indietro",
+  "sub_queue_cards": "A annulla  X riprova  ZL/ZR sposta  Y menu  - registro  B indietro",
   "cant_undo": "L'azione non può essere annullata."
 }

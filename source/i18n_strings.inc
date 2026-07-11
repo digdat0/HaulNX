@@ -78,7 +78,7 @@ static const char *const g_en[S__COUNT] = {
     /* S_DL_ACTIVE_WARN */ "\n\n%d download(s) are active and will be cancelled.",
     /* S_DL_QUEUE_WARN */ "\n\nSome are in the download queue and will be cancelled.",
     /* S_DL_CLEARED */ "Downloads cleared",
-    /* S_TITLE_INSTALLED */ "Installed",
+    /* S_TITLE_INSTALLED */ "Installed roms",
     /* S_SUB_INSTALLED */ "A open  Y select  X rename  ◀ menu  ▶ pin  - delete  L/R tabs  B back",
     /* S_DIR_PREFIX */ "[DIR] ",
     /* S_DELETE_SELECTED */ "Delete %d selected item(s)?",
@@ -187,7 +187,9 @@ static const char *const g_en[S__COUNT] = {
     /* S_SUB_INST_SEARCH */ "A open  Y new search  B back",
     /* S_CARD_VIEW */ "Card view: %s",
     /* S_SUB_HOME_CARDS */ "A open  X pin  Y add repo  - search  L/R tabs  ZL/ZR page",
+    /* S_SUB_HOME_FLAT_CARDS */ "A open  X edit  Y add repo  - delete  L/R tabs  ZL/ZR page",
     /* S_SUB_INSTALLED_CARDS */ "A open  X pin  - search  L/R tabs  B back",
+    /* S_SUB_QUEUE_CARDS */ "A cancel  X retry  ZL/ZR move  Y menu  - log  B back",
     /* S_CANT_UNDO */ "This can't be undone.",
 };
 
@@ -377,6 +379,8 @@ static const char *const g_key_names[S__COUNT] = {
     [S_SUB_INST_SEARCH] = "sub_inst_search",
     [S_CARD_VIEW] = "card_view",
     [S_SUB_HOME_CARDS] = "sub_home_cards",
+    [S_SUB_HOME_FLAT_CARDS] = "sub_home_flat_cards",
     [S_SUB_INSTALLED_CARDS] = "sub_installed_cards",
+    [S_SUB_QUEUE_CARDS] = "sub_queue_cards",
     [S_CANT_UNDO] = "cant_undo",
 };

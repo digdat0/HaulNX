@@ -51,6 +51,9 @@
   "manage_consoles": "Administrer konsoller (vis/skjul)",
   "manage_downloads": "Administrer downloadmappe",
   "advanced": "Avancerede indstillinger",
+  "ui_settings": "Grænsefladeindstillinger",
+  "title_ui_settings": "Grænsefladeindstillinger",
+  "sub_ui_settings": "A skift/rediger  B tilbage",
   "controls_help": "Kontroller / Hjælp",
   "credits": "Tak til",
   "rom_folder": "ROM-mappe: %s",
@@ -184,6 +187,8 @@
   "sub_inst_search": "A åbn  Y ny søgning  B tilbage",
   "card_view": "Kortvisning: %s",
   "sub_home_cards": "A åbn  X fastgør  Y tilføj repo  - søg  L/R faner  ZL/ZR side",
+  "sub_home_flat_cards": "A åbn  Y tilføj repo  X rediger  - slet  L/R faner  ZL/ZR side",
   "sub_installed_cards": "A åbn  X fastgør  - søg  L/R faner  B tilbage",
+  "sub_queue_cards": "A annuller  X prøv igen  ZL/ZR flyt  Y menu  - log  B tilbage",
   "cant_undo": "Dette kan ikke fortrydes."
 }

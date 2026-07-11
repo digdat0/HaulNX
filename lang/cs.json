@@ -51,6 +51,9 @@
   "manage_consoles": "Spravovat konzole (zobrazit/skrýt)",
   "manage_downloads": "Spravovat složku stahování",
   "advanced": "Pokročilá nastavení",
+  "ui_settings": "Nastavení rozhraní",
+  "title_ui_settings": "Nastavení rozhraní",
+  "sub_ui_settings": "A přepnout/upravit  B zpět",
   "controls_help": "Ovládání / Nápověda",
   "credits": "Autoři",
   "rom_folder": "Složka ROM: %s",
@@ -184,6 +187,8 @@
   "sub_inst_search": "A otevřít  Y nové hledání  B zpět",
   "card_view": "Zobrazení karet: %s",
   "sub_home_cards": "A otevřít  X připnout  Y přidat repo  - hledat  L/R karty  ZL/ZR stránka",
+  "sub_home_flat_cards": "A otevřít  Y přidat repo  X upravit  - smazat  L/R karty  ZL/ZR stránka",
   "sub_installed_cards": "A otevřít  X připnout  - hledat  L/R karty  B zpět",
+  "sub_queue_cards": "A zrušit  X opakovat  ZL/ZR přesunout  Y nabídka  - protokol  B zpět",
   "cant_undo": "Tuto akci nelze vrátit zpět."
 }

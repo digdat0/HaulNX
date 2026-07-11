@@ -83,7 +83,7 @@
   "dl_queue_warn": "\n\nSome are in the download queue and will be cancelled.",
   "dl_cleared": "Downloads cleared",
 
-  "title_installed": "Installed",
+  "title_installed": "Installed roms",
   "sub_installed": "A open  Y select  X rename  ◀ menu  ▶ pin  - delete  L/R tabs  B back",
   "dir_prefix": "[DIR] ",
   "delete_selected": "Delete %d selected item(s)?",
@@ -213,6 +213,8 @@
   "sub_inst_search": "A open  Y new search  B back",
   "card_view": "Card view: %s",
   "sub_home_cards": "A open  X pin  Y add repo  - search  L/R tabs  ZL/ZR page",
+  "sub_home_flat_cards": "A open  X edit  Y add repo  - delete  L/R tabs  ZL/ZR page",
   "sub_installed_cards": "A open  X pin  - search  L/R tabs  B back",
+  "sub_queue_cards": "A cancel  X retry  ZL/ZR move  Y menu  - log  B back",
   "cant_undo": "This can't be undone."
 }

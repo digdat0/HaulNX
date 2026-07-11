@@ -89,7 +89,7 @@ static const AppTheme g_theme_dark = {
     {168,176,188,255},    {14,16,18,255},      {146,214,36,255},
     {192,199,210,255},    {150,160,185,255},   {232,234,240,255},
     {26,28,34,255},       {255,255,255,255},   {205,212,222,255},
-    {255,255,255,255},    {42,46,56,255},
+    {255,255,255,255},    {54,86,20,255},
     {22,23,27,255},       {28,30,36,255},      {40,44,53,255},
     {80,86,100,255},      {42,56,30,255},
 };
@@ -102,7 +102,7 @@ static const AppTheme g_theme_light = {
     {150,158,172,255},    {14,16,18,255},      {146,214,36,255},
     {185,192,204,255},    {90,100,120,255},    {0,0,0,255},
     {222,225,231,255},    {30,30,40,255},      {50,60,80,255},
-    {30,30,40,255},       {46,50,60,255},
+    {30,30,40,255},       {213,231,186,255},
     {225,228,234,255},    {215,218,224,255},   {206,211,220,255},
     {160,168,185,255},    {214,226,196,255},
 };
@@ -128,7 +128,10 @@ static void load_console_icons() {
     static const char *keys[] = {
         "nes", "snes", "n64", "gb", "gbc", "gba", "gc", "wii", "genesis",
         "master-system", "game-gear", "sega-cd", "saturn", "dc", "atomiswave",
-        "naomi", "psx", "psp", "default"};
+        "naomi", "psx", "psp", "default",
+        // settings-screen card icons (same cache, "set-" prefixed keys)
+        "set-updates", "set-ui", "set-advanced", "set-logs", "set-data",
+        "set-credits"};
     for (const char *k : keys) {
         auto tex = pu::ui::render::LoadImageFromFile(std::string("romfs:/icons/") +
                                                      k + ".png");
@@ -193,6 +196,8 @@ static pu::ui::Color size_color(uint64_t b) {
     return light ? pu::ui::Color(40, 120, 200, 255)
                  : pu::ui::Color(150, 205, 255, 255);
 }
+
+static pu::ui::Color onoff_color(bool on); // defined with the settings helpers
 
 static pu::ui::Color count_color() {
     return is_light_theme() ? pu::ui::Color(50, 120, 135, 255)
@@ -769,6 +774,16 @@ MainLayout::MainLayout() : Layout::Layout() {
     this->title = pu::ui::elm::TextBlock::New(wx + 24, 24, " ");
     this->title->SetColor(g_theme->title_clr);
     this->Add(this->title);
+    for (int i = 0; i < 2; i++) {
+        auto sp = pu::ui::elm::TextBlock::New(-100, 24, " ");
+        sp->SetColor(pu::ui::Color(146, 214, 36, 255));
+        this->Add(sp);
+        this->bc_seps.push_back(sp);
+        auto pt = pu::ui::elm::TextBlock::New(-100, 24, " ");
+        pt->SetColor(g_theme->title_clr);
+        this->Add(pt);
+        this->bc_parts.push_back(pt);
+    }
 
     // Console icon shown after the title breadcrumb (hidden unless set).
     this->title_icon = IconElement::New(0, 20, 46);
@@ -778,9 +793,11 @@ MainLayout::MainLayout() : Layout::Layout() {
     this->status->SetColor(g_theme->status_clr);
     this->Add(this->status);
 
-    this->net_icon = pu::ui::elm::TextBlock::New(sw - 440, 30, "●");
-    this->net_icon->SetColor(pu::ui::Color(100, 100, 100, 255));
-    this->Add(this->net_icon);
+    this->net_bars = NetBarsElement::New(sw - 440, 32);
+    this->Add(this->net_bars);
+
+    this->bat_icon = BatteryElement::New(sw - 140, 36);
+    this->Add(this->bat_icon);
 
     this->bat_info = pu::ui::elm::TextBlock::New(sw - 100, 30, "");
     this->bat_info->SetColor(g_theme->status_clr);
@@ -851,8 +868,8 @@ MainLayout::MainLayout() : Layout::Layout() {
                                                g_theme->footer_bg);
     this->Add(this->footer);
     for (int i = 0; i < 8; i++) {
-        auto seg = pu::ui::elm::TextBlock::New(0, sh - footer_h + 14, "");
-        seg->SetColor(g_theme->footer_clr);
+        auto seg = FooterHintElement::New(0, sh - footer_h, footer_h);
+        seg->SetLabelColor(g_theme->footer_clr);
         this->Add(seg);
         this->footer_segs.push_back(seg);
     }
@@ -872,6 +889,8 @@ void MainLayout::ApplyTheme() {
     this->tab_bar->SetColor(g_theme->tab_bar_bg);
     this->footer->SetColor(g_theme->footer_bg);
     this->title->SetColor(g_theme->title_clr);
+    for (auto &p : this->bc_parts)
+        p->SetColor(g_theme->title_clr);
     this->status->SetColor(g_theme->status_clr);
     this->bat_info->SetColor(g_theme->status_clr);
     this->rom_info->SetColor(g_theme->rom_info_clr);
@@ -880,7 +899,7 @@ void MainLayout::ApplyTheme() {
     this->empty_text->SetColor(g_theme->rom_info_clr);
     this->spinner->SetColors(accent_green(), g_theme->rom_info_clr);
     for (auto &s : this->footer_segs)
-        s->SetColor(g_theme->footer_clr);
+        s->SetLabelColor(g_theme->footer_clr);
     for (auto &t : this->tabs)
         t->SetColor(g_theme->tab_clr);
     // Activity = logo green: progress bars and the active-download hero tint.
@@ -944,48 +963,108 @@ void MainLayout::RefreshTabs() {
 }
 
 void MainLayout::SetTitle(const std::string &t) {
-    // The wordmark blocks stay put; this is only the per-screen breadcrumb.
+    // The wordmark blocks stay put; the breadcrumb is split on " > " so the
+    // separators can render as green chevrons between the segments.
+    std::vector<std::string> parts;
+    size_t pos = 0;
+    for (;;) {
+        if (parts.size() == 2) { // last slot: keep any remaining tail intact
+            parts.push_back(t.substr(pos));
+            break;
+        }
+        size_t sep = t.find(" > ", pos);
+        if (sep == std::string::npos) {
+            parts.push_back(t.substr(pos));
+            break;
+        }
+        parts.push_back(t.substr(pos, sep - pos));
+        pos = sep + 3;
+    }
     // (Space, not empty: TextBlock re-renders its texture on every SetText.)
-    this->title->SetText(t.empty() ? std::string(" ") : t);
+    this->title->SetText(parts[0].empty() ? std::string(" ") : parts[0]);
+    s32 x = this->title->GetX() + this->title->GetWidth();
+    for (size_t i = 0; i < this->bc_seps.size(); i++) {
+        bool has = (i + 1) < parts.size();
+        this->bc_seps[i]->SetText(has ? "›" : " ");
+        this->bc_parts[i]->SetText(has && !parts[i + 1].empty() ? parts[i + 1]
+                                                                : " ");
+        if (has) {
+            this->bc_seps[i]->SetX(x + 14);
+            x += 14 + this->bc_seps[i]->GetWidth() + 14;
+            this->bc_parts[i]->SetX(x);
+            x += this->bc_parts[i]->GetWidth();
+        } else {
+            this->bc_seps[i]->SetX(-100);
+            this->bc_parts[i]->SetX(-100);
+        }
+    }
+    this->bc_end_x = x;
     // Default: no console icon (screens with one call SetTitleIcon after this).
     this->title_icon->SetTexture(nullptr);
 }
 void MainLayout::SetTitleIcon(pu::sdl2::Texture tex) {
     this->title_icon->SetTexture(tex);
-    // Place it just after the title text, vertically aligned with it.
-    this->title_icon->SetPos(this->title->GetX() + this->title->GetWidth() + 16,
-                             20);
+    if (!tex) {
+        return;
+    }
+    // The icon leads the breadcrumb: place it at the breadcrumb start and
+    // shift the text segments right to make room. (SetTitle always runs
+    // first and resets the positions, so the shift applies exactly once.)
+    const s32 d = 46 + 14;
+    this->title_icon->SetPos(this->title->GetX(), 20);
+    this->title->SetX(this->title->GetX() + d);
+    for (auto &s : this->bc_seps) {
+        if (s->GetX() != -100) {
+            s->SetX(s->GetX() + d);
+        }
+    }
+    for (auto &p : this->bc_parts) {
+        if (p->GetX() != -100) {
+            p->SetX(p->GetX() + d);
+        }
+    }
+    this->bc_end_x += d;
 }
-void MainLayout::SetRomInfo(const std::string &t) { this->rom_info->SetText(t); }
+void MainLayout::SetRomInfo(const std::string &t) {
+    // Skip when unchanged: the queue card view calls this every frame, and
+    // TextBlock::SetText re-renders its texture unconditionally.
+    if (this->rom_info->GetText() != t) {
+        this->rom_info->SetText(t);
+    }
+}
 static void layout_status_bar(pu::ui::elm::TextBlock::Ref &storage,
-                              pu::ui::elm::TextBlock::Ref &net,
+                              NetBarsElement::Ref &net,
+                              BatteryElement::Ref &bat_ic,
                               pu::ui::elm::TextBlock::Ref &bat) {
-    // Right-aligned, left-to-right: network | storage | battery.
+    // Right-aligned, left-to-right: network | storage | battery icon + %.
     const s32 margin = 30, gap = 12;
     s32 sw = (s32)pu::ui::render::ScreenWidth;
     s32 bw = bat->GetWidth();
     bat->SetX(sw - margin - bw);
+    // Sit the drawn icons on the digits' baseline: the text block height
+    // includes the font descender (~1/5 line), which digits never reach.
+    s32 base = bat->GetY() + bat->GetHeight() - bat->GetHeight() / 5;
+    bat_ic->SetPos(bat->GetX() - 8 - bat_ic->GetWidth(),
+                   base - bat_ic->GetHeight());
     s32 stw = storage->GetWidth();
-    storage->SetX(bat->GetX() - gap - stw);
-    s32 nw = net->GetWidth();
-    net->SetX(storage->GetX() - gap - nw);
+    storage->SetX(bat_ic->GetX() - gap - stw);
+    net->SetPos(storage->GetX() - gap - net->GetWidth(),
+                base - net->GetHeight());
 }
 
 void MainLayout::SetStatus(const std::string &t) {
     this->status->SetText(t);
-    layout_status_bar(this->status, this->net_icon, this->bat_info);
+    layout_status_bar(this->status, this->net_bars, this->bat_icon,
+                      this->bat_info);
 }
-void MainLayout::SetNetColor(pu::ui::Color c) {
-    this->net_icon->SetColor(c);
-}
-void MainLayout::SetNetIcon(const std::string &text, pu::ui::Color c) {
-    this->net_icon->SetText(text);
-    this->net_icon->SetColor(c);
-    layout_status_bar(this->status, this->net_icon, this->bat_info);
+void MainLayout::SetNetLevel(int lit) { this->net_bars->SetLevel(lit); }
+void MainLayout::SetBattery(int pct, bool charging) {
+    this->bat_icon->Set(pct, charging);
 }
 void MainLayout::SetBatInfo(const std::string &t) {
     this->bat_info->SetText(t);
-    layout_status_bar(this->status, this->net_icon, this->bat_info);
+    layout_status_bar(this->status, this->net_bars, this->bat_icon,
+                      this->bat_info);
 }
 void MainLayout::SetSubtitle(const std::string &t) {
     // Split the hint on runs of 2+ spaces into segments, then center each
@@ -1017,10 +1096,10 @@ void MainLayout::SetSubtitle(const std::string &t) {
     int n = (int)segs.size();
     for (int k = 0; k < (int)this->footer_segs.size(); k++) {
         if (k < n) {
-            this->footer_segs[k]->SetText(segs[k]);
+            this->footer_segs[k]->SetHint(segs[k]);
             s32 cell = (sw - 2 * margin) / (n > 0 ? n : 1);
             s32 center = margin + cell * k + cell / 2;
-            s32 w = this->footer_segs[k]->GetWidth();
+            s32 w = this->footer_segs[k]->Width();
             s32 x = center - w / 2;
             // A segment wider than its cell must not overlap its neighbour:
             // push it right past the previous segment, and clamp to the
@@ -1037,7 +1116,7 @@ void MainLayout::SetSubtitle(const std::string &t) {
             this->footer_segs[k]->SetX(x);
             prev_right = x + w;
         } else {
-            this->footer_segs[k]->SetText("");
+            this->footer_segs[k]->SetHint("");
         }
     }
 }
@@ -1050,11 +1129,13 @@ void MainLayout::ClearMenu() {
     this->HideSpinner();
 }
 void MainLayout::SetEmptyState(pu::sdl2::Texture icon, const std::string &msg) {
-    this->empty_icon->SetTexture(icon);
-    this->empty_text->SetText(msg);
-    // Centre the message under the icon.
-    this->empty_text->SetX((s32)pu::ui::render::ScreenWidth / 2 -
-                           this->empty_text->GetWidth() / 2);
+    this->empty_icon->SetTexture(icon); // pointer store, cheap every frame
+    if (this->empty_text->GetText() != msg) {
+        this->empty_text->SetText(msg);
+        // Centre the message under the icon.
+        this->empty_text->SetX((s32)pu::ui::render::ScreenWidth / 2 -
+                               this->empty_text->GetWidth() / 2);
+    }
 }
 void MainLayout::ClearEmptyState() {
     this->empty_icon->SetTexture(nullptr);
@@ -1066,23 +1147,33 @@ void MainLayout::ShowSpinner(const std::string &msg) {
 void MainLayout::HideSpinner() { this->spinner->Hide(); }
 void MainLayout::SetCardsMode(bool on) { this->cards_mode = on; }
 void MainLayout::AddCard(const std::string &title, const std::string &subtitle,
-                         pu::sdl2::Texture icon) {
-    this->grid->AddCard(title, subtitle, icon);
+                         pu::sdl2::Texture icon, bool pinned) {
+    this->grid->AddCard(title, subtitle, icon, pinned);
+}
+void MainLayout::SetQueueCount(s32 n) { this->grid->SetQueueCount(n); }
+void MainLayout::SetQueueCard(s32 i, const std::string &console,
+                              pu::sdl2::Texture icon,
+                              const std::string &status, pu::ui::Color st_clr,
+                              const std::string &size, const std::string &speed,
+                              const std::string &eta, const std::string &file,
+                              float prog, bool hero) {
+    this->grid->SetQueueCard(i, console, icon, status, st_clr, size, speed,
+                             eta, file, prog, hero);
 }
 void MainLayout::CardMove(s32 dx, s32 dy) { this->grid->Move(dx, dy); }
 void MainLayout::AddRow(const std::string &name) {
     this->AddRow(name, g_theme->row_text);
 }
 void MainLayout::AddRow(const std::string &name, pu::ui::Color clr,
-                        pu::sdl2::Texture icon) {
-    this->list->AddRow(name, clr, icon);
+                        pu::sdl2::Texture icon, bool pin) {
+    this->list->AddRow(name, clr, icon, pin);
 }
 void MainLayout::AddRow2(const std::string &left, const std::string &right,
                          pu::ui::Color lclr, pu::ui::Color rclr, float progress,
                          pu::sdl2::Texture icon, const std::string &prefix,
-                         bool accent, bool pill) {
+                         bool accent, bool pill, bool pin) {
     this->list->AddRow2(left, right, lclr, rclr, progress, icon, prefix, accent,
-                        pill);
+                        pill, pin);
 }
 s32 MainLayout::Sel() {
     return this->cards_mode ? this->grid->GetSelected()
@@ -1175,13 +1266,14 @@ void MainApplication::RefreshStatus() {
         std::string tu = st.substr(st.rfind(' '));
         if (fu == tu) sf = sf.substr(0, sf.rfind(' '));
     }
-    const char *plug = (charger != PsmChargerType_Unconnected) ? "+" : "";
     char s[80];
     snprintf(s, sizeof(s), "%s/%s", sf.c_str(), st.c_str());
     this->layout->SetStatus(s);
     char bs[32];
-    snprintf(bs, sizeof(bs), "%u%%%s", (unsigned)bat, plug);
+    snprintf(bs, sizeof(bs), "%u%%", (unsigned)bat);
     this->layout->SetBatInfo(bs);
+    this->layout->SetBattery((int)bat,
+                             charger != PsmChargerType_Unconnected);
 
     NifmInternetConnectionType ntype = (NifmInternetConnectionType)0;
     u32 wstr = 0;
@@ -1190,14 +1282,13 @@ void MainApplication::RefreshStatus() {
                nst == NifmInternetConnectionStatus_Connected;
     g_net_ok = net;
     if (net) {
-        const char *bars[] = {"▂__", "▂▄_", "▂▄▆", "▂▄█"};
         // Wired (LAN adapter) reports wireless strength 0; show full bars.
         int lvl = (ntype == NifmInternetConnectionType_Ethernet) ? 3
                   : (wstr > 3)                                   ? 3
                                                                  : (int)wstr;
-        this->layout->SetNetIcon(bars[lvl], pu::ui::Color(146, 214, 36, 255));
+        this->layout->SetNetLevel(lvl + 1); // wstr 0 still means "connected"
     } else {
-        this->layout->SetNetIcon("───", pu::ui::Color(200, 60, 60, 255));
+        this->layout->SetNetLevel(-1);
     }
 }
 
@@ -1254,19 +1345,17 @@ void MainApplication::GotoHome() {
             } else {
                 snprintf(cnt, sizeof(cnt), "%s", rc_str);
             }
-            std::string display = row.pinned
-                ? std::string("★ ") + row.label : row.label;
             if (cards) {
                 // Card: full name as the (wrappable) title; counts beneath.
                 const char *cname = g_cfg.consoles[row.idx].console;
                 const char *full = console_full_name(cname);
-                std::string title = (row.pinned ? "★ " : "") +
-                                    std::string(full ? full : cname);
-                this->layout->AddCard(title, cnt, console_icon(cname));
+                this->layout->AddCard(full ? full : cname, cnt,
+                                      console_icon(cname), row.pinned);
             } else {
                 this->layout->AddRow2(
-                    display, cnt, g_theme->row_text, count_color(), -1.0f,
-                    console_icon(g_cfg.consoles[row.idx].console));
+                    row.label, cnt, g_theme->row_text, count_color(), -1.0f,
+                    console_icon(g_cfg.consoles[row.idx].console), "", false,
+                    true, row.pinned);
             }
             g_home_map.push_back(row.idx);
         }
@@ -1277,28 +1366,54 @@ void MainApplication::GotoHome() {
             this->layout->SetCardsMode(true);
         }
     } else {
+        bool cards = g_prefs.card_view;
         this->layout->SetTitle(tr(S_TITLE_REPOS));
-        this->layout->SetSubtitle(tr(S_SUB_HOME_FLAT));
-        struct FlatRow { std::string label; std::string key; bool pinned; };
+        this->layout->SetSubtitle(cards ? tr(S_SUB_HOME_FLAT_CARDS)
+                                        : tr(S_SUB_HOME_FLAT));
+        struct FlatRow {
+            std::string cname; // full console name
+            std::string repo;  // repo label
+            std::string key;
+            bool pinned;
+            bool enabled;
+        };
         std::vector<FlatRow> flat_rows;
         for (int c = 0; c < g_cfg.console_count; c++) {
             if (!g_cfg.consoles[c].shown) continue;
             for (int r = 0; r < g_cfg.consoles[c].repo_count; r++) {
                 Repo *rp = &g_cfg.consoles[c].repos[r];
-                char row[180];
-                snprintf(row, sizeof(row), "%s[%s] %s - %s",
-                         rp->pinned ? "★ " : "",
-                         rp->enabled ? tr(S_ON) : tr(S_OFF),
-                         g_cfg.consoles[c].target, rp->label);
-                flat_rows.push_back({row, g_cfg.consoles[c].console, rp->pinned});
+                const char *cname = g_cfg.consoles[c].console;
+                const char *full = console_full_name(cname);
+                flat_rows.push_back({full ? full : cname, rp->label, cname,
+                                     rp->pinned, rp->enabled != 0});
             }
         }
-        for (const auto &fr : flat_rows)
-            this->layout->AddRow(fr.label, g_theme->row_text,
-                                 console_icon(fr.key.c_str()));
+        for (const auto &fr : flat_rows) {
+            if (cards) {
+                // One card per repo: console name as title, repo beneath
+                // (with the off state noted, since there is no chip here).
+                std::string sub = fr.enabled
+                                      ? fr.repo
+                                      : fr.repo + " · " + tr(S_OFF);
+                this->layout->AddCard(fr.cname, sub,
+                                      console_icon(fr.key.c_str()),
+                                      fr.pinned);
+            } else {
+                // "Full Console Name › repo label", matching the breadcrumb;
+                // the on/off state moves to a right-hand chip.
+                this->layout->AddRow2(fr.cname + " › " + fr.repo,
+                                      fr.enabled ? tr(S_ON) : tr(S_OFF),
+                                      g_theme->row_text,
+                                      onoff_color(fr.enabled), -1.0f,
+                                      console_icon(fr.key.c_str()), "", false,
+                                      true, fr.pinned);
+            }
+        }
         if (flat_count() == 0) {
             this->layout->SetEmptyState(console_icon("default"),
                                         tr(S_NO_REPOS));
+        } else if (cards) {
+            this->layout->SetCardsMode(true);
         }
     }
     this->layout->SetSel(this->home_sel); // restore place
@@ -1315,12 +1430,13 @@ void MainApplication::GotoRepos(int ci) {
     this->layout->SetSubtitle(tr(S_SUB_REPOS));
     this->layout->ClearMenu();
     for (int i = 0; i < g->repo_count; i++) {
-        char row[180];
-        snprintf(row, sizeof(row), "%s[%s] %s",
-                 g->repos[i].pinned ? "★ " : "",
-                 g->repos[i].enabled ? tr(S_ON) : tr(S_OFF),
-                 g->repos[i].label);
-        this->layout->AddRow(row);
+        // On/off state as a coloured right-hand chip, matching the flat
+        // Browse rows (the console is already in the title, so no icon).
+        this->layout->AddRow2(g->repos[i].label,
+                              g->repos[i].enabled ? tr(S_ON) : tr(S_OFF),
+                              g_theme->row_text,
+                              onoff_color(g->repos[i].enabled), -1.0f,
+                              nullptr, "", false, true, g->repos[i].pinned);
     }
     if (g->repo_count == 0) {
         this->layout->AddRow(tr(S_NO_REPOS));
@@ -1386,7 +1502,8 @@ void MainApplication::SwitchTab(int dir) {
 void MainApplication::GotoQueue() {
     this->screen = Screen::Queue;
     this->layout->SetTitle(tr(S_TITLE_QUEUE));
-    this->layout->SetSubtitle(tr(S_SUB_QUEUE));
+    this->layout->SetSubtitle(
+        tr(g_prefs.card_view ? S_SUB_QUEUE_CARDS : S_SUB_QUEUE));
     this->layout->ClearMenu();
 }
 
@@ -1475,20 +1592,29 @@ void MainApplication::GotoSettings() {
     this->layout->SetTitle(std::string(tr(S_TITLE_SETTINGS)) + "   (v" + APP_VERSION_STR + ")");
     this->layout->SetSubtitle(tr(S_SUB_SETTINGS));
     this->layout->ClearMenu();
-    pu::ui::Color lbl = g_theme->row_text;
-    pu::ui::Color chv = chevron_color();
-    this->layout->AddRow2(tr(S_CHECK_UPDATES), CHEVRON, lbl, chv, -1.0f,
-                          nullptr, "", false, false);                          // 0
-    this->layout->AddRow2(tr(S_UI_SETTINGS), CHEVRON, lbl, chv, -1.0f, nullptr,
-                          "", false, false);                                  // 1
-    this->layout->AddRow2(tr(S_ADVANCED), CHEVRON, lbl, chv, -1.0f, nullptr,
-                          "", false, false);                                  // 2
-    this->layout->AddRow2(tr(S_VIEW_LOGS), CHEVRON, lbl, chv, -1.0f, nullptr,
-                          "", false, false);                                  // 3
-    this->layout->AddRow2(tr(S_MANAGE_DATA), CHEVRON, lbl, chv, -1.0f, nullptr,
-                          "", false, false);                                  // 4
-    this->layout->AddRow2(tr(S_CREDITS), CHEVRON, lbl, chv, -1.0f, nullptr, "",
-                          false, false);                                       // 5
+    // Row order here is the contract for the A-press switch in OnInput; the
+    // card grid indexes the same way, so both views share it.
+    static const struct { int str; const char *icon; } kEntries[] = {
+        {S_CHECK_UPDATES, "set-updates"}, // 0
+        {S_UI_SETTINGS, "set-ui"},        // 1
+        {S_ADVANCED, "set-advanced"},     // 2
+        {S_VIEW_LOGS, "set-logs"},        // 3
+        {S_MANAGE_DATA, "set-data"},      // 4
+        {S_CREDITS, "set-credits"},       // 5
+    };
+    if (g_prefs.card_view) {
+        for (const auto &e : kEntries) {
+            this->layout->AddCard(tr(e.str), "", console_icon(e.icon), false);
+        }
+        this->layout->SetCardsMode(true);
+    } else {
+        pu::ui::Color lbl = g_theme->row_text;
+        pu::ui::Color chv = chevron_color();
+        for (const auto &e : kEntries) {
+            this->layout->AddRow2(tr(e.str), CHEVRON, lbl, chv, -1.0f, nullptr,
+                                  "", false, false);
+        }
+    }
     char ri[600];
     snprintf(ri, sizeof(ri), tr(S_ROM_FOLDER), roms_root(&g_tico));
     this->layout->SetRomInfo(ri);
@@ -2006,23 +2132,24 @@ void MainApplication::GotoInstalled(const std::string &path) {
                            inst_disp_name(b, is_root));
         return g_inst_sort == SORT_NAME_ZA ? c > 0 : c < 0;
     });
-    std::string shown = path;
-    if (shown.rfind(roms_root(&g_tico), 0) == 0) {
-        shown = "roms" + shown.substr(strlen(roms_root(&g_tico)));
-    }
-    this->layout->SetTitle(std::string(tr(S_TITLE_INSTALLED)) + ": " + shown);
-    // Under a console folder: show that console's icon in the header (the
-    // first path segment below the roms root is the console key).
+    // Header: "<icon> Console Name › Installed roms" under a console folder,
+    // or just "Installed roms" at the root (no filesystem path shown).
+    std::string cons;
     if (!is_root) {
         std::string root = roms_root(&g_tico);
         if (path.rfind(root, 0) == 0) {
             std::string rel = path.substr(root.size());
             while (!rel.empty() && rel[0] == '/') rel.erase(0, 1);
-            std::string cons = rel.substr(0, rel.find('/'));
-            if (!cons.empty()) {
-                this->layout->SetTitleIcon(console_icon(cons.c_str()));
-            }
+            cons = rel.substr(0, rel.find('/'));
         }
+    }
+    if (cons.empty()) {
+        this->layout->SetTitle(tr(S_TITLE_INSTALLED));
+    } else {
+        const char *cfull = console_full_name(cons.c_str());
+        this->layout->SetTitle(std::string(cfull ? cfull : cons.c_str()) +
+                               " > " + tr(S_TITLE_INSTALLED));
+        this->layout->SetTitleIcon(console_icon(cons.c_str()));
     }
     // Card view applies to the roms root only (console folders); inside a
     // folder the file table remains the right tool.
@@ -2037,9 +2164,8 @@ void MainApplication::GotoInstalled(const std::string &path) {
             char cnt[32];
             snprintf(cnt, sizeof(cnt), tr(S_N_APPS), n);
             std::string label;
-            if (path == roms_root(&g_tico) &&
-                prefs_dir_pinned(&g_prefs, e.name.c_str()))
-                label = "★ ";
+            bool pinned = path == roms_root(&g_tico) &&
+                          prefs_dir_pinned(&g_prefs, e.name.c_str());
             const char *full = (path == roms_root(&g_tico))
                                    ? console_full_name(e.name.c_str())
                                    : nullptr;
@@ -2048,8 +2174,8 @@ void MainApplication::GotoInstalled(const std::string &path) {
                                        : nullptr;
             if (cards) {
                 // Card: full name title (wrappable) + app count beneath.
-                std::string title = label + (full ? full : e.name.c_str());
-                this->layout->AddCard(title, cnt, ic);
+                this->layout->AddCard(full ? full : e.name.c_str(), cnt, ic,
+                                      pinned);
                 continue;
             }
             label += tr(S_DIR_PREFIX);
@@ -2062,9 +2188,9 @@ void MainApplication::GotoInstalled(const std::string &path) {
                 label += e.name;
             }
             {
-                this->layout->AddRow2(label, cnt,
-                                      g_theme->row_text,
-                                      count_color(), -1.0f, ic);
+                this->layout->AddRow2(label, cnt, g_theme->row_text,
+                                      count_color(), -1.0f, ic, "", false,
+                                      true, pinned);
             }
         } else if (cards) {
             // Stray file at the roms root: still a card so indices match.
@@ -2559,7 +2685,101 @@ void MainApplication::HandleInput(u64 down, u64 held,
     }
 
     // Live-refresh the queue list while it's open.
-    if (this->screen == Screen::Queue) {
+    if (this->screen == Screen::Queue && g_prefs.card_view) {
+        static QueueView qv[QUEUE_MAX];
+        int n = queue_snapshot(qv, QUEUE_MAX);
+        if (n == 0) {
+            // ClearMenu only on the emptying transition: it clears the empty
+            // state too, so running it every frame would make SetEmptyState
+            // re-render its texture at frame rate.
+            if (this->layout->InCards() || this->layout->RowCount() != 0) {
+                this->layout->ClearMenu();
+            }
+            this->layout->SetEmptyState(console_icon("default"),
+                                        tr(S_QUEUE_EMPTY));
+        } else {
+        if (!this->layout->InCards()) {
+            this->layout->ClearMenu(); // drop list rows / empty state once
+            this->layout->SetCardsMode(true);
+        }
+        this->layout->SetQueueCount(n);
+        for (int i = 0; i < n; i++) {
+            const QueueItem *it = &qv[i].item;
+            char c0[80] = "", c1[48] = "", c2[48] = "";
+            float prog = -1.0f;
+            if (it->status == Q_DOWNLOADING && it->total) {
+                prog = (float)it->now / (float)it->total;
+                snprintf(c0, sizeof(c0), "%s", human_size(it->total).c_str());
+                if (it->speed) {
+                    uint64_t eta = (it->total > it->now)
+                                       ? (it->total - it->now) / it->speed
+                                       : 0;
+                    snprintf(c1, sizeof(c1), "%s/s",
+                             human_size(it->speed).c_str());
+                    snprintf(c2, sizeof(c2), "~%s", human_eta(eta).c_str());
+                }
+            } else if (it->status == Q_PAUSED && it->total) {
+                snprintf(c0, sizeof(c0), "%s / %s",
+                         human_size(it->now).c_str(),
+                         human_size(it->total).c_str());
+            } else if (it->status == Q_EXTRACTING) {
+                if (it->total) {
+                    prog = (float)it->now / (float)it->total;
+                }
+                if (it->ex_files > 0) {
+                    snprintf(c0, sizeof(c0), "(%d)", it->ex_files);
+                }
+            } else if (it->status == Q_FAILED && it->fail_reason[0]) {
+                snprintf(c0, sizeof(c0), "%s", it->fail_reason);
+            } else if (it->status == Q_DONE || it->status == Q_SAVED) {
+                if (it->total) {
+                    snprintf(c0, sizeof(c0), "%s",
+                             human_size(it->total).c_str());
+                }
+                if (it->overwrote > 1) {
+                    snprintf(c1, sizeof(c1), "(repl %d)", it->overwrote);
+                } else if (it->overwrote == 1) {
+                    snprintf(c1, sizeof(c1), "(repl)");
+                } else {
+                    snprintf(c1, sizeof(c1), "(new)");
+                }
+            } else if (it->total) {
+                snprintf(c0, sizeof(c0), "%s", human_size(it->total).c_str());
+            }
+            pu::ui::Color sc = qstatus_color(it->status);
+            if (it->status == Q_DONE || it->status == Q_SAVED) {
+                sc = it->overwrote > 0 ? pu::ui::Color(245, 170, 90, 255)
+                                       : accent_green();
+            }
+            // Live progress adds a percent readout to the status corner.
+            char st[48];
+            if (prog >= 0.0f) {
+                snprintf(st, sizeof(st), "%s %d%%", qstatus(it->status),
+                         (int)(prog * 100.0f + 0.5f));
+            } else {
+                snprintf(st, sizeof(st), "%s", qstatus(it->status));
+            }
+            this->layout->SetQueueCard(i, it->target,
+                                       console_icon(it->target),
+                                       st, sc, c0, c1, c2,
+                                       it->name, prog,
+                                       it->status == Q_DOWNLOADING);
+        }
+        // Offline with work pending: cards persist between frames, so also
+        // clear the note once the network is back.
+        const char *note = "";
+        if (!g_net_ok) {
+            for (int i = 0; i < n; i++) {
+                QStatus s = qv[i].item.status;
+                if (s == Q_QUEUED || s == Q_PAUSED || s == Q_DOWNLOADING) {
+                    note = tr(S_WAITING_NETWORK);
+                    break;
+                }
+            }
+        }
+        this->layout->SetRomInfo(note);
+        }
+    } else if (this->screen == Screen::Queue) {
         static QueueView qv[QUEUE_MAX];
         s32 keep = this->layout->Sel();
         int n = queue_snapshot(qv, QUEUE_MAX);
@@ -2810,9 +3030,10 @@ void MainApplication::HandleInput(u64 down, u64 held,
                     this->Toast(tr(S_DELETED));
                     this->GotoHome();
                 }
-            } else if ((down & HidNpadButton_Right) &&
+            } else if (!in_cards && (down & HidNpadButton_Right) &&
                        flat_ref(this->layout->Sel(), &ci, &ri)) {
                 // Pin/unpin — D-pad Right, same as on every other screen.
+                // (In the card grid Right navigates, so no pin toggle there.)
                 // Pinned repos partition to the top within their console.
                 ConsoleGroup *g = &g_cfg.consoles[ci];
                 g->repos[ri].pinned = !g->repos[ri].pinned;
@@ -3044,9 +3265,11 @@ void MainApplication::HandleInput(u64 down, u64 held,
                     if (queue_move(qv[i].slot, 1)) {
                         this->layout->SetSel(i + 1);
                     }
-                } else if (down & (HidNpadButton_Left | HidNpadButton_Right)) {
+                } else if (!in_cards &&
+                           (down & (HidNpadButton_Left | HidNpadButton_Right))) {
                     // Jump to top (just below the active download) / bottom,
-                    // then follow the item to its new row.
+                    // then follow the item to its new row. (Card grid: the
+                    // D-pad navigates instead, so no jump there.)
                     bool to_bottom = (down & HidNpadButton_Right) != 0;
                     if (queue_move_end(qv[i].slot, to_bottom)) {
                         static QueueView qv2[QUEUE_MAX];

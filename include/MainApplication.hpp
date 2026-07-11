@@ -65,10 +65,10 @@ class PillElement : public pu::ui::elm::Element {
         }
         drawer->RenderRoundedRectangleFill(this->clr, rx, ry, this->w, this->h,
                                            this->radius);
-        // Logo-green "lit" line along the bottom edge: the active-tab cue,
-        // matching the green-lit selection. Constant colour — the pill only
-        // ever sits on the charcoal tab shell.
-        drawer->RenderRoundedRectangleFill(pu::ui::Color(146, 214, 36, 255),
+        // "Lit" line along the bottom edge: the active-tab cue. Palette blue
+        // (the logo's "+") — the pill body is the logo green, so a green
+        // line would vanish into it.
+        drawer->RenderRoundedRectangleFill(pu::ui::Color(56, 130, 225, 255),
                                            rx + this->radius,
                                            ry + this->h - 3,
                                            this->w - 2 * this->radius, 3, 1);
@@ -183,6 +183,241 @@ class PulseDotElement : public pu::ui::elm::Element {
                  const pu::ui::TouchPoint) override {}
 };
 
+// One footer hint segment ("A cancel") rendered as Switch-style button chips:
+// each recognised button token gets a small rounded chip, with its label text
+// after it. Owns the rendered text textures; rebuilt lazily when the hint or
+// label colour changes.
+class FooterHintElement : public pu::ui::elm::Element {
+    struct Pair {
+        pu::sdl2::Texture btn; // owned
+        pu::sdl2::Texture lbl; // owned
+        s32 bw, bh, lw, lh;
+    };
+    s32 x, y, h;
+    std::string text, font;
+    pu::ui::Color lbl_clr;
+    std::vector<Pair> pairs;
+    s32 width;
+    bool dirty;
+
+    static constexpr s32 ChipPadX = 10;
+    static constexpr s32 ChipPadY = 4;
+    static constexpr s32 BtnGap = 8;   // chip -> its label
+    static constexpr s32 PairGap = 16; // label -> next chip
+
+    static bool IsButtonToken(const std::string &t) {
+        static const char *toks[] = {"A", "B", "X", "Y", "L", "R", "ZL", "ZR",
+                                     "L/R", "ZL/ZR", "+", "-", "◀", "▶", "◀▶"};
+        for (auto s : toks) {
+            if (t == s) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    void FreePairs() {
+        for (auto &p : this->pairs) {
+            if (p.btn) {
+                pu::ui::render::DeleteTexture(p.btn);
+            }
+            if (p.lbl) {
+                pu::ui::render::DeleteTexture(p.lbl);
+            }
+        }
+        this->pairs.clear();
+    }
+
+    void Rebuild() {
+        this->FreePairs();
+        this->width = 0;
+        // Tokenize on single spaces; a button token opens a new chip+label
+        // pair, any other token joins the current pair's label.
+        std::vector<std::pair<std::string, std::string>> parts;
+        size_t i = 0;
+        while (i < this->text.size()) {
+            size_t e = this->text.find(' ', i);
+            if (e == std::string::npos) {
+                e = this->text.size();
+            }
+            std::string tok = this->text.substr(i, e - i);
+            i = e + 1;
+            if (tok.empty()) {
+                continue;
+            }
+            if (IsButtonToken(tok)) {
+                parts.push_back({tok, ""});
+            } else if (parts.empty()) {
+                parts.push_back({"", tok});
+            } else {
+                auto &lbl = parts.back().second;
+                if (!lbl.empty()) {
+                    lbl += " ";
+                }
+                lbl += tok;
+            }
+        }
+        for (auto &pp : parts) {
+            Pair p{nullptr, nullptr, 0, 0, 0, 0};
+            if (!pp.first.empty()) {
+                p.btn = pu::ui::render::RenderText(
+                    this->font, pp.first, pu::ui::Color(240, 242, 246, 255));
+                p.bw = pu::ui::render::GetTextureWidth(p.btn);
+                p.bh = pu::ui::render::GetTextureHeight(p.btn);
+            }
+            if (!pp.second.empty()) {
+                p.lbl = pu::ui::render::RenderText(this->font, pp.second,
+                                                   this->lbl_clr);
+                p.lw = pu::ui::render::GetTextureWidth(p.lbl);
+                p.lh = pu::ui::render::GetTextureHeight(p.lbl);
+            }
+            if (this->width > 0) {
+                this->width += PairGap;
+            }
+            if (p.btn) {
+                this->width += p.bw + 2 * ChipPadX;
+                if (p.lbl) {
+                    this->width += BtnGap;
+                }
+            }
+            if (p.lbl) {
+                this->width += p.lw;
+            }
+            this->pairs.push_back(p);
+        }
+        this->dirty = false;
+    }
+
+  public:
+    FooterHintElement(s32 x, s32 y, s32 h)
+        : x(x), y(y), h(h), lbl_clr(192, 199, 210, 255), width(0),
+          dirty(false) {
+        this->font = pu::ui::GetDefaultFont(pu::ui::DefaultFontSize::Medium);
+    }
+    PU_SMART_CTOR(FooterHintElement)
+    ~FooterHintElement() { this->FreePairs(); }
+    void SetHint(const std::string &t) {
+        if (t == this->text) {
+            return;
+        }
+        this->text = t;
+        this->dirty = true;
+    }
+    void SetLabelColor(pu::ui::Color c) {
+        this->lbl_clr = c;
+        this->dirty = true;
+    }
+    s32 Width() {
+        if (this->dirty) {
+            this->Rebuild();
+        }
+        return this->width;
+    }
+    void SetX(s32 nx) { this->x = nx; }
+    s32 GetX() override { return this->x; }
+    s32 GetY() override { return this->y; }
+    s32 GetWidth() override { return this->width; }
+    s32 GetHeight() override { return this->h; }
+    void OnRender(pu::ui::render::Renderer::Ref &drawer, const s32 rx,
+                  const s32 ry) override {
+        if (this->dirty) {
+            this->Rebuild();
+        }
+        s32 cx = rx;
+        for (auto &p : this->pairs) {
+            if (p.btn) {
+                s32 ch = p.bh + 2 * ChipPadY;
+                s32 cy = ry + (this->h - ch) / 2;
+                drawer->RenderRoundedRectangleFill(
+                    pu::ui::Color(255, 255, 255, 28), cx, cy,
+                    p.bw + 2 * ChipPadX, ch, ch / 2);
+                drawer->RenderTexture(p.btn, cx + ChipPadX, cy + ChipPadY);
+                cx += p.bw + 2 * ChipPadX;
+                if (p.lbl) {
+                    cx += BtnGap;
+                }
+            }
+            if (p.lbl) {
+                drawer->RenderTexture(p.lbl, cx, ry + (this->h - p.lh) / 2);
+                cx += p.lw;
+            }
+            cx += PairGap;
+        }
+    }
+    void OnInput(const u64, const u64, const u64,
+                 const pu::ui::TouchPoint) override {}
+};
+
+// Drawn Wi-Fi style signal bars for the header status area: three ascending
+// bars, lit up to the current level in logo green; dim red bars when offline.
+class NetBarsElement : public pu::ui::elm::Element {
+    s32 x, y;
+    int lit; // number of bars lit (1..3); -1 = disconnected
+  public:
+    NetBarsElement(s32 x, s32 y) : x(x), y(y), lit(-1) {}
+    PU_SMART_CTOR(NetBarsElement)
+    void SetLevel(int l) { this->lit = l; }
+    void SetPos(s32 nx, s32 ny) { this->x = nx; this->y = ny; }
+    s32 GetX() override { return this->x; }
+    s32 GetY() override { return this->y; }
+    s32 GetWidth() override { return 27; } // 3 bars of 7px + 2 gaps of 3px
+    s32 GetHeight() override { return 24; }
+    void OnRender(pu::ui::render::Renderer::Ref &drawer, const s32 rx,
+                  const s32 ry) override {
+        for (int i = 0; i < 3; i++) {
+            s32 bh = 8 + i * 8; // 8 / 16 / 24
+            pu::ui::Color c = this->lit < 0 ? pu::ui::Color(200, 60, 60, 120)
+                              : this->lit > i
+                                  ? pu::ui::Color(146, 214, 36, 255)
+                                  : pu::ui::Color(255, 255, 255, 45);
+            drawer->RenderRoundedRectangleFill(c, rx + i * 10, ry + 24 - bh, 7,
+                                               bh, 2);
+        }
+    }
+    void OnInput(const u64, const u64, const u64,
+                 const pu::ui::TouchPoint) override {}
+};
+
+// Drawn battery outline for the header: vertical body + top nub, filled from
+// the bottom by percent. Green normally, amber low, red critical, blue while
+// charging. The header shell is charcoal in both themes, colours are constant.
+class BatteryElement : public pu::ui::elm::Element {
+    s32 x, y;
+    int pct; // -1 = unknown (hidden)
+    bool charging;
+  public:
+    BatteryElement(s32 x, s32 y) : x(x), y(y), pct(-1), charging(false) {}
+    PU_SMART_CTOR(BatteryElement)
+    void Set(int p, bool chg) { this->pct = p; this->charging = chg; }
+    void SetPos(s32 nx, s32 ny) { this->x = nx; this->y = ny; }
+    s32 GetX() override { return this->x; }
+    s32 GetY() override { return this->y; }
+    s32 GetWidth() override { return 14; }
+    s32 GetHeight() override { return 28; } // 3 nub + 1 gap + 24 body
+    void OnRender(pu::ui::render::Renderer::Ref &drawer, const s32 rx,
+                  const s32 ry) override {
+        if (this->pct < 0) {
+            return;
+        }
+        const pu::ui::Color shell(255, 255, 255, 130);
+        drawer->RenderRoundedRectangleFill(shell, rx + 4, ry, 6, 3, 1);
+        drawer->RenderRoundedRectangle(shell, rx, ry + 4, 14, 24, 3);
+        s32 fh = (18 * (this->pct > 100 ? 100 : this->pct)) / 100;
+        if (fh > 0) {
+            pu::ui::Color c = this->charging ? pu::ui::Color(66, 138, 230, 255)
+                              : this->pct <= 15
+                                  ? pu::ui::Color(224, 78, 78, 255)
+                              : this->pct <= 30
+                                  ? pu::ui::Color(245, 175, 95, 255)
+                                  : pu::ui::Color(146, 214, 36, 255);
+            drawer->RenderRoundedRectangleFill(c, rx + 3,
+                                               ry + 7 + (18 - fh), 8, fh, 2);
+        }
+    }
+    void OnInput(const u64, const u64, const u64,
+                 const pu::ui::TouchPoint) override {}
+};
+
 // A thin horizontal green->blue gradient strip — the icon's ring gradient as
 // the accent line under the header/tab shell. Rendered in short segments
 // (per-pixel would be ~1300 draw calls a frame for no visible gain).
@@ -226,13 +461,18 @@ class MainLayout : public pu::ui::Layout {
     // Tri-colour wordmark (green Tico / white DL / blue +), fixed in the
     // header; `title` holds only the per-screen breadcrumb after it.
     pu::ui::elm::TextBlock::Ref wm_tico, wm_dl, wm_plus;
-    pu::ui::elm::TextBlock::Ref title;
+    pu::ui::elm::TextBlock::Ref title; // first breadcrumb segment
+    // Breadcrumb continuation: green "›" separators + up to two more path
+    // segments ("SNES › repo"); hidden off-screen when unused.
+    std::vector<pu::ui::elm::TextBlock::Ref> bc_seps, bc_parts;
+    s32 bc_end_x = 0; // right edge of the breadcrumb (for the title icon)
     IconElement::Ref title_icon; // console icon shown after the title text
     pu::ui::elm::TextBlock::Ref status;
-    pu::ui::elm::TextBlock::Ref net_icon;
+    NetBarsElement::Ref net_bars;   // drawn signal bars (was a text glyph)
+    BatteryElement::Ref bat_icon;   // drawn battery outline
     pu::ui::elm::TextBlock::Ref bat_info;
     pu::ui::elm::TextBlock::Ref rom_info;
-    std::vector<pu::ui::elm::TextBlock::Ref> footer_segs;
+    std::vector<FooterHintElement::Ref> footer_segs;
     TableList::Ref list;
     CardGrid::Ref grid;    // card view for the console lists
     bool cards_mode = false; // which of list/grid is active for this screen
@@ -258,8 +498,8 @@ class MainLayout : public pu::ui::Layout {
     void SetTitle(const std::string &t);
     void SetTitleIcon(pu::sdl2::Texture tex); // console icon after the title
     void SetStatus(const std::string &t);
-    void SetNetColor(pu::ui::Color c);
-    void SetNetIcon(const std::string &text, pu::ui::Color c);
+    void SetNetLevel(int lit); // bars lit 1..3, -1 = disconnected
+    void SetBattery(int pct, bool charging);
     void SetBatInfo(const std::string &t);
     void SetSubtitle(const std::string &t);
     void SetRomInfo(const std::string &t);
@@ -270,18 +510,25 @@ class MainLayout : public pu::ui::Layout {
     void ClearMenu();
     void AddRow(const std::string &name);
     void AddRow(const std::string &name, pu::ui::Color clr,
-                pu::sdl2::Texture icon = nullptr);
+                pu::sdl2::Texture icon = nullptr, bool pin = false);
     void AddRow2(const std::string &left, const std::string &right,
                  pu::ui::Color lclr, pu::ui::Color rclr, float progress = -1.0f,
                  pu::sdl2::Texture icon = nullptr,
                  const std::string &prefix = "", bool accent = false,
-                 bool pill = true);
+                 bool pill = true, bool pin = false);
     // Card view (console lists). ClearMenu resets to list mode; a screen that
     // wants cards calls SetCardsMode(true) and AddCard instead of AddRow.
     void SetCardsMode(bool on);
     bool InCards() const { return this->cards_mode; }
     void AddCard(const std::string &title, const std::string &subtitle,
-                 pu::sdl2::Texture icon);
+                 pu::sdl2::Texture icon, bool pinned = false);
+    // Queue card view: per-frame diff updates instead of Clear + AddCard.
+    void SetQueueCount(s32 n);
+    void SetQueueCard(s32 i, const std::string &console,
+                      pu::sdl2::Texture icon, const std::string &status,
+                      pu::ui::Color st_clr, const std::string &size,
+                      const std::string &speed, const std::string &eta,
+                      const std::string &file, float prog, bool hero);
     void CardMove(s32 dx, s32 dy);
     s32 Sel();
     void SetSel(s32 i);

@@ -51,6 +51,9 @@
   "manage_consoles": "管理主机（显示/隐藏）",
   "manage_downloads": "管理下载文件夹",
   "advanced": "高级设置",
+  "ui_settings": "界面设置",
+  "title_ui_settings": "界面设置",
+  "sub_ui_settings": "A 切换/编辑  B 返回",
   "controls_help": "操作说明 / 帮助",
   "credits": "致谢",
   "rom_folder": "ROM 文件夹：%s",
@@ -184,6 +187,8 @@
   "sub_inst_search": "A 打开  Y 新搜索  B 返回",
   "card_view": "卡片视图: %s",
   "sub_home_cards": "A 打开  X 置顶  Y 添加仓库  - 搜索  L/R 标签  ZL/ZR 翻页",
+  "sub_home_flat_cards": "A 打开  Y 添加仓库  X 编辑  - 删除  L/R 标签  ZL/ZR 翻页",
   "sub_installed_cards": "A 打开  X 置顶  - 搜索  L/R 标签  B 返回",
+  "sub_queue_cards": "A 取消  X 重试  ZL/ZR 移动  Y 菜单  - 日志  B 返回",
   "cant_undo": "此操作无法撤销。"
 }

@@ -51,6 +51,9 @@
   "manage_consoles": "Gestionează consolele (arată/ascunde)",
   "manage_downloads": "Gestionează folderul descărcărilor",
   "advanced": "Setări avansate",
+  "ui_settings": "Setări interfață",
+  "title_ui_settings": "Setări interfață",
+  "sub_ui_settings": "A comută/editează  B înapoi",
   "controls_help": "Comenzi / Ajutor",
   "credits": "Mulțumiri",
   "rom_folder": "Folder ROM: %s",
@@ -184,6 +187,8 @@
   "sub_inst_search": "A deschide  Y căutare nouă  B înapoi",
   "card_view": "Vizualizare carduri: %s",
   "sub_home_cards": "A deschide  X fixează  Y adaugă repo  - căutare  L/R file  ZL/ZR pagină",
+  "sub_home_flat_cards": "A deschide  Y adaugă depozit  X editează  - șterge  L/R file  ZL/ZR pagină",
   "sub_installed_cards": "A deschide  X fixează  - căutare  L/R file  B înapoi",
+  "sub_queue_cards": "A anulează  X reîncearcă  ZL/ZR mută  Y meniu  - jurnal  B înapoi",
   "cant_undo": "Această acțiune nu poate fi anulată."
 }

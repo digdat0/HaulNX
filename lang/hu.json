@@ -51,6 +51,9 @@
   "manage_consoles": "Konzolok kezelése (mutat/elrejt)",
   "manage_downloads": "Letöltési mappa kezelése",
   "advanced": "Speciális beállítások",
+  "ui_settings": "Felület beállításai",
+  "title_ui_settings": "Felület beállításai",
+  "sub_ui_settings": "A váltás/szerkesztés  B vissza",
   "controls_help": "Vezérlés / Súgó",
   "credits": "Készítők",
   "rom_folder": "ROM mappa: %s",
@@ -184,6 +187,8 @@
   "sub_inst_search": "A megnyit  Y új keresés  B vissza",
   "card_view": "Kártyanézet: %s",
   "sub_home_cards": "A megnyitás  X kitűzés  Y repo hozzáadása  - keresés  L/R lapok  ZL/ZR oldal",
+  "sub_home_flat_cards": "A megnyit  Y tároló hozzáadása  X szerkeszt  - töröl  L/R fülek  ZL/ZR oldal",
   "sub_installed_cards": "A megnyit  X kitűzés  - keresés  L/R fülek  B vissza",
+  "sub_queue_cards": "A mégse  X újra  ZL/ZR mozgat  Y menü  - napló  B vissza",
   "cant_undo": "Ez nem vonható vissza."
 }

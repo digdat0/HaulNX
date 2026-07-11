@@ -7,6 +7,7 @@
 // Card icons are BORROWED from the shared console-icon cache — never freed
 // here; the rendered text textures are cached and owned by this element.
 
+#include <cmath>
 #include <pu/Plutonium>
 #include <string>
 #include <vector>
@@ -17,6 +18,17 @@ class CardGrid : public pu::ui::elm::Element {
         std::string title;
         std::string subtitle;
         pu::sdl2::Texture icon; // borrowed
+        bool pinned; // small logo-green dot in the card's top-left corner
+        // Queue-mode extras (SetQueueCard): the strings double as the
+        // "last rendered" keys for the per-frame diff updates.
+        bool queue = false;
+        std::string status;
+        pu::ui::Color st_clr{255, 255, 255, 255};
+        std::string chip;   // size · speed · eta joined into one pill
+        std::string file;   // full filename (diff gate for the split below)
+        std::string f1, f2; // wrapped filename lines (diff keys)
+        float prog = -1.0f; // perimeter progress bar; -1 = none
+        bool hero = false;  // active download: accent-tinted card
     };
 
   private:
@@ -25,6 +37,13 @@ class CardGrid : public pu::ui::elm::Element {
         pu::sdl2::Texture t2_tex; // title line 2 (word-wrapped overflow)
         pu::sdl2::Texture sub_tex;
         s32 t1w, t1h, t2w, t2h, sw, sh;
+        // queue-mode textures
+        pu::sdl2::Texture st_tex = nullptr;
+        pu::sdl2::Texture ch_tex = nullptr;
+        pu::sdl2::Texture f_tex = nullptr;  // filename line 1
+        pu::sdl2::Texture f2_tex = nullptr; // filename line 2 (wrap)
+        s32 stw = 0, sth = 0, chw = 0, chh = 0, fw = 0, fh = 0, f2w = 0,
+            f2h = 0;
     };
 
     s32 x, y, w, h;
@@ -33,6 +52,7 @@ class CardGrid : public pu::ui::elm::Element {
     // Selection fade + icon grow-in, restarted when the selection moves.
     s32 anim_sel = -1;
     s32 sel_alpha = 255;
+    u32 anim_tick = 0; // frame counter for the progress-ring shimmer
     std::vector<Card> cards;
     std::vector<Cell> cache; // one per card; rebuilt when dirty
     bool dirty;
@@ -43,7 +63,7 @@ class CardGrid : public pu::ui::elm::Element {
     // Darkening chip behind the subtitle (count/info line), matching the
     // table view's right-column pills.
     pu::ui::Color pill_clr{0, 0, 0, 95};
-    std::string font_title, font_sub;
+    std::string font_title, font_sub, font_tiny;
 
     // Touch state (mirrors TableList's behaviour).
     bool tch_active = false;
@@ -96,14 +116,48 @@ class CardGrid : public pu::ui::elm::Element {
             if (c.sub_tex) {
                 pu::ui::render::DeleteTexture(c.sub_tex);
             }
+            if (c.st_tex) {
+                pu::ui::render::DeleteTexture(c.st_tex);
+            }
+            if (c.ch_tex) {
+                pu::ui::render::DeleteTexture(c.ch_tex);
+            }
+            if (c.f_tex) {
+                pu::ui::render::DeleteTexture(c.f_tex);
+            }
+            if (c.f2_tex) {
+                pu::ui::render::DeleteTexture(c.f2_tex);
+            }
         }
         this->cache.clear();
     }
 
-    // Does `text` fit within max_w at the title font? (measure and discard)
-    bool TitleFits(const std::string &text, const s32 max_w) {
-        auto tex = pu::ui::render::RenderText(this->font_title, text,
-                                              this->title_clr);
+    // (Re)render one cached text texture when its source changed or the
+    // texture was dropped by a cache rebuild; empty text clears it.
+    void UpdText(pu::sdl2::Texture &tex, s32 &tw, s32 &th, std::string &src,
+                 const std::string &txt, const std::string &font,
+                 const pu::ui::Color clr, const u32 max_w,
+                 const bool force = false) {
+        if (!force && src == txt && (tex || txt.empty())) {
+            return;
+        }
+        if (tex) {
+            pu::ui::render::DeleteTexture(tex);
+            tex = nullptr;
+        }
+        src = txt;
+        tw = th = 0;
+        if (!txt.empty()) {
+            tex = pu::ui::render::RenderText(font, txt, clr, max_w);
+            tw = pu::ui::render::GetTextureWidth(tex);
+            th = pu::ui::render::GetTextureHeight(tex);
+        }
+    }
+
+    // Does `text` fit within max_w at the given font? (measure and discard)
+    bool TitleFits(const std::string &text, const std::string &font,
+                   const s32 max_w) {
+        auto tex = pu::ui::render::RenderText(font, text, this->title_clr);
         if (!tex) {
             return true;
         }
@@ -115,11 +169,11 @@ class CardGrid : public pu::ui::elm::Element {
     // Word-wrap a long title onto two lines (RenderText only ellipsizes, so
     // find the longest word-prefix that fits; the rest becomes line 2, which
     // still ellipsizes if it's too long itself).
-    void SplitTitle(const std::string &t, const s32 max_w, std::string &l1,
-                    std::string &l2) {
+    void SplitTitle(const std::string &t, const std::string &font,
+                    const s32 max_w, std::string &l1, std::string &l2) {
         l1 = t;
         l2.clear();
-        if (this->TitleFits(t, max_w)) {
+        if (this->TitleFits(t, font, max_w)) {
             return;
         }
         std::vector<std::string> words;
@@ -133,14 +187,38 @@ class CardGrid : public pu::ui::elm::Element {
             words.push_back(t.substr(pos, sp - pos));
             pos = sp + 1;
         }
-        if (words.size() < 2) {
-            return; // one huge word: let line 1 ellipsize
+        if (words.size() < 2 || !this->TitleFits(words[0], font, max_w)) {
+            // No space to break at (or the first word alone overflows):
+            // split mid-word at the widest UTF-8 prefix that fits.
+            std::vector<size_t> bnd; // char-start byte offsets + end
+            for (size_t b = 0; b < t.size(); b++) {
+                if (((u8)t[b] & 0xC0) != 0x80) {
+                    bnd.push_back(b);
+                }
+            }
+            bnd.push_back(t.size());
+            size_t lo = 1, hi = bnd.size() - 1, best = 1;
+            while (lo <= hi) {
+                size_t mid = (lo + hi) / 2;
+                if (this->TitleFits(t.substr(0, bnd[mid]), font, max_w)) {
+                    best = mid;
+                    lo = mid + 1;
+                } else {
+                    hi = mid - 1;
+                }
+            }
+            if (best >= bnd.size() - 1) {
+                return; // fits after all (measurement drift): single line
+            }
+            l1 = t.substr(0, bnd[best]);
+            l2 = t.substr(bnd[best]); // still ellipsizes if too long
+            return;
         }
         std::string fit;
         size_t i = 0;
         for (; i < words.size(); i++) {
             std::string cand = fit.empty() ? words[i] : fit + " " + words[i];
-            if (!fit.empty() && !this->TitleFits(cand, max_w)) {
+            if (!fit.empty() && !this->TitleFits(cand, font, max_w)) {
                 break;
             }
             fit = cand;
@@ -161,8 +239,14 @@ class CardGrid : public pu::ui::elm::Element {
         const u32 max_tw = (u32)(this->CardW() - 30);
         for (auto &cd : this->cards) {
             Cell c{nullptr, nullptr, nullptr, 0, 0, 0, 0, 0, 0};
+            if (cd.queue) {
+                // Queue cards render via SetQueueCard's diff path; the empty
+                // cell makes it rebuild everything on the next update.
+                this->cache.push_back(c);
+                continue;
+            }
             std::string l1, l2;
-            this->SplitTitle(cd.title, (s32)max_tw, l1, l2);
+            this->SplitTitle(cd.title, this->font_title, (s32)max_tw, l1, l2);
             c.t1_tex = pu::ui::render::RenderText(this->font_title, l1,
                                                   this->title_clr, max_tw);
             c.t1w = pu::ui::render::GetTextureWidth(c.t1_tex);
@@ -215,6 +299,8 @@ class CardGrid : public pu::ui::elm::Element {
         this->font_title =
             pu::ui::GetDefaultFont(pu::ui::DefaultFontSize::Medium);
         this->font_sub = pu::ui::GetDefaultFont(pu::ui::DefaultFontSize::Small);
+        // Extra size registered in Main.cpp; queue cards' chip + filename.
+        this->font_tiny = pu::ui::MakeDefaultFontName(21);
     }
     PU_SMART_CTOR(CardGrid)
 
@@ -245,9 +331,82 @@ class CardGrid : public pu::ui::elm::Element {
     }
 
     void AddCard(const std::string &title, const std::string &subtitle,
-                 pu::sdl2::Texture icon) {
-        this->cards.push_back(Card{title, subtitle, icon});
+                 pu::sdl2::Texture icon, bool pinned = false) {
+        this->cards.push_back(Card{title, subtitle, icon, pinned});
         this->dirty = true;
+    }
+
+    // Queue card view: the queue refreshes every frame, so instead of the
+    // Clear + AddCard rebuild it diff-updates cards in place — text textures
+    // re-render only when their content actually changed.
+    void SetQueueCount(const s32 n) {
+        if ((s32)this->cards.size() == n) {
+            return;
+        }
+        this->FreeCache();
+        this->cards.assign((size_t)n, Card{});
+        for (auto &c : this->cards) {
+            c.queue = true;
+        }
+        this->cache.assign((size_t)n, Cell{});
+        if (this->sel >= n) {
+            this->sel = n > 0 ? n - 1 : 0;
+        }
+        this->EnsureVisible();
+        this->dirty = false;
+    }
+
+    void SetQueueCard(const s32 i, const std::string &console,
+                      pu::sdl2::Texture icon, const std::string &status,
+                      const pu::ui::Color st_clr, const std::string &size,
+                      const std::string &speed, const std::string &eta,
+                      const std::string &file, const float prog,
+                      const bool hero) {
+        if (i < 0 || i >= (s32)this->cards.size() ||
+            i >= (s32)this->cache.size()) {
+            return;
+        }
+        Card &cd = this->cards[i];
+        Cell &ce = this->cache[i];
+        cd.queue = true;
+        cd.icon = icon;
+        cd.prog = prog;
+        cd.hero = hero;
+        const s32 cw = this->CardW();
+        const bool recolor = cd.st_clr.r != st_clr.r ||
+                             cd.st_clr.g != st_clr.g ||
+                             cd.st_clr.b != st_clr.b ||
+                             cd.st_clr.a != st_clr.a;
+        cd.st_clr = st_clr;
+        // Corner labels (console name left, status right) frame a big
+        // centred icon, browse-card style.
+        this->UpdText(ce.t1_tex, ce.t1w, ce.t1h, cd.title, console,
+                      this->font_tiny, this->title_clr, (u32)(cw - 120));
+        this->UpdText(ce.st_tex, ce.stw, ce.sth, cd.status, status,
+                      this->font_sub, st_clr, (u32)(cw / 2 - 20), recolor);
+        // size / speed / eta join into one pill, like the list view's chip.
+        std::string chip = size;
+        if (!speed.empty()) {
+            chip += (chip.empty() ? "" : " · ") + speed;
+        }
+        if (!eta.empty()) {
+            chip += (chip.empty() ? "" : " · ") + eta;
+        }
+        this->UpdText(ce.ch_tex, ce.chw, ce.chh, cd.chip, chip,
+                      this->font_tiny, this->sub_clr, (u32)(cw - 48));
+        // Filename wraps onto two lines. Split only when the name changes:
+        // SplitTitle's measuring is too heavy for every frame.
+        if (cd.file != file || (!ce.f_tex && !file.empty())) {
+            cd.file = file;
+            std::string l1, l2;
+            if (!file.empty()) {
+                this->SplitTitle(file, this->font_tiny, cw - 36, l1, l2);
+            }
+            this->UpdText(ce.f_tex, ce.fw, ce.fh, cd.f1, l1, this->font_tiny,
+                          this->sub_clr, (u32)(cw - 36));
+            this->UpdText(ce.f2_tex, ce.f2w, ce.f2h, cd.f2, l2,
+                          this->font_tiny, this->sub_clr, (u32)(cw - 36));
+        }
     }
 
     s32 Count() { return (s32)this->cards.size(); }
@@ -316,6 +475,7 @@ class CardGrid : public pu::ui::elm::Element {
         if (this->dirty) {
             this->RebuildCache();
         }
+        this->anim_tick++;
         // Advance the selection fade (restart when the selection moved).
         if (this->anim_sel != this->sel) {
             this->anim_sel = this->sel;
@@ -336,8 +496,17 @@ class CardGrid : public pu::ui::elm::Element {
                 s32 cx = rx + Margin + col * (cw + Gap);
                 s32 cy = ry + vr * (CardH + Gap);
                 bool selected = (idx == this->sel);
+                const Card &cd = this->cards[idx];
                 drawer->RenderRoundedRectangleFill(this->card_bg, cx, cy, cw,
                                                    CardH, CardRadius);
+                if (cd.queue && cd.hero) {
+                    // Active download: accent-tinted "hero" card, matching
+                    // the list view's accent row.
+                    auto hc = this->glow_clr;
+                    hc.a = 30;
+                    drawer->RenderRoundedRectangleFill(hc, cx, cy, cw, CardH,
+                                                       CardRadius);
+                }
                 if (selected) {
                     // Lifted fill eases in, wrapped in a logo-green outline
                     // + soft outer glow (the "lit" card, matching the list).
@@ -369,7 +538,266 @@ class CardGrid : public pu::ui::elm::Element {
                 drawer->RenderRectangleFill(pu::ui::Color(0, 0, 0, 50),
                                             cx + CardRadius, cy + CardH - 1,
                                             cw - 2 * CardRadius, 1);
-                if (this->cards[idx].icon) {
+                if (cd.pinned) {
+                    drawer->RenderCircleFill(this->glow_clr, cx + 16, cy + 16,
+                                             5);
+                }
+                if (cd.queue) {
+                    Cell &qc = this->cache[idx];
+                    // Corner labels: console name top-left, status top-right,
+                    // padded in past the progress ring.
+                    if (qc.t1_tex) {
+                        drawer->RenderTexture(qc.t1_tex, cx + 20, cy + 18);
+                    }
+                    if (qc.st_tex) {
+                        drawer->RenderTexture(qc.st_tex,
+                                              cx + cw - 20 - qc.stw, cy + 16);
+                    }
+                    // Icon in the exact browse-card spot: same size, same
+                    // grow-upward and green glow bloom on selection.
+                    if (cd.icon) {
+                        s32 isz = IconPx;
+                        if (selected) {
+                            isz += (10 * this->sel_alpha) / 255;
+                            s32 gcx = cx + cw / 2;
+                            s32 gcy = cy + 10 + IconPx / 2;
+                            for (s32 g = 0; g < 4; g++) {
+                                auto gc = this->glow_clr;
+                                gc.a = (u8)((14 + 5 * g) * this->sel_alpha /
+                                            255);
+                                drawer->RenderCircleFill(gc, gcx, gcy,
+                                                         IconPx / 2 + 2 -
+                                                             6 * g);
+                            }
+                        }
+                        pu::ui::render::TextureRenderOptions o;
+                        o.width = isz;
+                        o.height = isz;
+                        drawer->RenderTexture(cd.icon, cx + (cw - isz) / 2,
+                                              cy + 10 - (isz - IconPx), o);
+                    }
+                    // Filename under the icon, up to two wrapped lines, with
+                    // clear air above the pill below it.
+                    if (qc.f_tex) {
+                        s32 fy = qc.f2_tex ? cy + 152 : cy + 166;
+                        drawer->RenderTexture(qc.f_tex, cx + (cw - qc.fw) / 2,
+                                              fy);
+                        if (qc.f2_tex) {
+                            drawer->RenderTexture(qc.f2_tex,
+                                                  cx + (cw - qc.f2w) / 2,
+                                                  fy + qc.fh + 2);
+                        }
+                    }
+                    // size · speed · eta as one pill along the bottom.
+                    if (qc.ch_tex) {
+                        s32 sx = cx + (cw - qc.chw) / 2;
+                        const s32 padx = 12, pady = 4;
+                        drawer->RenderRoundedRectangleFill(
+                            this->pill_clr, sx - padx, cy + 222 - pady,
+                            qc.chw + 2 * padx, qc.chh + 2 * pady,
+                            (qc.chh + 2 * pady) / 2);
+                        drawer->RenderTexture(qc.ch_tex, sx, cy + 222);
+                    }
+                    // Download/unzip progress traces the card's rounded
+                    // outline clockwise in the signature green->blue
+                    // gradient: straight runs as short gradient rects,
+                    // corners as stamped dots (no arc primitive).
+                    if (cd.prog >= 0.0f) {
+                        const s32 inset = 4, bt = 6;
+                        const s32 x0 = cx + inset, y0 = cy + inset;
+                        const s32 pw = cw - 2 * inset, ph = CardH - 2 * inset;
+                        const s32 R = CardRadius - inset;
+                        const pu::ui::Color trk(255, 255, 255, 20);
+                        for (s32 t = 0; t < bt; t++) {
+                            drawer->RenderRoundedRectangle(
+                                trk, x0 + t, y0 + t, pw - 2 * t, ph - 2 * t,
+                                R - t > 1 ? R - t : 1);
+                        }
+                        const s32 rc = R - bt / 2; // centerline corner radius
+                        const s32 lx = x0 + bt / 2, ty = y0 + bt / 2;
+                        const s32 rxr = x0 + pw - bt / 2;
+                        const s32 by = y0 + ph - bt / 2;
+                        const s32 hs = (rxr - lx) - 2 * rc;
+                        const s32 vs = (by - ty) - 2 * rc;
+                        const s32 q = (s32)(1.5708f * (float)rc + 0.5f);
+                        const s32 L = 2 * hs + 2 * vs + 4 * q;
+                        s32 fill = (s32)(cd.prog * (float)L + 0.5f);
+                        if (fill > L) {
+                            fill = L;
+                        }
+                        const pu::ui::Color g0(146, 214, 36, 255);
+                        const pu::ui::Color g1(56, 130, 225, 255);
+                        auto grad = [&](s32 dd) {
+                            float t = (float)dd / (float)L;
+                            return pu::ui::Color(
+                                (u8)(g0.r + ((s32)g1.r - g0.r) * t),
+                                (u8)(g0.g + ((s32)g1.g - g0.g) * t),
+                                (u8)(g0.b + ((s32)g1.b - g0.b) * t), 255);
+                        };
+                        s32 d = 0;
+                        // edge: 0 top(->right) 1 right(->down) 2 bottom(->left)
+                        // 3 left(->up)
+                        auto straight = [&](s32 len, int edge) {
+                            s32 done = 0;
+                            while (done < len && d < fill) {
+                                s32 seg = fill - d < 6 ? fill - d : 6;
+                                if (seg > len - done) {
+                                    seg = len - done;
+                                }
+                                auto c = grad(d);
+                                switch (edge) {
+                                case 0:
+                                    drawer->RenderRectangleFill(
+                                        c, lx + rc + done, ty - bt / 2, seg,
+                                        bt);
+                                    break;
+                                case 1:
+                                    drawer->RenderRectangleFill(
+                                        c, rxr - bt / 2, ty + rc + done, bt,
+                                        seg);
+                                    break;
+                                case 2:
+                                    drawer->RenderRectangleFill(
+                                        c, rxr - rc - done - seg, by - bt / 2,
+                                        seg, bt);
+                                    break;
+                                default:
+                                    drawer->RenderRectangleFill(
+                                        c, lx - bt / 2, by - rc - done - seg,
+                                        bt, seg);
+                                    break;
+                                }
+                                done += seg;
+                                d += seg;
+                            }
+                            d += len - done;
+                        };
+                        // corner: 0 TR, 1 BR, 2 BL, 3 TL (clockwise order)
+                        auto arc = [&](s32 ccx, s32 ccy, int corner) {
+                            for (s32 a = 0; a < q; a += 2) {
+                                if (d + a >= fill) {
+                                    break;
+                                }
+                                float p = ((float)a + 1.0f) / (float)q *
+                                          1.5708f;
+                                s32 ds = (s32)((float)rc * sinf(p) + 0.5f);
+                                s32 dc = (s32)((float)rc * cosf(p) + 0.5f);
+                                s32 px, py;
+                                switch (corner) {
+                                case 0:
+                                    px = ccx + ds;
+                                    py = ccy - dc;
+                                    break;
+                                case 1:
+                                    px = ccx + dc;
+                                    py = ccy + ds;
+                                    break;
+                                case 2:
+                                    px = ccx - ds;
+                                    py = ccy + dc;
+                                    break;
+                                default:
+                                    px = ccx - dc;
+                                    py = ccy - ds;
+                                    break;
+                                }
+                                drawer->RenderCircleFill(grad(d + a), px, py,
+                                                         bt / 2);
+                            }
+                            d += q;
+                        };
+                        straight(hs, 0);
+                        arc(rxr - rc, ty + rc, 0);
+                        straight(vs, 1);
+                        arc(rxr - rc, by - rc, 1);
+                        straight(hs, 2);
+                        arc(lx + rc, by - rc, 2);
+                        straight(vs, 3);
+                        arc(lx + rc, ty + rc, 3);
+                        // Shimmer: a soft white trail sweeps along the
+                        // filled part of the ring while progress is live.
+                        if (fill > 0) {
+                            auto point_at = [&](s32 dd, s32 &px, s32 &py) {
+                                if (dd < hs) {
+                                    px = lx + rc + dd;
+                                    py = ty;
+                                    return;
+                                }
+                                dd -= hs;
+                                if (dd < q) {
+                                    float p = ((float)dd + 0.5f) / (float)q *
+                                              1.5708f;
+                                    px = rxr - rc +
+                                         (s32)((float)rc * sinf(p) + 0.5f);
+                                    py = ty + rc -
+                                         (s32)((float)rc * cosf(p) + 0.5f);
+                                    return;
+                                }
+                                dd -= q;
+                                if (dd < vs) {
+                                    px = rxr;
+                                    py = ty + rc + dd;
+                                    return;
+                                }
+                                dd -= vs;
+                                if (dd < q) {
+                                    float p = ((float)dd + 0.5f) / (float)q *
+                                              1.5708f;
+                                    px = rxr - rc +
+                                         (s32)((float)rc * cosf(p) + 0.5f);
+                                    py = by - rc +
+                                         (s32)((float)rc * sinf(p) + 0.5f);
+                                    return;
+                                }
+                                dd -= q;
+                                if (dd < hs) {
+                                    px = rxr - rc - dd;
+                                    py = by;
+                                    return;
+                                }
+                                dd -= hs;
+                                if (dd < q) {
+                                    float p = ((float)dd + 0.5f) / (float)q *
+                                              1.5708f;
+                                    px = lx + rc -
+                                         (s32)((float)rc * sinf(p) + 0.5f);
+                                    py = by - rc +
+                                         (s32)((float)rc * cosf(p) + 0.5f);
+                                    return;
+                                }
+                                dd -= q;
+                                if (dd < vs) {
+                                    px = lx;
+                                    py = by - rc - dd;
+                                    return;
+                                }
+                                dd -= vs;
+                                float p = ((float)dd + 0.5f) / (float)q *
+                                          1.5708f;
+                                px = lx + rc -
+                                     (s32)((float)rc * cosf(p) + 0.5f);
+                                py = ty + rc -
+                                     (s32)((float)rc * sinf(p) + 0.5f);
+                            };
+                            s32 shp =
+                                (s32)(this->anim_tick * 4 % (u32)fill);
+                            for (s32 t = 0; t <= 28; t += 2) {
+                                s32 dd = shp - t;
+                                if (dd < 0) {
+                                    break; // trail re-emerges from the start
+                                }
+                                pu::ui::Color c(255, 255, 255,
+                                                (u8)(100 - t * 3));
+                                s32 px, py;
+                                point_at(dd, px, py);
+                                drawer->RenderCircleFill(c, px, py,
+                                                         bt / 2 - 1);
+                            }
+                        }
+                    }
+                    continue;
+                }
+                if (cd.icon) {
                     // The selected card's icon grows slightly with the fade.
                     s32 isz = IconPx;
                     if (selected) {

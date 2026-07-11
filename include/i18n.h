@@ -260,7 +260,9 @@ enum {
     /* ---- card view ---- */
     S_CARD_VIEW,
     S_SUB_HOME_CARDS,
+    S_SUB_HOME_FLAT_CARDS,
     S_SUB_INSTALLED_CARDS,
+    S_SUB_QUEUE_CARDS,
 
     /* ---- destructive-action warning ---- */
     S_CANT_UNDO,
