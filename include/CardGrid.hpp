@@ -19,6 +19,7 @@ class CardGrid : public pu::ui::elm::Element {
         std::string subtitle;
         pu::sdl2::Texture icon; // borrowed
         bool pinned; // small logo-green dot in the card's top-left corner
+        bool dim = false; // disabled entry: icon renders faded
         // Queue-mode extras (SetQueueCard): the strings double as the
         // "last rendered" keys for the per-frame diff updates.
         bool queue = false;
@@ -29,6 +30,9 @@ class CardGrid : public pu::ui::elm::Element {
         std::string f1, f2; // wrapped filename lines (diff keys)
         float prog = -1.0f; // perimeter progress bar; -1 = none
         bool hero = false;  // active download: accent-tinted card
+        s32 ring = 0;       // 0 live gradient, 1 done (solid green),
+                            // 2 failed (solid red)
+        std::string badge;  // queue-position badge text (diff key)
     };
 
   private:
@@ -42,8 +46,9 @@ class CardGrid : public pu::ui::elm::Element {
         pu::sdl2::Texture ch_tex = nullptr;
         pu::sdl2::Texture f_tex = nullptr;  // filename line 1
         pu::sdl2::Texture f2_tex = nullptr; // filename line 2 (wrap)
+        pu::sdl2::Texture qp_tex = nullptr; // queue-position badge
         s32 stw = 0, sth = 0, chw = 0, chh = 0, fw = 0, fh = 0, f2w = 0,
-            f2h = 0;
+            f2h = 0, qpw = 0, qph = 0;
     };
 
     s32 x, y, w, h;
@@ -52,7 +57,10 @@ class CardGrid : public pu::ui::elm::Element {
     // Selection fade + icon grow-in, restarted when the selection moves.
     s32 anim_sel = -1;
     s32 sel_alpha = 255;
-    u32 anim_tick = 0; // frame counter for the progress-ring shimmer
+    // Whole-grid fade-in after Clear(), so tab/screen switches ease in
+    // instead of snapping. Rendered as a fading page-colored overlay.
+    s32 enter_alpha = 255;
+    pu::ui::Color page_bg{0, 0, 0, 0}; // layout bg; a=0 disables the fade
     std::vector<Card> cards;
     std::vector<Cell> cache; // one per card; rebuilt when dirty
     bool dirty;
@@ -63,11 +71,15 @@ class CardGrid : public pu::ui::elm::Element {
     // Darkening chip behind the subtitle (count/info line), matching the
     // table view's right-column pills.
     pu::ui::Color pill_clr{0, 0, 0, 95};
+    // Unfilled part of the progress ring; the light theme passes a dark
+    // translucent shade (white@20 vanishes on light card backgrounds).
+    pu::ui::Color trk_clr{255, 255, 255, 20};
     std::string font_title, font_sub, font_tiny;
 
     // Touch state (mirrors TableList's behaviour).
     bool tch_active = false;
     bool tch_dragged = false;
+    s32 tch_start_x = 0;
     s32 tch_start_y = 0;
     s32 tch_last_y = 0;
     s32 tch_acc = 0;
@@ -127,6 +139,9 @@ class CardGrid : public pu::ui::elm::Element {
             }
             if (c.f2_tex) {
                 pu::ui::render::DeleteTexture(c.f2_tex);
+            }
+            if (c.qp_tex) {
+                pu::ui::render::DeleteTexture(c.qp_tex);
             }
         }
         this->cache.clear();
@@ -309,13 +324,17 @@ class CardGrid : public pu::ui::elm::Element {
     void SetThemeColors(pu::ui::Color bg, pu::ui::Color focus,
                         pu::ui::Color title, pu::ui::Color sub,
                         pu::ui::Color glow = {146, 214, 36, 255},
-                        pu::ui::Color pill = {0, 0, 0, 95}) {
+                        pu::ui::Color pill = {0, 0, 0, 95},
+                        pu::ui::Color page = {0, 0, 0, 0},
+                        pu::ui::Color track = {255, 255, 255, 20}) {
         this->card_bg = bg;
         this->focus_bg = focus;
         this->title_clr = title;
         this->sub_clr = sub;
         this->glow_clr = glow;
         this->pill_clr = pill;
+        this->page_bg = page;
+        this->trk_clr = track;
         this->dirty = true;
     }
 
@@ -324,6 +343,7 @@ class CardGrid : public pu::ui::elm::Element {
         this->FreeCache();
         this->sel = 0;
         this->scroll_row = 0;
+        this->enter_alpha = 0; // next populate fades the grid in
         this->dirty = true;
         this->tch_active = false;
         this->tch_card = -1;
@@ -331,8 +351,9 @@ class CardGrid : public pu::ui::elm::Element {
     }
 
     void AddCard(const std::string &title, const std::string &subtitle,
-                 pu::sdl2::Texture icon, bool pinned = false) {
-        this->cards.push_back(Card{title, subtitle, icon, pinned});
+                 pu::sdl2::Texture icon, bool pinned = false,
+                 bool dim = false) {
+        this->cards.push_back(Card{title, subtitle, icon, pinned, dim});
         this->dirty = true;
     }
 
@@ -361,7 +382,8 @@ class CardGrid : public pu::ui::elm::Element {
                       const pu::ui::Color st_clr, const std::string &size,
                       const std::string &speed, const std::string &eta,
                       const std::string &file, const float prog,
-                      const bool hero) {
+                      const bool hero, const s32 ring = 0,
+                      const s32 qpos = 0) {
         if (i < 0 || i >= (s32)this->cards.size() ||
             i >= (s32)this->cache.size()) {
             return;
@@ -372,6 +394,7 @@ class CardGrid : public pu::ui::elm::Element {
         cd.icon = icon;
         cd.prog = prog;
         cd.hero = hero;
+        cd.ring = ring;
         const s32 cw = this->CardW();
         const bool recolor = cd.st_clr.r != st_clr.r ||
                              cd.st_clr.g != st_clr.g ||
@@ -394,6 +417,10 @@ class CardGrid : public pu::ui::elm::Element {
         }
         this->UpdText(ce.ch_tex, ce.chw, ce.chh, cd.chip, chip,
                       this->font_tiny, this->sub_clr, (u32)(cw - 48));
+        // Queue-position badge ("#2") for waiting cards.
+        this->UpdText(ce.qp_tex, ce.qpw, ce.qph, cd.badge,
+                      qpos > 0 ? "#" + std::to_string(qpos) : "",
+                      this->font_tiny, this->sub_clr, (u32)(cw / 4));
         // Filename wraps onto two lines. Split only when the name changes:
         // SplitTitle's measuring is too heavy for every frame.
         if (cd.file != file || (!ce.f_tex && !file.empty())) {
@@ -475,7 +502,10 @@ class CardGrid : public pu::ui::elm::Element {
         if (this->dirty) {
             this->RebuildCache();
         }
-        this->anim_tick++;
+        if (this->enter_alpha < 255) {
+            s32 e = this->enter_alpha + 32;
+            this->enter_alpha = e > 255 ? 255 : e;
+        }
         // Advance the selection fade (restart when the selection moved).
         if (this->anim_sel != this->sel) {
             this->anim_sel = this->sel;
@@ -598,6 +628,18 @@ class CardGrid : public pu::ui::elm::Element {
                             (qc.chh + 2 * pady) / 2);
                         drawer->RenderTexture(qc.ch_tex, sx, cy + 222);
                     }
+                    // Queue-position badge, tucked into the bottom-left
+                    // corner on the chip line (waiting cards' chips are
+                    // short, so the centred pill never reaches it).
+                    if (qc.qp_tex) {
+                        const s32 padx = 8, pady = 3;
+                        drawer->RenderRoundedRectangleFill(
+                            this->pill_clr, cx + 14, cy + 222 - pady,
+                            qc.qpw + 2 * padx, qc.qph + 2 * pady,
+                            (qc.qph + 2 * pady) / 2);
+                        drawer->RenderTexture(qc.qp_tex, cx + 14 + padx,
+                                              cy + 222);
+                    }
                     // Download/unzip progress traces the card's rounded
                     // outline clockwise in the signature green->blue
                     // gradient: straight runs as short gradient rects,
@@ -607,7 +649,7 @@ class CardGrid : public pu::ui::elm::Element {
                         const s32 x0 = cx + inset, y0 = cy + inset;
                         const s32 pw = cw - 2 * inset, ph = CardH - 2 * inset;
                         const s32 R = CardRadius - inset;
-                        const pu::ui::Color trk(255, 255, 255, 20);
+                        const pu::ui::Color trk = this->trk_clr;
                         for (s32 t = 0; t < bt; t++) {
                             drawer->RenderRoundedRectangle(
                                 trk, x0 + t, y0 + t, pw - 2 * t, ph - 2 * t,
@@ -625,8 +667,15 @@ class CardGrid : public pu::ui::elm::Element {
                         if (fill > L) {
                             fill = L;
                         }
-                        const pu::ui::Color g0(146, 214, 36, 255);
-                        const pu::ui::Color g1(56, 130, 225, 255);
+                        // Terminal states swap the live gradient for a solid
+                        // ring: green when done, red when failed.
+                        pu::ui::Color g0(146, 214, 36, 255);
+                        pu::ui::Color g1(56, 130, 225, 255);
+                        if (cd.ring == 1) {
+                            g1 = g0;
+                        } else if (cd.ring == 2) {
+                            g0 = g1 = pu::ui::Color(224, 82, 82, 255);
+                        }
                         auto grad = [&](s32 dd) {
                             float t = (float)dd / (float)L;
                             return pu::ui::Color(
@@ -714,86 +763,6 @@ class CardGrid : public pu::ui::elm::Element {
                         arc(lx + rc, by - rc, 2);
                         straight(vs, 3);
                         arc(lx + rc, ty + rc, 3);
-                        // Shimmer: a soft white trail sweeps along the
-                        // filled part of the ring while progress is live.
-                        if (fill > 0) {
-                            auto point_at = [&](s32 dd, s32 &px, s32 &py) {
-                                if (dd < hs) {
-                                    px = lx + rc + dd;
-                                    py = ty;
-                                    return;
-                                }
-                                dd -= hs;
-                                if (dd < q) {
-                                    float p = ((float)dd + 0.5f) / (float)q *
-                                              1.5708f;
-                                    px = rxr - rc +
-                                         (s32)((float)rc * sinf(p) + 0.5f);
-                                    py = ty + rc -
-                                         (s32)((float)rc * cosf(p) + 0.5f);
-                                    return;
-                                }
-                                dd -= q;
-                                if (dd < vs) {
-                                    px = rxr;
-                                    py = ty + rc + dd;
-                                    return;
-                                }
-                                dd -= vs;
-                                if (dd < q) {
-                                    float p = ((float)dd + 0.5f) / (float)q *
-                                              1.5708f;
-                                    px = rxr - rc +
-                                         (s32)((float)rc * cosf(p) + 0.5f);
-                                    py = by - rc +
-                                         (s32)((float)rc * sinf(p) + 0.5f);
-                                    return;
-                                }
-                                dd -= q;
-                                if (dd < hs) {
-                                    px = rxr - rc - dd;
-                                    py = by;
-                                    return;
-                                }
-                                dd -= hs;
-                                if (dd < q) {
-                                    float p = ((float)dd + 0.5f) / (float)q *
-                                              1.5708f;
-                                    px = lx + rc -
-                                         (s32)((float)rc * sinf(p) + 0.5f);
-                                    py = by - rc +
-                                         (s32)((float)rc * cosf(p) + 0.5f);
-                                    return;
-                                }
-                                dd -= q;
-                                if (dd < vs) {
-                                    px = lx;
-                                    py = by - rc - dd;
-                                    return;
-                                }
-                                dd -= vs;
-                                float p = ((float)dd + 0.5f) / (float)q *
-                                          1.5708f;
-                                px = lx + rc -
-                                     (s32)((float)rc * cosf(p) + 0.5f);
-                                py = ty + rc -
-                                     (s32)((float)rc * sinf(p) + 0.5f);
-                            };
-                            s32 shp =
-                                (s32)(this->anim_tick * 4 % (u32)fill);
-                            for (s32 t = 0; t <= 28; t += 2) {
-                                s32 dd = shp - t;
-                                if (dd < 0) {
-                                    break; // trail re-emerges from the start
-                                }
-                                pu::ui::Color c(255, 255, 255,
-                                                (u8)(100 - t * 3));
-                                s32 px, py;
-                                point_at(dd, px, py);
-                                drawer->RenderCircleFill(c, px, py,
-                                                         bt / 2 - 1);
-                            }
-                        }
                     }
                     continue;
                 }
@@ -817,6 +786,13 @@ class CardGrid : public pu::ui::elm::Element {
                     pu::ui::render::TextureRenderOptions o;
                     o.width = isz;
                     o.height = isz;
+                    // Disabled entries fade their icon; selecting one lights
+                    // it back up with the focus fade.
+                    if (cd.dim) {
+                        o.alpha_mod =
+                            selected ? 110 + (145 * this->sel_alpha) / 255
+                                     : 110;
+                    }
                     // Grow upward only: the bottom edge stays fixed so the
                     // enlarged icon never touches a two-line title below it.
                     drawer->RenderTexture(this->cards[idx].icon,
@@ -872,6 +848,13 @@ class CardGrid : public pu::ui::elm::Element {
                                             seg);
             }
         }
+        // Enter fade: a page-coloured veil over the fresh grid thins out
+        // across ~8 frames, easing screen/tab switches in.
+        if (this->enter_alpha < 255 && this->page_bg.a > 0) {
+            auto veil = this->page_bg;
+            veil.a = (u8)(255 - this->enter_alpha);
+            drawer->RenderRectangleFill(veil, rx, ry, this->w, this->h);
+        }
     }
 
     void OnInput(const u64, const u64, const u64,
@@ -886,14 +869,19 @@ class CardGrid : public pu::ui::elm::Element {
                 }
                 this->tch_active = true;
                 this->tch_dragged = false;
+                this->tch_start_x = tch.x;
                 this->tch_start_y = tch.y;
                 this->tch_last_y = tch.y;
                 this->tch_acc = 0;
                 this->tch_card = this->HitCard(tch.x, tch.y);
             } else {
+                // Horizontal movement also counts as a drag so a tab swipe
+                // passing through never reads as a tap on release.
                 if (!this->tch_dragged &&
                     (tch.y - this->tch_start_y > DragThreshold ||
-                     this->tch_start_y - tch.y > DragThreshold)) {
+                     this->tch_start_y - tch.y > DragThreshold ||
+                     tch.x - this->tch_start_x > DragThreshold ||
+                     this->tch_start_x - tch.x > DragThreshold)) {
                     this->tch_dragged = true;
                 }
                 if (this->tch_dragged) {

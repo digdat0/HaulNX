@@ -35,6 +35,9 @@ class TableList : public pu::ui::elm::Element {
         bool pill;
         // Pinned item: a small logo-green dot in the row's left padding.
         bool pin;
+        // Progress-bar state, mirroring CardGrid's ring: 0 = live (gloss
+        // green + hero shimmer), 1 = done (solid green), 2 = failed (red).
+        s32 bar = 0;
     };
 
   private:
@@ -52,6 +55,10 @@ class TableList : public pu::ui::elm::Element {
     // the blue eases in instead of teleporting between rows.
     s32 anim_sel = -1;
     s32 sel_alpha = 255;
+    // Whole-list fade-in after Clear(), matching CardGrid's enter fade. The
+    // queue screen rebuilds its list every frame and opts out via Clear(false).
+    s32 enter_alpha = 255;
+    pu::ui::Color page_bg{0, 0, 0, 0}; // layout bg; a=0 disables the fade
     pu::ui::Color row_bg, row_alt_bg, focus_bg, scroll_clr, mark_bg, prog_clr,
         accent_bg, pill_bg;
     std::set<s32> marked;
@@ -68,6 +75,7 @@ class TableList : public pu::ui::elm::Element {
     // surfaced via ConsumeTouchActivate); vertical drag scrolls the list.
     bool tch_active = false;
     bool tch_dragged = false;
+    s32 tch_start_x = 0;
     s32 tch_start_y = 0;
     s32 tch_last_y = 0;
     s32 tch_acc = 0;
@@ -169,20 +177,20 @@ class TableList : public pu::ui::elm::Element {
         this->dirty = false;
     }
 
-    // Glossy progress-bar fill: vertical light->deep gradient of prog_clr with
+    // Glossy progress-bar fill: vertical light->deep gradient of `base` with
     // a bright line along the top, echoing the icon's glossy arrow. Drawn as
     // 1px strips; the end strips taper inward to approximate the rounded cap.
     void RenderGlossBar(pu::ui::render::Renderer::Ref &drawer, s32 bx, s32 by,
-                        s32 bw, s32 bh, s32 r) {
+                        s32 bw, s32 bh, s32 r, const pu::ui::Color base) {
         auto mix = [](u8 a, u8 b, float t) {
             return (u8)(a + (s32)(((s32)b - (s32)a) * t));
         };
-        pu::ui::Color top(mix(this->prog_clr.r, 255, 0.35f),
-                          mix(this->prog_clr.g, 255, 0.35f),
-                          mix(this->prog_clr.b, 255, 0.35f), 255);
-        pu::ui::Color bot((u8)(this->prog_clr.r * 3 / 5),
-                          (u8)(this->prog_clr.g * 3 / 5),
-                          (u8)(this->prog_clr.b * 3 / 5), 255);
+        pu::ui::Color top(mix(base.r, 255, 0.35f),
+                          mix(base.g, 255, 0.35f),
+                          mix(base.b, 255, 0.35f), 255);
+        pu::ui::Color bot((u8)(base.r * 3 / 5),
+                          (u8)(base.g * 3 / 5),
+                          (u8)(base.b * 3 / 5), 255);
         for (s32 i = 0; i < bh; i++) {
             float t = bh > 1 ? (float)i / (bh - 1) : 0.0f;
             pu::ui::Color c(mix(top.r, bot.r, t), mix(top.g, bot.g, t),
@@ -197,6 +205,33 @@ class TableList : public pu::ui::elm::Element {
         if (bw - 2 * r > 0) {
             drawer->RenderRectangleFill(pu::ui::Color(255, 255, 255, 85),
                                         bx + r, by, bw - 2 * r, 1);
+        }
+    }
+
+    // Live download fill: the signature green->blue gradient (same as the
+    // scrollbar thumb), positioned along the full track so the head colour
+    // deepens as the download advances. Drawn as short vertical strips whose
+    // ends taper to approximate the rounded caps.
+    void RenderGradBar(pu::ui::render::Renderer::Ref &drawer, s32 bx, s32 by,
+                       s32 fw, s32 bh, s32 r, s32 track_w) {
+        const pu::ui::Color g0(146, 214, 36, 255), g1(56, 130, 225, 255);
+        s32 i = 0;
+        while (i < fw) {
+            s32 de = i < fw - 1 - i ? i : fw - 1 - i; // dist to nearer end
+            s32 step = de < r ? 1 : 2;
+            if (i + step > fw) {
+                step = fw - i;
+            }
+            s32 inset = de < r ? r - de : 0;
+            float t = track_w > 1 ? (float)i / (float)(track_w - 1) : 0.0f;
+            pu::ui::Color c((u8)(g0.r + ((s32)g1.r - g0.r) * t),
+                            (u8)(g0.g + ((s32)g1.g - g0.g) * t),
+                            (u8)(g0.b + ((s32)g1.b - g0.b) * t), 255);
+            if (bh - 2 * inset > 0) {
+                drawer->RenderRectangleFill(c, bx + i, by + inset, step,
+                                            bh - 2 * inset);
+            }
+            i += step;
         }
     }
 
@@ -220,18 +255,23 @@ class TableList : public pu::ui::elm::Element {
                         pu::ui::Color scroll, pu::ui::Color mark,
                         pu::ui::Color prog = {146, 214, 36, 255},
                         pu::ui::Color accent = {34, 54, 20, 255},
-                        pu::ui::Color pill = {255, 255, 255, 20}) {
+                        pu::ui::Color pill = {255, 255, 255, 20},
+                        pu::ui::Color page = {0, 0, 0, 0}) {
         this->row_bg = bg; this->row_alt_bg = alt; this->focus_bg = focus;
         this->scroll_clr = scroll; this->mark_bg = mark;
         this->prog_clr = prog; this->accent_bg = accent; this->pill_bg = pill;
+        this->page_bg = page;
         this->dirty = true;
     }
 
-    void Clear() {
+    void Clear(const bool fade = true) {
         this->rows.clear();
         this->sel = 0;
         this->scroll_top = 0;
         this->marked.clear();
+        if (fade) {
+            this->enter_alpha = 0; // next populate fades the list in
+        }
         this->dirty = true;
         // Content changed under the finger: drop any in-progress touch so a
         // stale tap can't select/activate a row of the new list.
@@ -250,9 +290,9 @@ class TableList : public pu::ui::elm::Element {
                  const float progress = -1.0f,
                  pu::sdl2::Texture icon = nullptr,
                  const std::string &prefix = "", bool accent = false,
-                 bool pill = true, bool pin = false) {
+                 bool pill = true, bool pin = false, s32 bar = 0) {
         this->rows.push_back(Row{left, right, lclr, rclr, true, progress, icon,
-                                 prefix, accent, pill, pin});
+                                 prefix, accent, pill, pin, bar});
         this->dirty = true;
     }
 
@@ -307,6 +347,10 @@ class TableList : public pu::ui::elm::Element {
         if (this->dirty || this->cache_top != this->scroll_top) {
             this->RebuildCache();
         }
+        if (this->enter_alpha < 255) {
+            s32 e = this->enter_alpha + 32;
+            this->enter_alpha = e > 255 ? 255 : e;
+        }
         // Advance the selection fade (restart when the selection moved).
         if (this->anim_sel != this->sel) {
             this->anim_sel = this->sel;
@@ -325,7 +369,12 @@ class TableList : public pu::ui::elm::Element {
             bool is_marked = this->marked.count(ridx) > 0;
             bool is_accent = this->rows[ridx].accent;
             bool has_bar = this->rows[ridx].progress >= 0.0f;
-            s32 bar_bh = is_accent ? 12 : 8; // active download gets a thicker bar
+            // Active download gets a thicker bar; terminal (done/failed)
+            // rows carry a slim result strip so a long finished queue
+            // doesn't turn into a wall of full bars.
+            s32 bar_bh = is_accent ? 12
+                         : this->rows[ridx].bar != 0 ? 5
+                                                     : 8;
             // Floating rounded row (single fill colour, like the cards).
             s32 rrx = rx + RowMargin;
             s32 rry = rowy + RowGap / 2;
@@ -399,7 +448,18 @@ class TableList : public pu::ui::elm::Element {
                 s32 fw = (s32)(bw * prog);
                 if (fw > 2) {
                     s32 r = fw < 8 ? fw / 2 : 4;
-                    this->RenderGlossBar(drawer, bx, by, fw, bh, r);
+                    // Terminal states get a solid bar (green done / red
+                    // failed, matching the card ring); live downloads fill
+                    // with the scrollbar's green->blue gradient.
+                    if (this->rows[ridx].bar != 0) {
+                        this->RenderGlossBar(
+                            drawer, bx, by, fw, bh, r,
+                            this->rows[ridx].bar == 2
+                                ? pu::ui::Color(224, 82, 82, 255)
+                                : this->prog_clr);
+                    } else {
+                        this->RenderGradBar(drawer, bx, by, fw, bh, r, bw);
+                    }
                 }
             }
             Cell &lc = this->cache_l[i];
@@ -466,6 +526,14 @@ class TableList : public pu::ui::elm::Element {
                 drawer->RenderRectangleFill(c, sb_x, thumb_y + i, sb_w, seg);
             }
         }
+        // Enter fade: a page-coloured veil over the fresh list thins out
+        // across ~8 frames, easing screen/tab switches in.
+        if (this->enter_alpha < 255 && this->page_bg.a > 0) {
+            auto veil = this->page_bg;
+            veil.a = (u8)(255 - this->enter_alpha);
+            drawer->RenderRectangleFill(veil, rx, ry, this->w,
+                                        this->row_h * this->rows_visible);
+        }
     }
 
     // True once when the selected row was tapped again (touch "A press").
@@ -488,6 +556,7 @@ class TableList : public pu::ui::elm::Element {
                 }
                 this->tch_active = true;
                 this->tch_dragged = false;
+                this->tch_start_x = tch.x;
                 this->tch_start_y = tch.y;
                 this->tch_last_y = tch.y;
                 this->tch_acc = 0;
@@ -495,10 +564,14 @@ class TableList : public pu::ui::elm::Element {
                 this->tch_row =
                     (row >= 0 && row < (s32)this->rows.size()) ? row : -1;
             } else {
-                // Finger moving: past the threshold it's a drag-scroll.
+                // Finger moving: past the threshold it's a drag (vertical
+                // scrolls; horizontal counts too so a tab swipe passing
+                // through never reads as a tap on release).
                 if (!this->tch_dragged &&
                     (tch.y - this->tch_start_y > DragThreshold ||
-                     this->tch_start_y - tch.y > DragThreshold)) {
+                     this->tch_start_y - tch.y > DragThreshold ||
+                     tch.x - this->tch_start_x > DragThreshold ||
+                     this->tch_start_x - tch.x > DragThreshold)) {
                     this->tch_dragged = true;
                 }
                 if (this->tch_dragged) {

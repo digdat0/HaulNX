@@ -65,13 +65,6 @@ class PillElement : public pu::ui::elm::Element {
         }
         drawer->RenderRoundedRectangleFill(this->clr, rx, ry, this->w, this->h,
                                            this->radius);
-        // "Lit" line along the bottom edge: the active-tab cue. Palette blue
-        // (the logo's "+") — the pill body is the logo green, so a green
-        // line would vanish into it.
-        drawer->RenderRoundedRectangleFill(pu::ui::Color(56, 130, 225, 255),
-                                           rx + this->radius,
-                                           ry + this->h - 3,
-                                           this->w - 2 * this->radius, 3, 1);
     }
     void OnInput(const u64, const u64, const u64,
                  const pu::ui::TouchPoint) override {}
@@ -466,6 +459,7 @@ class MainLayout : public pu::ui::Layout {
     // segments ("SNES › repo"); hidden off-screen when unused.
     std::vector<pu::ui::elm::TextBlock::Ref> bc_seps, bc_parts;
     s32 bc_end_x = 0; // right edge of the breadcrumb (for the title icon)
+    s32 title_x0 = 0; // fixed breadcrumb anchor after the wordmark
     IconElement::Ref title_icon; // console icon shown after the title text
     pu::ui::elm::TextBlock::Ref status;
     NetBarsElement::Ref net_bars;   // drawn signal bars (was a text glyph)
@@ -482,6 +476,7 @@ class MainLayout : public pu::ui::Layout {
     PulseDotElement::Ref queue_dot;   // "downloads running" pulse on the Queue tab
     IconElement::Ref empty_icon;      // big dimmed icon for empty states
     pu::ui::elm::TextBlock::Ref empty_text;
+    pu::ui::elm::TextBlock::Ref empty_hint; // smaller "what to do" line
     SpinnerElement::Ref spinner;      // background-work indicator
 
   public:
@@ -489,7 +484,8 @@ class MainLayout : public pu::ui::Layout {
     PU_SMART_CTOR(MainLayout)
 
     // Empty state (big centred icon + message) shown when a list has nothing.
-    void SetEmptyState(pu::sdl2::Texture icon, const std::string &msg);
+    void SetEmptyState(pu::sdl2::Texture icon, const std::string &msg,
+                       const std::string &hint = "");
     void ClearEmptyState();
     // Loading spinner overlay.
     void ShowSpinner(const std::string &msg);
@@ -507,7 +503,8 @@ class MainLayout : public pu::ui::Layout {
     void SetQueueActivity(bool active); // pulse the Queue tab while downloading
     void RefreshTabs();
     void ApplyTheme();
-    void ClearMenu();
+    // fade=false skips the list's enter fade (per-frame queue rebuilds).
+    void ClearMenu(bool fade = true);
     void AddRow(const std::string &name);
     void AddRow(const std::string &name, pu::ui::Color clr,
                 pu::sdl2::Texture icon = nullptr, bool pin = false);
@@ -515,20 +512,22 @@ class MainLayout : public pu::ui::Layout {
                  pu::ui::Color lclr, pu::ui::Color rclr, float progress = -1.0f,
                  pu::sdl2::Texture icon = nullptr,
                  const std::string &prefix = "", bool accent = false,
-                 bool pill = true, bool pin = false);
+                 bool pill = true, bool pin = false, s32 bar = 0);
     // Card view (console lists). ClearMenu resets to list mode; a screen that
     // wants cards calls SetCardsMode(true) and AddCard instead of AddRow.
     void SetCardsMode(bool on);
     bool InCards() const { return this->cards_mode; }
     void AddCard(const std::string &title, const std::string &subtitle,
-                 pu::sdl2::Texture icon, bool pinned = false);
+                 pu::sdl2::Texture icon, bool pinned = false,
+                 bool dim = false);
     // Queue card view: per-frame diff updates instead of Clear + AddCard.
     void SetQueueCount(s32 n);
     void SetQueueCard(s32 i, const std::string &console,
                       pu::sdl2::Texture icon, const std::string &status,
                       pu::ui::Color st_clr, const std::string &size,
                       const std::string &speed, const std::string &eta,
-                      const std::string &file, float prog, bool hero);
+                      const std::string &file, float prog, bool hero,
+                      s32 ring = 0, s32 qpos = 0);
     void CardMove(s32 dx, s32 dy);
     s32 Sel();
     void SetSel(s32 i);
@@ -569,6 +568,7 @@ class MainApplication : public pu::ui::Application {
         ManageData, // settings submenu: downloads folder + metadata cache
         ViewLogs,  // settings submenu: download log + debug log
         DebugLog,  // debug.log viewer
+        QueueState, // persisted queue-data (queue.json) viewer
         InstSearch // search across installed games (roms folder)
     };
     enum class Pending { None, AddRepo, Manual };
@@ -678,6 +678,7 @@ class MainApplication : public pu::ui::Application {
     void GotoManageData();
     void GotoViewLogs();
     void GotoDebugLog();
+    void GotoQueueState();
 
     Tab CurrentTab();      // which tab the current screen belongs to
     void SwitchTab(int dir); // L/R: cycle to the prev/next tab

@@ -379,6 +379,38 @@ static pu::ui::Color qstatus_color(QStatus s) {
     }
 }
 
+// Header one-liner for the queue screen ("1 active · 3 waiting · 1 failed");
+// empty when the queue holds only finished items.
+static std::string queue_summary(const QueueView *qv, int n) {
+    int act = 0, wait = 0, fail = 0;
+    for (int i = 0; i < n; i++) {
+        switch (qv[i].item.status) {
+        case Q_DOWNLOADING:
+        case Q_VERIFYING:
+        case Q_AWAIT_EXTRACT:
+        case Q_EXTRACTING:  act++; break;
+        case Q_QUEUED:
+        case Q_PAUSED:      wait++; break;
+        case Q_FAILED:      fail++; break;
+        default:            break;
+        }
+    }
+    std::string s;
+    char buf[64];
+    const struct { int n; int key; } parts[] = {
+        {act, S_QUEUE_N_ACTIVE},
+        {wait, S_QUEUE_N_WAITING},
+        {fail, S_QUEUE_N_FAILED},
+    };
+    for (const auto &p : parts) {
+        if (p.n > 0) {
+            snprintf(buf, sizeof(buf), tr(p.key), p.n);
+            s += (s.empty() ? "" : " · ") + std::string(buf);
+        }
+    }
+    return s;
+}
+
 // Flat-mode rows skip the repos of hidden consoles, so indexing matches the
 // primary page (which also hides them).
 static bool flat_ref(int flat, int *ci, int *ri) {
@@ -707,6 +739,36 @@ static int count_dir_entries(const std::string &path) {
     return n;
 }
 
+// Total bytes under a folder (files at any depth, capped so a huge tree
+// can't stall navigation).
+static uint64_t dir_total_size(const std::string &path, int depth = 3) {
+    uint64_t total = 0;
+    DIR *d = opendir(path.c_str());
+    if (!d) {
+        return 0;
+    }
+    struct dirent *e;
+    while ((e = readdir(d)) != NULL) {
+        if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..")) {
+            continue;
+        }
+        std::string full = path + "/" + e->d_name;
+        struct stat st;
+        if (stat(full.c_str(), &st) != 0) {
+            continue;
+        }
+        if (S_ISDIR(st.st_mode)) {
+            if (depth > 1) {
+                total += dir_total_size(full, depth - 1);
+            }
+        } else {
+            total += (uint64_t)st.st_size;
+        }
+    }
+    closedir(d);
+    return total;
+}
+
 static std::vector<DirEnt> list_dir(const std::string &path) {
     std::vector<DirEnt> v;
     DIR *d = opendir(path.c_str());
@@ -773,6 +835,7 @@ MainLayout::MainLayout() : Layout::Layout() {
     wx += this->wm_plus->GetWidth();
     this->title = pu::ui::elm::TextBlock::New(wx + 24, 24, " ");
     this->title->SetColor(g_theme->title_clr);
+    this->title_x0 = wx + 24; // fixed anchor: SetTitle re-bases from here
     this->Add(this->title);
     for (int i = 0; i < 2; i++) {
         auto sp = pu::ui::elm::TextBlock::New(-100, 24, " ");
@@ -855,6 +918,12 @@ MainLayout::MainLayout() : Layout::Layout() {
                                                    "");
     this->empty_text->SetColor(g_theme->rom_info_clr);
     this->Add(this->empty_text);
+    this->empty_hint = pu::ui::elm::TextBlock::New(0, list_y + avail / 2 + 98,
+                                                   "");
+    this->empty_hint->SetFont(
+        pu::ui::GetDefaultFont(pu::ui::DefaultFontSize::Small));
+    this->empty_hint->SetColor(g_theme->rom_info_clr);
+    this->Add(this->empty_hint);
 
     // Background-work spinner overlay, centred in the content area.
     this->spinner = SpinnerElement::New(0, list_y, sw, avail);
@@ -897,6 +966,7 @@ void MainLayout::ApplyTheme() {
     this->tab_pill->SetColor(g_theme->tab_under);
     this->queue_dot->SetColor(pu::ui::Color(146, 214, 36, 255));
     this->empty_text->SetColor(g_theme->rom_info_clr);
+    this->empty_hint->SetColor(g_theme->rom_info_clr);
     this->spinner->SetColors(accent_green(), g_theme->rom_info_clr);
     for (auto &s : this->footer_segs)
         s->SetLabelColor(g_theme->footer_clr);
@@ -915,7 +985,9 @@ void MainLayout::ApplyTheme() {
                                // and never matches the blue progress bar.
                                is_light_theme()
                                    ? pu::ui::Color(0, 0, 0, 34)
-                                   : pu::ui::Color(0, 0, 0, 95));
+                                   : pu::ui::Color(0, 0, 0, 95),
+                               // Page bg drives the list's enter fade-in.
+                               g_theme->bg);
     // Card subtitle must stay readable on BOTH the card background and the
     // blue selection fill, so it gets its own shade per theme.
     this->grid->SetThemeColors(g_theme->tl_row_alt, g_theme->tl_focus,
@@ -925,7 +997,14 @@ void MainLayout::ApplyTheme() {
                                    : pu::ui::Color(195, 205, 225, 255),
                                accent_green(),
                                is_light_theme() ? pu::ui::Color(0, 0, 0, 34)
-                                                : pu::ui::Color(0, 0, 0, 95));
+                                                : pu::ui::Color(0, 0, 0, 95),
+                               // Page bg drives the grid's enter fade-in.
+                               g_theme->bg,
+                               // Ring track: white@20 vanishes on the light
+                               // theme's pale cards, so darken it there.
+                               is_light_theme()
+                                   ? pu::ui::Color(0, 0, 0, 40)
+                                   : pu::ui::Color(255, 255, 255, 20));
 }
 
 void MainLayout::SetActiveTab(int idx) {
@@ -982,7 +1061,11 @@ void MainLayout::SetTitle(const std::string &t) {
     }
     // (Space, not empty: TextBlock re-renders its texture on every SetText.)
     this->title->SetText(parts[0].empty() ? std::string(" ") : parts[0]);
-    s32 x = this->title->GetX() + this->title->GetWidth();
+    // Re-base at the fixed anchor: SetTitleIcon shifts the title right to
+    // make room for the icon, so anchoring at GetX() would compound that
+    // shift on every screen change and walk the breadcrumb off to the right.
+    this->title->SetX(this->title_x0);
+    s32 x = this->title_x0 + this->title->GetWidth();
     for (size_t i = 0; i < this->bc_seps.size(); i++) {
         bool has = (i + 1) < parts.size();
         this->bc_seps[i]->SetText(has ? "›" : " ");
@@ -1120,15 +1203,16 @@ void MainLayout::SetSubtitle(const std::string &t) {
         }
     }
 }
-void MainLayout::ClearMenu() {
-    this->list->Clear();
+void MainLayout::ClearMenu(bool fade) {
+    this->list->Clear(fade);
     this->grid->Clear();
     this->cards_mode = false; // card screens opt back in after ClearMenu
     this->rom_info->SetText("");
     this->ClearEmptyState();
     this->HideSpinner();
 }
-void MainLayout::SetEmptyState(pu::sdl2::Texture icon, const std::string &msg) {
+void MainLayout::SetEmptyState(pu::sdl2::Texture icon, const std::string &msg,
+                               const std::string &hint) {
     this->empty_icon->SetTexture(icon); // pointer store, cheap every frame
     if (this->empty_text->GetText() != msg) {
         this->empty_text->SetText(msg);
@@ -1136,10 +1220,16 @@ void MainLayout::SetEmptyState(pu::sdl2::Texture icon, const std::string &msg) {
         this->empty_text->SetX((s32)pu::ui::render::ScreenWidth / 2 -
                                this->empty_text->GetWidth() / 2);
     }
+    if (this->empty_hint->GetText() != hint) {
+        this->empty_hint->SetText(hint);
+        this->empty_hint->SetX((s32)pu::ui::render::ScreenWidth / 2 -
+                               this->empty_hint->GetWidth() / 2);
+    }
 }
 void MainLayout::ClearEmptyState() {
     this->empty_icon->SetTexture(nullptr);
     this->empty_text->SetText("");
+    this->empty_hint->SetText("");
 }
 void MainLayout::ShowSpinner(const std::string &msg) {
     this->spinner->Show(msg);
@@ -1147,8 +1237,8 @@ void MainLayout::ShowSpinner(const std::string &msg) {
 void MainLayout::HideSpinner() { this->spinner->Hide(); }
 void MainLayout::SetCardsMode(bool on) { this->cards_mode = on; }
 void MainLayout::AddCard(const std::string &title, const std::string &subtitle,
-                         pu::sdl2::Texture icon, bool pinned) {
-    this->grid->AddCard(title, subtitle, icon, pinned);
+                         pu::sdl2::Texture icon, bool pinned, bool dim) {
+    this->grid->AddCard(title, subtitle, icon, pinned, dim);
 }
 void MainLayout::SetQueueCount(s32 n) { this->grid->SetQueueCount(n); }
 void MainLayout::SetQueueCard(s32 i, const std::string &console,
@@ -1156,9 +1246,9 @@ void MainLayout::SetQueueCard(s32 i, const std::string &console,
                               const std::string &status, pu::ui::Color st_clr,
                               const std::string &size, const std::string &speed,
                               const std::string &eta, const std::string &file,
-                              float prog, bool hero) {
+                              float prog, bool hero, s32 ring, s32 qpos) {
     this->grid->SetQueueCard(i, console, icon, status, st_clr, size, speed,
-                             eta, file, prog, hero);
+                             eta, file, prog, hero, ring, qpos);
 }
 void MainLayout::CardMove(s32 dx, s32 dy) { this->grid->Move(dx, dy); }
 void MainLayout::AddRow(const std::string &name) {
@@ -1171,9 +1261,9 @@ void MainLayout::AddRow(const std::string &name, pu::ui::Color clr,
 void MainLayout::AddRow2(const std::string &left, const std::string &right,
                          pu::ui::Color lclr, pu::ui::Color rclr, float progress,
                          pu::sdl2::Texture icon, const std::string &prefix,
-                         bool accent, bool pill, bool pin) {
+                         bool accent, bool pill, bool pin, s32 bar) {
     this->list->AddRow2(left, right, lclr, rclr, progress, icon, prefix, accent,
-                        pill, pin);
+                        pill, pin, bar);
 }
 s32 MainLayout::Sel() {
     return this->cards_mode ? this->grid->GetSelected()
@@ -1395,9 +1485,11 @@ void MainApplication::GotoHome() {
                 std::string sub = fr.enabled
                                       ? fr.repo
                                       : fr.repo + " · " + tr(S_OFF);
+                // Disabled repos also dim their icon so on/off scans
+                // without reading the subtitle.
                 this->layout->AddCard(fr.cname, sub,
                                       console_icon(fr.key.c_str()),
-                                      fr.pinned);
+                                      fr.pinned, !fr.enabled);
             } else {
                 // "Full Console Name › repo label", matching the breadcrumb;
                 // the on/off state moves to a right-hand chip.
@@ -1475,7 +1567,8 @@ MainApplication::Tab MainApplication::CurrentTab() {
     case Screen::Cache:
     case Screen::ManageData:
     case Screen::ViewLogs:
-    case Screen::DebugLog: return Tab::Settings;
+    case Screen::DebugLog:
+    case Screen::QueueState: return Tab::Settings;
     default:                return Tab::Browse; // Home/Repos/Files/RepoEdit/Picker/Search
     }
 }
@@ -1845,9 +1938,49 @@ void MainApplication::GotoViewLogs() {
     this->layout->SetTitle(tr(S_TITLE_VIEW_LOGS));
     this->layout->SetSubtitle(tr(S_SUB_VIEW_LOGS));
     this->layout->ClearMenu();
-    this->layout->AddRow(tr(S_VIEW_LOG));  // 0: download history
-    this->layout->AddRow(tr(S_DEBUG_LOG)); // 1: debug.log
+    this->layout->AddRow(tr(S_VIEW_LOG));    // 0: download history
+    this->layout->AddRow(tr(S_DEBUG_LOG));   // 1: debug.log
+    this->layout->AddRow(tr(S_QUEUE_STATE)); // 2: persisted queue.json
 }
+
+// Rows truncate long log lines; pressing A shows the full text in a dialog.
+// The dialog doesn't auto-wrap, so break at UTF-8 boundaries (preferring
+// spaces) every ~64 characters.
+static std::string wrap_for_dialog(const std::string &s) {
+    const size_t maxc = 64;
+    std::string out;
+    size_t col = 0, last_sp = std::string::npos; // out-index of last space
+    for (size_t i = 0; i < s.size();) {
+        size_t cl = 1;
+        while (i + cl < s.size() && ((u8)s[i + cl] & 0xC0) == 0x80) {
+            cl++;
+        }
+        if (s[i] == '\n') {
+            col = 0;
+            last_sp = std::string::npos;
+        } else if (col >= maxc) {
+            if (last_sp != std::string::npos) {
+                out[last_sp] = '\n'; // break at the last space instead
+                col = out.size() - last_sp - 1;
+            } else {
+                out += '\n';
+                col = 0;
+            }
+            last_sp = std::string::npos;
+        }
+        if (s[i] == ' ') {
+            last_sp = out.size();
+        }
+        out.append(s, i, cl);
+        col++;
+        i += cl;
+    }
+    return out;
+}
+
+// Lines shown in the debug-log viewer (newest first), kept for the detail
+// dialog on A.
+static std::vector<std::string> g_debug_lines;
 
 void MainApplication::GotoDebugLog() {
     this->screen = Screen::DebugLog;
@@ -1865,8 +1998,10 @@ void MainApplication::GotoDebugLog() {
     }
     const int max_lines = 500;
     int shown = 0;
+    g_debug_lines.clear();
     for (int i = (int)lines.size() - 1; i >= 0 && shown < max_lines; i--) {
         this->layout->AddRow(lines[i]);
+        g_debug_lines.push_back(lines[i]);
         shown++;
     }
     if (shown == 0) {
@@ -1875,6 +2010,68 @@ void MainApplication::GotoDebugLog() {
         char info[64];
         snprintf(info, sizeof(info), "%d / %d", shown, (int)lines.size());
         this->layout->SetRomInfo(info);
+    }
+}
+
+// Persisted queue data (queue.json) shown in the viewer, one detail string
+// per row for the A dialog.
+static std::vector<std::string> g_qstate_details;
+
+void MainApplication::GotoQueueState() {
+    this->screen = Screen::QueueState;
+    this->layout->SetTitle(tr(S_TITLE_QUEUE_STATE));
+    this->layout->SetSubtitle(tr(S_SUB_QUEUE_STATE));
+    this->layout->ClearMenu();
+    g_qstate_details.clear();
+    size_t len = 0;
+    char *body = json_read_file(QUEUE_STATE_PATH, &len);
+    if (body) {
+        int ntok = 0;
+        jsmntok_t *tok = json_parse_alloc(body, len, &ntok);
+        int arr = (tok && tok[0].type == JSMN_OBJECT)
+                      ? json_obj_get(body, tok, 0, "items")
+                      : -1;
+        if (arr >= 0 && tok[arr].type == JSMN_ARRAY) {
+            int child = arr + 1;
+            for (int i = 0; i < tok[arr].size; i++) {
+                if (tok[child].type == JSMN_OBJECT) {
+                    char name[520] = "", target[64] = "", url[1200] = "";
+                    json_copy(body, tok,
+                              json_obj_get(body, tok, child, "name"), name,
+                              sizeof(name));
+                    json_copy(body, tok,
+                              json_obj_get(body, tok, child, "target"),
+                              target, sizeof(target));
+                    json_copy(body, tok,
+                              json_obj_get(body, tok, child, "url"), url,
+                              sizeof(url));
+                    uint64_t size = json_u64(
+                        body, tok, json_obj_get(body, tok, child, "size"));
+                    bool downloaded = json_bool(
+                        body, tok,
+                        json_obj_get(body, tok, child, "downloaded"));
+                    char left[600];
+                    snprintf(left, sizeof(left), "[%s] %s", target, name);
+                    this->layout->AddRow2(left, human_size(size),
+                                          g_theme->row_text,
+                                          size_color(size), -1.0f,
+                                          console_icon(target),
+                                          downloaded ? "wait-unz" : "wait");
+                    std::string d = std::string(name) + "\n[" + target +
+                                    "]  " + human_size(size) +
+                                    (downloaded ? "  ·  wait-unz" : "") +
+                                    "\n" + url;
+                    g_qstate_details.push_back(d);
+                }
+                child = json_tok_skip(tok, child);
+            }
+        }
+        free(tok);
+        free(body);
+    }
+    if (g_qstate_details.empty()) {
+        this->layout->SetEmptyState(console_icon("default"),
+                                    tr(S_QUEUE_EMPTY));
     }
 }
 
@@ -2161,8 +2358,22 @@ void MainApplication::GotoInstalled(const std::string &path) {
         DirEnt &e = g_inst[i];
         if (e.is_dir) {
             int n = count_dir_entries(path + "/" + e.name);
+            uint64_t bytes = dir_total_size(path + "/" + e.name);
             char cnt[32];
             snprintf(cnt, sizeof(cnt), tr(S_N_APPS), n);
+            // Chip text with the folder's total size: cards lead with the
+            // size ("1.2 GB · 12 apps"), rows append it ("12 apps · 1.2 GB"),
+            // both dot-joined like the Browse tab's chips.
+            char card_sub[64], row_sub[64];
+            if (bytes > 0) {
+                snprintf(card_sub, sizeof(card_sub), "%s · %s",
+                         human_size(bytes).c_str(), cnt);
+                snprintf(row_sub, sizeof(row_sub), "%s · %s", cnt,
+                         human_size(bytes).c_str());
+            } else {
+                snprintf(card_sub, sizeof(card_sub), "%s", cnt);
+                snprintf(row_sub, sizeof(row_sub), "%s", cnt);
+            }
             std::string label;
             bool pinned = path == roms_root(&g_tico) &&
                           prefs_dir_pinned(&g_prefs, e.name.c_str());
@@ -2173,9 +2384,9 @@ void MainApplication::GotoInstalled(const std::string &path) {
                                        ? console_icon(e.name.c_str())
                                        : nullptr;
             if (cards) {
-                // Card: full name title (wrappable) + app count beneath.
-                this->layout->AddCard(full ? full : e.name.c_str(), cnt, ic,
-                                      pinned);
+                // Card: full name title (wrappable) + size/app count beneath.
+                this->layout->AddCard(full ? full : e.name.c_str(), card_sub,
+                                      ic, pinned);
                 continue;
             }
             label += tr(S_DIR_PREFIX);
@@ -2188,7 +2399,7 @@ void MainApplication::GotoInstalled(const std::string &path) {
                 label += e.name;
             }
             {
-                this->layout->AddRow2(label, cnt, g_theme->row_text,
+                this->layout->AddRow2(label, row_sub, g_theme->row_text,
                                       count_color(), -1.0f, ic, "", false,
                                       true, pinned);
             }
@@ -2204,7 +2415,8 @@ void MainApplication::GotoInstalled(const std::string &path) {
         }
     }
     if (g_inst.empty()) {
-        this->layout->SetEmptyState(console_icon("default"), tr(S_EMPTY));
+        this->layout->SetEmptyState(console_icon("default"), tr(S_EMPTY),
+                                    tr(S_INSTALLED_EMPTY_HINT));
     } else if (cards) {
         this->layout->SetCardsMode(true);
     }
@@ -2582,6 +2794,33 @@ void MainApplication::HandleInput(u64 down, u64 held,
         }
         tch_prev = tch_now;
     }
+    // Touch: a horizontal swipe across the content area flips tabs (swipe
+    // left = next tab), matching the strip above it. The list/grid treat
+    // horizontal movement as a drag, so the swipe never taps a row.
+    {
+        static bool sw_on = false;
+        static s32 sw_x0 = 0, sw_y0 = 0, sw_x1 = 0, sw_y1 = 0;
+        if (!touch.IsEmpty()) {
+            if (!sw_on) {
+                sw_on = true;
+                sw_x0 = sw_x1 = touch.x;
+                sw_y0 = sw_y1 = touch.y;
+            } else {
+                sw_x1 = touch.x;
+                sw_y1 = touch.y;
+            }
+        } else if (sw_on) {
+            sw_on = false;
+            s32 dx = sw_x1 - sw_x0, dy = sw_y1 - sw_y0;
+            s32 adx = dx < 0 ? -dx : dx, ady = dy < 0 ? -dy : dy;
+            if (sw_y0 >= 158 &&
+                sw_y0 < (s32)pu::ui::render::ScreenHeight - 64 &&
+                adx >= 140 && ady <= 60 && adx > 2 * ady) {
+                this->SwitchTab(dx < 0 ? 1 : -1);
+                return;
+            }
+        }
+    }
     if (this->layout->ConsumeTouchActivate()) {
         down |= HidNpadButton_A;
     }
@@ -2696,7 +2935,8 @@ void MainApplication::HandleInput(u64 down, u64 held,
                 this->layout->ClearMenu();
             }
             this->layout->SetEmptyState(console_icon("default"),
-                                        tr(S_QUEUE_EMPTY));
+                                        tr(S_QUEUE_EMPTY),
+                                        tr(S_QUEUE_EMPTY_HINT));
         } else {
         if (!this->layout->InCards()) {
             this->layout->ClearMenu(); // drop list rows / empty state once
@@ -2751,23 +2991,41 @@ void MainApplication::HandleInput(u64 down, u64 held,
                 sc = it->overwrote > 0 ? pu::ui::Color(245, 170, 90, 255)
                                        : accent_green();
             }
-            // Live progress adds a percent readout to the status corner.
+            // Terminal states keep a full ring: solid green when done,
+            // solid red when failed (ring 1/2 in CardGrid).
+            int ring = 0;
+            if (it->status == Q_DONE || it->status == Q_SAVED) {
+                prog = 1.0f;
+                ring = 1;
+            } else if (it->status == Q_FAILED) {
+                prog = 1.0f;
+                ring = 2;
+            }
+            // Waiting cards show their place in line.
+            int qpos = it->status == Q_QUEUED ? i + 1 : 0;
+            // Live progress adds a percent readout to the status corner
+            // (terminal states fill the ring but skip the redundant "100%").
             char st[48];
-            if (prog >= 0.0f) {
+            if (prog >= 0.0f && ring == 0) {
                 snprintf(st, sizeof(st), "%s %d%%", qstatus(it->status),
                          (int)(prog * 100.0f + 0.5f));
             } else {
                 snprintf(st, sizeof(st), "%s", qstatus(it->status));
             }
+            // Hero (tint + ring shimmer) covers the actively-worked item:
+            // downloading or unzipping.
             this->layout->SetQueueCard(i, it->target,
                                        console_icon(it->target),
                                        st, sc, c0, c1, c2,
                                        it->name, prog,
-                                       it->status == Q_DOWNLOADING);
+                                       it->status == Q_DOWNLOADING ||
+                                           it->status == Q_EXTRACTING,
+                                       ring, qpos);
         }
         // Offline with work pending: cards persist between frames, so also
-        // clear the note once the network is back.
-        const char *note = "";
+        // clear the note once the network is back. Online, the slot shows
+        // the queue summary instead.
+        std::string note;
         if (!g_net_ok) {
             for (int i = 0; i < n; i++) {
                 QStatus s = qv[i].item.status;
@@ -2777,30 +3035,35 @@ void MainApplication::HandleInput(u64 down, u64 held,
                 }
             }
         }
+        if (note.empty()) {
+            note = queue_summary(qv, n);
+        }
         this->layout->SetRomInfo(note);
         }
     } else if (this->screen == Screen::Queue) {
         static QueueView qv[QUEUE_MAX];
         s32 keep = this->layout->Sel();
         int n = queue_snapshot(qv, QUEUE_MAX);
-        this->layout->ClearMenu();
+        this->layout->ClearMenu(false); // rebuilt every frame: no enter fade
         for (int i = 0; i < n; i++) {
             const QueueItem *it = &qv[i].item;
             char info[80] = "";
             float prog = -1.0f; // no bar unless actively downloading
             if (it->status == Q_DOWNLOADING && it->total) {
                 prog = (float)it->now / (float)it->total;
-                // The bar shows percent; the text gives size, speed and ETA.
+                int pct = (int)(prog * 100.0f + 0.5f);
+                // The bar shows progress, the text adds the percent readout
+                // plus size, speed and ETA (matching the card view).
                 if (it->speed) {
                     uint64_t eta = (it->total > it->now)
                                        ? (it->total - it->now) / it->speed
                                        : 0;
-                    snprintf(info, sizeof(info), "%s @ %s/s  ~%s",
-                             human_size(it->total).c_str(),
+                    snprintf(info, sizeof(info), "%d%%  ·  %s @ %s/s  ~%s",
+                             pct, human_size(it->total).c_str(),
                              human_size(it->speed).c_str(),
                              human_eta(eta).c_str());
                 } else {
-                    snprintf(info, sizeof(info), "%s",
+                    snprintf(info, sizeof(info), "%d%%  ·  %s", pct,
                              human_size(it->total).c_str());
                 }
             } else if (it->status == Q_PAUSED && it->total) {
@@ -2814,7 +3077,13 @@ void MainApplication::HandleInput(u64 down, u64 held,
                 if (it->total) {
                     prog = (float)it->now / (float)it->total;
                 }
-                if (it->ex_files > 0) {
+                if (prog >= 0.0f && it->ex_files > 0) {
+                    snprintf(info, sizeof(info), "%d%% (%d)",
+                             (int)(prog * 100.0f + 0.5f), it->ex_files);
+                } else if (prog >= 0.0f) {
+                    snprintf(info, sizeof(info), "%d%%",
+                             (int)(prog * 100.0f + 0.5f));
+                } else if (it->ex_files > 0) {
                     snprintf(info, sizeof(info), "(%d)", it->ex_files);
                 }
             } else if (it->status == Q_FAILED && it->fail_reason[0]) {
@@ -2854,27 +3123,46 @@ void MainApplication::HandleInput(u64 down, u64 held,
                 pu::ui::Color newc = accent_green();
                 rc = it->overwrote > 0 ? pu::ui::Color(245, 170, 90, 255) : newc;
             }
-            // The active download is the "hero" row: accent background + a
-            // thicker progress bar.
-            bool accent = (it->status == Q_DOWNLOADING);
+            // Terminal states keep a full bar: solid green when done, red
+            // when failed (bar 1/2 in TableList, matching the card ring).
+            int bar = 0;
+            if (it->status == Q_DONE || it->status == Q_SAVED) {
+                prog = 1.0f;
+                bar = 1;
+            } else if (it->status == Q_FAILED) {
+                prog = 1.0f;
+                bar = 2;
+            }
+            // The actively-worked item (downloading or unzipping) is the
+            // "hero" row: accent background, thicker bar, shimmer.
+            bool accent = (it->status == Q_DOWNLOADING ||
+                           it->status == Q_EXTRACTING);
             this->layout->AddRow2(left, info, c, rc, prog,
-                                  console_icon(it->target), pfx, accent);
+                                  console_icon(it->target), pfx, accent,
+                                  true, false, bar);
         }
         if (n == 0) {
             this->layout->SetEmptyState(console_icon("default"),
-                                        tr(S_QUEUE_EMPTY));
+                                        tr(S_QUEUE_EMPTY),
+                                        tr(S_QUEUE_EMPTY_HINT));
         }
         this->layout->SetSel(keep);
         // Offline with work pending: say why nothing is moving (items sit at
         // "pause"/"wait" and resume automatically when the network returns).
+        // Online, the slot shows the queue summary instead.
+        bool offline_note = false;
         if (!g_net_ok) {
             for (int i = 0; i < n; i++) {
                 QStatus s = qv[i].item.status;
                 if (s == Q_QUEUED || s == Q_PAUSED || s == Q_DOWNLOADING) {
                     this->layout->SetRomInfo(tr(S_WAITING_NETWORK));
+                    offline_note = true;
                     break;
                 }
             }
+        }
+        if (!offline_note) {
+            this->layout->SetRomInfo(queue_summary(qv, n));
         }
     }
 
@@ -3478,8 +3766,9 @@ void MainApplication::HandleInput(u64 down, u64 held,
             this->GotoSettings();
         } else if (down & HidNpadButton_A) {
             switch (this->layout->Sel()) {
-            case 0: this->GotoLog(); return;      // download history
-            case 1: this->GotoDebugLog(); return; // debug.log
+            case 0: this->GotoLog(); return;        // download history
+            case 1: this->GotoDebugLog(); return;   // debug.log
+            case 2: this->GotoQueueState(); return; // queue.json
             default: break;
             }
         }
@@ -3489,11 +3778,41 @@ void MainApplication::HandleInput(u64 down, u64 held,
     case Screen::DebugLog: {
         if (down & HidNpadButton_B) {
             this->GotoViewLogs();
+        } else if (down & HidNpadButton_A) {
+            // Rows truncate long lines: show the full entry in a dialog.
+            s32 i = this->layout->Sel();
+            if (i >= 0 && i < (s32)g_debug_lines.size()) {
+                this->CreateShowDialog(tr(S_TITLE_DEBUG_LOG),
+                                       wrap_for_dialog(g_debug_lines[i]),
+                                       {tr(S_OK)}, true, {}, style_dialog);
+            }
         } else if (down & HidNpadButton_X) {
             if (this->ConfirmDanger(tr(S_CLEAR_LOG), tr(S_CLEAR_DEBUG_CONFIRM))) {
                 remove(LOG_PATH);
                 this->Toast(tr(S_LOG_CLEARED));
                 this->GotoDebugLog();
+            }
+        }
+        break;
+    }
+
+    case Screen::QueueState: {
+        if (down & HidNpadButton_B) {
+            this->GotoViewLogs();
+        } else if (down & HidNpadButton_A) {
+            s32 i = this->layout->Sel();
+            if (i >= 0 && i < (s32)g_qstate_details.size()) {
+                this->CreateShowDialog(tr(S_TITLE_QUEUE_STATE),
+                                       wrap_for_dialog(g_qstate_details[i]),
+                                       {tr(S_OK)}, true, {}, style_dialog);
+            }
+        } else if (down & HidNpadButton_X) {
+            if (!g_qstate_details.empty() &&
+                this->ConfirmDanger(tr(S_CLEAR_QUEUE_STATE),
+                                    tr(S_CLEAR_QUEUE_CONFIRM))) {
+                remove(QUEUE_STATE_PATH);
+                this->Toast(tr(S_CLEARED));
+                this->GotoQueueState();
             }
         }
         break;
@@ -3923,19 +4242,36 @@ void MainApplication::HandleInput(u64 down, u64 held,
                 this->GotoViewLogs(); // opened from Settings > View logs
             }
         } else if (down & HidNpadButton_A) {
+            // Rows truncate long lines: show the full entry in a dialog,
+            // with the re-download action inside it when available.
             s32 i = this->layout->Sel();
-            if (i >= 0 && i < (s32)g_log_entries.size() &&
-                g_log_entries[i].can_retry) {
+            if (i >= 0 && i < (s32)g_log_entries.size()) {
                 const LogEntry &e = g_log_entries[i];
-                char auth[320];
-                creds_auth_header(&g_creds, auth, sizeof(auth));
-                bool ok = queue_add(e.url.c_str(), e.name.c_str(),
-                                    e.target.c_str(), auth, e.size,
-                                    e.is_archive, e.md5.c_str());
-                if (ok)
-                    this->Toast(std::string(tr(S_QUEUED)) + ": " + e.name);
-                else
-                    this->ToastErr(tr(S_QUEUE_FULL));
+                std::string body = e.display;
+                if (!e.url.empty()) {
+                    body += "\n" + e.url;
+                }
+                if (e.can_retry) {
+                    int opt = this->CreateShowDialog(
+                        tr(S_TITLE_LOG), wrap_for_dialog(body),
+                        {tr(S_RETRY), tr(S_OK)}, true, {}, style_dialog);
+                    if (opt == 0) {
+                        char auth[320];
+                        creds_auth_header(&g_creds, auth, sizeof(auth));
+                        bool ok = queue_add(e.url.c_str(), e.name.c_str(),
+                                            e.target.c_str(), auth, e.size,
+                                            e.is_archive, e.md5.c_str());
+                        if (ok)
+                            this->Toast(std::string(tr(S_QUEUED)) + ": " +
+                                        e.name);
+                        else
+                            this->ToastErr(tr(S_QUEUE_FULL));
+                    }
+                } else {
+                    this->CreateShowDialog(tr(S_TITLE_LOG),
+                                           wrap_for_dialog(body), {tr(S_OK)},
+                                           true, {}, style_dialog);
+                }
             }
         } else if (down & HidNpadButton_X) {
             if (this->ConfirmDanger(tr(S_CLEAR_LOG),

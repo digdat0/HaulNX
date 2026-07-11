@@ -267,6 +267,22 @@ enum {
     /* ---- destructive-action warning ---- */
     S_CANT_UNDO,
 
+    /* ---- empty-state hints ---- */
+    S_QUEUE_EMPTY_HINT,
+    S_INSTALLED_EMPTY_HINT,
+
+    /* ---- queue header summary ---- */
+    S_QUEUE_N_ACTIVE,
+    S_QUEUE_N_WAITING,
+    S_QUEUE_N_FAILED,
+
+    /* ---- persisted queue-data viewer (View logs) ---- */
+    S_QUEUE_STATE,
+    S_TITLE_QUEUE_STATE,
+    S_SUB_QUEUE_STATE,
+    S_CLEAR_QUEUE_STATE,
+    S_CLEAR_QUEUE_CONFIRM,
+
     S__COUNT
 };
 
