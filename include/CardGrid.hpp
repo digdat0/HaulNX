@@ -95,10 +95,10 @@ class CardGrid : public pu::ui::elm::Element {
     static constexpr s32 DragThreshold = 16;
     // Single-card mode (self-update download): one enlarged queue-style card
     // centred in the element.
-    static constexpr s32 SingleW = 420;
-    static constexpr s32 SingleH = 340;
-    static constexpr s32 SingleRadius = 18;
-    static constexpr s32 SingleIconPx = 176;
+    static constexpr s32 SingleW = 840;
+    static constexpr s32 SingleH = 480;
+    static constexpr s32 SingleRadius = 22;
+    static constexpr s32 SingleIconPx = 256;
     bool single = false;
 
     s32 CardW() const { return (this->w - 2 * Margin - (Cols - 1) * Gap) / Cols; }
@@ -524,6 +524,13 @@ class CardGrid : public pu::ui::elm::Element {
         cd.hero = hero;
         cd.ring = ring;
         const s32 cw = this->single ? SingleW : this->CardW();
+        // The huge single card gets a size tier up on every text run.
+        const std::string txt_font =
+            this->single ? this->font_sub : this->font_tiny;
+        const std::string st_font =
+            this->single
+                ? pu::ui::GetDefaultFont(pu::ui::DefaultFontSize::Medium)
+                : this->font_sub;
         const bool recolor = cd.st_clr.r != st_clr.r ||
                              cd.st_clr.g != st_clr.g ||
                              cd.st_clr.b != st_clr.b ||
@@ -532,9 +539,9 @@ class CardGrid : public pu::ui::elm::Element {
         // Corner labels (console name left, status right) frame a big
         // centred icon, browse-card style.
         this->UpdText(ce.t1_tex, ce.t1w, ce.t1h, cd.title, console,
-                      this->font_tiny, this->title_clr, (u32)(cw - 120));
+                      txt_font, this->title_clr, (u32)(cw - 120));
         this->UpdText(ce.st_tex, ce.stw, ce.sth, cd.status, status,
-                      this->font_sub, st_clr, (u32)(cw / 2 - 20), recolor);
+                      st_font, st_clr, (u32)(cw / 2 - 20), recolor);
         // size / speed / eta join into one pill, like the list view's chip.
         std::string chip = size;
         if (!speed.empty()) {
@@ -544,7 +551,7 @@ class CardGrid : public pu::ui::elm::Element {
             chip += (chip.empty() ? "" : " · ") + eta;
         }
         this->UpdText(ce.ch_tex, ce.chw, ce.chh, cd.chip, chip,
-                      this->font_tiny, this->sub_clr, (u32)(cw - 48));
+                      txt_font, this->sub_clr, (u32)(cw - 48));
         // Queue-position badge ("#2") for waiting cards.
         this->UpdText(ce.qp_tex, ce.qpw, ce.qph, cd.badge,
                       qpos > 0 ? "#" + std::to_string(qpos) : "",
@@ -555,12 +562,12 @@ class CardGrid : public pu::ui::elm::Element {
             cd.file = file;
             std::string l1, l2;
             if (!file.empty()) {
-                this->SplitTitle(file, this->font_tiny, cw - 36, l1, l2);
+                this->SplitTitle(file, txt_font, cw - 36, l1, l2);
             }
-            this->UpdText(ce.f_tex, ce.fw, ce.fh, cd.f1, l1, this->font_tiny,
+            this->UpdText(ce.f_tex, ce.fw, ce.fh, cd.f1, l1, txt_font,
                           this->sub_clr, (u32)(cw - 36));
             this->UpdText(ce.f2_tex, ce.f2w, ce.f2h, cd.f2, l2,
-                          this->font_tiny, this->sub_clr, (u32)(cw - 36));
+                          txt_font, this->sub_clr, (u32)(cw - 36));
         }
     }
 
@@ -664,17 +671,22 @@ class CardGrid : public pu::ui::elm::Element {
                                         cx + rad, cy, scw - 2 * rad, 1);
             drawer->RenderRectangleFill(pu::ui::Color(0, 0, 0, 50), cx + rad,
                                         cy + sch - 1, scw - 2 * rad, 1);
+            // Vertical layout, top to bottom: corner labels, big icon,
+            // wrapped filename, chip pill — spaced out for the large card.
+            const s32 ic_top = 76;             // icon top offset from cy
+            const s32 isz = SingleIconPx;
+            const s32 ic_bot = ic_top + isz;   // icon bottom offset
+            const s32 chip_y = sch - 60;       // chip near the bottom edge
             if (qc.t1_tex) {
-                drawer->RenderTexture(qc.t1_tex, cx + 24, cy + 22);
+                drawer->RenderTexture(qc.t1_tex, cx + 30, cy + 30);
             }
             if (qc.st_tex) {
-                drawer->RenderTexture(qc.st_tex, cx + scw - 24 - qc.stw,
-                                      cy + 20);
+                drawer->RenderTexture(qc.st_tex, cx + scw - 30 - qc.stw,
+                                      cy + 28);
             }
             if (cd.icon) {
-                const s32 isz = SingleIconPx;
                 s32 gcx = cx + scw / 2;
-                s32 gcy = cy + 24 + isz / 2;
+                s32 gcy = cy + ic_top + isz / 2;
                 for (s32 g = 0; g < 4; g++) {
                     auto gc = this->glow_clr;
                     gc.a = (u8)(14 + 5 * g);
@@ -684,11 +696,14 @@ class CardGrid : public pu::ui::elm::Element {
                 pu::ui::render::TextureRenderOptions o;
                 o.width = isz;
                 o.height = isz;
-                drawer->RenderTexture(cd.icon, cx + (scw - isz) / 2, cy + 24,
-                                      o);
+                drawer->RenderTexture(cd.icon, cx + (scw - isz) / 2,
+                                      cy + ic_top, o);
             }
             if (qc.f_tex) {
-                s32 fy = qc.f2_tex ? cy + 218 : cy + 232;
+                // Sit the filename block in the gap between icon and chip,
+                // centred vertically there.
+                s32 fh = qc.fh + (qc.f2_tex ? qc.f2h + 2 : 0);
+                s32 fy = cy + ic_bot + (chip_y - ic_bot - fh) / 2;
                 drawer->RenderTexture(qc.f_tex, cx + (scw - qc.fw) / 2, fy);
                 if (qc.f2_tex) {
                     drawer->RenderTexture(qc.f2_tex,
@@ -698,12 +713,12 @@ class CardGrid : public pu::ui::elm::Element {
             }
             if (qc.ch_tex) {
                 s32 sx = cx + (scw - qc.chw) / 2;
-                const s32 padx = 12, pady = 4;
+                const s32 padx = 14, pady = 5;
                 drawer->RenderRoundedRectangleFill(
-                    this->pill_clr, sx - padx, cy + 292 - pady,
+                    this->pill_clr, sx - padx, cy + chip_y - pady,
                     qc.chw + 2 * padx, qc.chh + 2 * pady,
                     (qc.chh + 2 * pady) / 2);
-                drawer->RenderTexture(qc.ch_tex, sx, cy + 292);
+                drawer->RenderTexture(qc.ch_tex, sx, cy + chip_y);
             }
             if (cd.prog >= 0.0f) {
                 this->DrawRing(drawer, cx, cy, scw, sch, rad, 5, 8, cd.prog,
