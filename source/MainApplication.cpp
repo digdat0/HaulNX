@@ -81,26 +81,30 @@ struct AppTheme {
     pu::ui::Color tl_mark;
 };
 
+// Logo-derived palette: charcoal shell, electric green for activity, blue for
+// selection/values. (Green = the logo's download arrow; blue = the "+".)
 static const AppTheme g_theme_dark = {
-    {12,12,14,255},       {28,54,104,255},     {58,104,178,255},
-    {22,42,80,255},       {255,255,255,255},   {210,222,245,255},
-    {196,212,240,255},    {255,255,255,255},   {150,205,255,255},
-    {206,216,238,255},    {150,160,185,255},   {232,234,240,255},
-    {28,54,104,255},      {255,255,255,255},   {210,222,245,255},
-    {255,255,255,255},    {40,75,140,255},
-    {22,23,27,255},       {28,30,36,255},      {45,95,180,255},
-    {80,86,100,255},      {60,80,120,255},
+    {12,12,14,255},       {23,25,30,255},      {16,17,21,255},
+    {23,25,30,255},       {255,255,255,255},   {198,205,215,255},
+    {168,176,188,255},    {14,16,18,255},      {146,214,36,255},
+    {192,199,210,255},    {150,160,185,255},   {232,234,240,255},
+    {26,28,34,255},       {255,255,255,255},   {205,212,222,255},
+    {255,255,255,255},    {42,46,56,255},
+    {22,23,27,255},       {28,30,36,255},      {40,44,53,255},
+    {80,86,100,255},      {42,56,30,255},
 };
 
+// Light theme keeps the charcoal header/tab shell (the logo's "case") over a
+// light content area; the same green pill/pulse reads on the dark shell.
 static const AppTheme g_theme_light = {
-    {235,237,242,255},    {45,90,170,255},     {180,200,230,255},
-    {200,210,230,255},    {255,255,255,255},   {220,230,250,255},
-    {70,85,120,255},      {20,20,30,255},      {50,120,200,255},
-    {50,60,80,255},       {90,100,120,255},    {0,0,0,255},
-    {210,218,235,255},    {30,30,40,255},      {50,60,80,255},
-    {30,30,40,255},       {170,190,220,255},
-    {225,228,234,255},    {215,218,224,255},   {115,155,215,255},
-    {160,168,185,255},    {170,190,220,255},
+    {235,237,242,255},    {30,33,40,255},      {23,25,31,255},
+    {30,33,40,255},       {255,255,255,255},   {200,207,217,255},
+    {150,158,172,255},    {14,16,18,255},      {146,214,36,255},
+    {185,192,204,255},    {90,100,120,255},    {0,0,0,255},
+    {222,225,231,255},    {30,30,40,255},      {50,60,80,255},
+    {30,30,40,255},       {46,50,60,255},
+    {225,228,234,255},    {215,218,224,255},   {206,211,220,255},
+    {160,168,185,255},    {214,226,196,255},
 };
 
 static const AppTheme *g_theme = &g_theme_dark;
@@ -167,6 +171,13 @@ static std::string human_size(uint64_t bytes) {
     return std::string(buf);
 }
 
+// Logo green, theme-adjusted: bright on the dark theme, deeper on light so it
+// keeps contrast on light rows.
+static pu::ui::Color accent_green() {
+    return is_light_theme() ? pu::ui::Color(52, 106, 14, 255)
+                            : pu::ui::Color(146, 214, 36, 255);
+}
+
 // Color-code a row by file size magnitude (KB / MB / GB), restoring the size
 // color cues the text UI had. (Plutonium colors a whole row, not just the size
 // token, so the whole row takes the tier color.)
@@ -177,8 +188,7 @@ static pu::ui::Color size_color(uint64_t b) {
                      : pu::ui::Color(245, 175, 95, 255);
     }
     if (b >= (1ull << 20)) {
-        return light ? pu::ui::Color(30, 140, 60, 255)
-                     : pu::ui::Color(130, 225, 150, 255);
+        return accent_green();
     }
     return light ? pu::ui::Color(40, 120, 200, 255)
                  : pu::ui::Color(150, 205, 255, 255);
@@ -343,7 +353,7 @@ static const char *qstatus(QStatus s) {
 static pu::ui::Color qstatus_color(QStatus s) {
     bool light = is_light_theme();
     switch (s) {
-    case Q_DOWNLOADING: return light ? pu::ui::Color(20, 80, 180, 255)
+    case Q_DOWNLOADING: return light ? accent_green()
                                      : pu::ui::Color(245, 246, 250, 255);
     case Q_PAUSED:      return light ? pu::ui::Color(40, 120, 200, 255)
                                      : pu::ui::Color(150, 205, 255, 255);
@@ -351,8 +361,7 @@ static pu::ui::Color qstatus_color(QStatus s) {
     case Q_AWAIT_EXTRACT:
     case Q_EXTRACTING:  return light ? pu::ui::Color(150, 100, 15, 255)
                                      : pu::ui::Color(210, 185, 120, 255);
-    case Q_DONE:        return light ? pu::ui::Color(16, 95, 44, 255)
-                                     : pu::ui::Color(130, 225, 150, 255);
+    case Q_DONE:        return accent_green();
     case Q_SAVED:       return light ? pu::ui::Color(95, 110, 25, 255)
                                      : pu::ui::Color(190, 205, 130, 255);
     case Q_FAILED:      return light ? pu::ui::Color(185, 35, 35, 255)
@@ -742,7 +751,22 @@ MainLayout::MainLayout() : Layout::Layout() {
     this->Add(this->header_logo);
 
     const s32 title_x = g_header_logo ? logo_x + logo_sz + 16 : 45;
-    this->title = pu::ui::elm::TextBlock::New(title_x, 24, "TicoDL+");
+    // Tri-colour wordmark echoing the icon lockup; constant colours since the
+    // header shell stays charcoal in both themes.
+    s32 wx = title_x;
+    this->wm_tico = pu::ui::elm::TextBlock::New(wx, 24, "Tico");
+    this->wm_tico->SetColor(pu::ui::Color(146, 214, 36, 255));
+    this->Add(this->wm_tico);
+    wx += this->wm_tico->GetWidth();
+    this->wm_dl = pu::ui::elm::TextBlock::New(wx, 24, "DL");
+    this->wm_dl->SetColor(pu::ui::Color(255, 255, 255, 255));
+    this->Add(this->wm_dl);
+    wx += this->wm_dl->GetWidth();
+    this->wm_plus = pu::ui::elm::TextBlock::New(wx, 24, "+");
+    this->wm_plus->SetColor(pu::ui::Color(66, 138, 230, 255));
+    this->Add(this->wm_plus);
+    wx += this->wm_plus->GetWidth();
+    this->title = pu::ui::elm::TextBlock::New(wx + 24, 24, " ");
     this->title->SetColor(g_theme->title_clr);
     this->Add(this->title);
 
@@ -784,6 +808,13 @@ MainLayout::MainLayout() : Layout::Layout() {
         this->Add(tb);
         this->tabs.push_back(tb);
     }
+
+    // The icon's ring gradient as a signature strip along the bottom edge of
+    // the charcoal shell (constant in both themes — the shell stays charcoal).
+    this->accent_line = GradientLineElement::New(
+        0, strip_y + strip_h, sw, 3, pu::ui::Color(146, 214, 36, 255),
+        pu::ui::Color(56, 130, 225, 255));
+    this->Add(this->accent_line);
 
     const s32 footer_h = 64;
     const s32 list_y = 158;
@@ -828,7 +859,8 @@ MainLayout::MainLayout() : Layout::Layout() {
 
     // "Downloads running" pulse on the Queue tab (positioned in SetActiveTab).
     this->queue_dot = PulseDotElement::New(0, 0, 6);
-    this->queue_dot->SetColor(g_theme->tab_under);
+    // Bright logo green in both themes: the dot sits on the charcoal shell.
+    this->queue_dot->SetColor(pu::ui::Color(146, 214, 36, 255));
     this->Add(this->queue_dot);
 
     this->SetActiveTab(0);
@@ -844,25 +876,21 @@ void MainLayout::ApplyTheme() {
     this->bat_info->SetColor(g_theme->status_clr);
     this->rom_info->SetColor(g_theme->rom_info_clr);
     this->tab_pill->SetColor(g_theme->tab_under);
-    this->queue_dot->SetColor(g_theme->tab_under);
+    this->queue_dot->SetColor(pu::ui::Color(146, 214, 36, 255));
     this->empty_text->SetColor(g_theme->rom_info_clr);
-    this->spinner->SetColors(is_light_theme()
-                                 ? pu::ui::Color(35, 100, 200, 255)
-                                 : pu::ui::Color(120, 170, 245, 255),
-                             g_theme->rom_info_clr);
+    this->spinner->SetColors(accent_green(), g_theme->rom_info_clr);
     for (auto &s : this->footer_segs)
         s->SetColor(g_theme->footer_clr);
     for (auto &t : this->tabs)
         t->SetColor(g_theme->tab_clr);
+    // Activity = logo green: progress bars and the active-download hero tint.
     this->list->SetThemeColors(g_theme->tl_row_bg, g_theme->tl_row_alt,
                                g_theme->tl_focus, g_theme->tl_scroll,
                                g_theme->tl_mark,
+                               accent_green(),
                                is_light_theme()
-                                   ? pu::ui::Color(35, 100, 200, 255)
-                                   : pu::ui::Color(100, 170, 245, 255),
-                               is_light_theme()
-                                   ? pu::ui::Color(200, 214, 238, 255)
-                                   : pu::ui::Color(30, 60, 85, 255),
+                                   ? pu::ui::Color(213, 231, 186, 255)
+                                   : pu::ui::Color(34, 54, 20, 255),
                                // Darkening chip: reads consistently on normal,
                                // accent (active-download) and selected rows —
                                // and never matches the blue progress bar.
@@ -875,7 +903,10 @@ void MainLayout::ApplyTheme() {
                                g_theme->row_text,
                                is_light_theme()
                                    ? pu::ui::Color(45, 55, 75, 255)
-                                   : pu::ui::Color(195, 205, 225, 255));
+                                   : pu::ui::Color(195, 205, 225, 255),
+                               accent_green(),
+                               is_light_theme() ? pu::ui::Color(0, 0, 0, 34)
+                                                : pu::ui::Color(0, 0, 0, 95));
 }
 
 void MainLayout::SetActiveTab(int idx) {
@@ -913,9 +944,9 @@ void MainLayout::RefreshTabs() {
 }
 
 void MainLayout::SetTitle(const std::string &t) {
-    // Keep the app name visible alongside the per-screen breadcrumb.
-    this->title->SetText(t.empty() ? std::string("TicoDL+")
-                                   : std::string("TicoDL+     ") + t);
+    // The wordmark blocks stay put; this is only the per-screen breadcrumb.
+    // (Space, not empty: TextBlock re-renders its texture on every SetText.)
+    this->title->SetText(t.empty() ? std::string(" ") : t);
     // Default: no console icon (screens with one call SetTitleIcon after this).
     this->title_icon->SetTexture(nullptr);
 }
@@ -981,6 +1012,8 @@ void MainLayout::SetSubtitle(const std::string &t) {
 
     const s32 sw = (s32)pu::ui::render::ScreenWidth;
     const s32 margin = 30;
+    const s32 seg_gap = 14; // minimum air between neighbouring segments
+    s32 prev_right = margin - seg_gap;
     int n = (int)segs.size();
     for (int k = 0; k < (int)this->footer_segs.size(); k++) {
         if (k < n) {
@@ -989,9 +1022,12 @@ void MainLayout::SetSubtitle(const std::string &t) {
             s32 center = margin + cell * k + cell / 2;
             s32 w = this->footer_segs[k]->GetWidth();
             s32 x = center - w / 2;
-            // A segment wider than its cell (e.g. the update progress text
-            // once the sizes grow) must stay on screen: clamp to the margins
-            // rather than sliding off the left/right edge.
+            // A segment wider than its cell must not overlap its neighbour:
+            // push it right past the previous segment, and clamp to the
+            // screen margins rather than sliding off the left/right edge.
+            if (x < prev_right + seg_gap) {
+                x = prev_right + seg_gap;
+            }
             if (x + w > sw - margin) {
                 x = sw - margin - w;
             }
@@ -999,6 +1035,7 @@ void MainLayout::SetSubtitle(const std::string &t) {
                 x = margin;
             }
             this->footer_segs[k]->SetX(x);
+            prev_right = x + w;
         } else {
             this->footer_segs[k]->SetText("");
         }
@@ -1094,7 +1131,7 @@ void MainLayout::ClearMarks() { this->list->ClearMarks(); }
 void MainApplication::Toast(const std::string &msg) {
     auto tb = pu::ui::elm::TextBlock::New(0, 0, msg);
     tb->SetColor(pu::ui::Color(255, 255, 255, 255));
-    auto t = pu::ui::extras::Toast::New(tb, pu::ui::Color(46, 120, 78, 240));
+    auto t = pu::ui::extras::Toast::New(tb, pu::ui::Color(58, 110, 22, 240));
     this->StartOverlayWithTimeout(t, 1200);
 }
 
@@ -1158,7 +1195,7 @@ void MainApplication::RefreshStatus() {
         int lvl = (ntype == NifmInternetConnectionType_Ethernet) ? 3
                   : (wstr > 3)                                   ? 3
                                                                  : (int)wstr;
-        this->layout->SetNetIcon(bars[lvl], pu::ui::Color(80, 210, 120, 255));
+        this->layout->SetNetIcon(bars[lvl], pu::ui::Color(146, 214, 36, 255));
     } else {
         this->layout->SetNetIcon("───", pu::ui::Color(200, 60, 60, 255));
     }
@@ -1316,6 +1353,7 @@ MainApplication::Tab MainApplication::CurrentTab() {
     case Screen::Manage:
     case Screen::Creds:
     case Screen::Advanced:
+    case Screen::UISettings:
     case Screen::Downloads:
     case Screen::Language:
     case Screen::Cache:
@@ -1418,8 +1456,7 @@ static std::string settings_label(const char *fmt) {
 static pu::ui::Color onoff_color(bool on) {
     bool light = is_light_theme();
     if (on) {
-        return light ? pu::ui::Color(16, 95, 44, 255)
-                     : pu::ui::Color(130, 225, 150, 255);
+        return accent_green();
     }
     return light ? pu::ui::Color(120, 122, 132, 255)
                  : pu::ui::Color(135, 140, 155, 255);
@@ -1442,20 +1479,16 @@ void MainApplication::GotoSettings() {
     pu::ui::Color chv = chevron_color();
     this->layout->AddRow2(tr(S_CHECK_UPDATES), CHEVRON, lbl, chv, -1.0f,
                           nullptr, "", false, false);                          // 0
-    this->layout->AddRow2(tr(S_ADVANCED), CHEVRON, lbl, chv, -1.0f, nullptr,
+    this->layout->AddRow2(tr(S_UI_SETTINGS), CHEVRON, lbl, chv, -1.0f, nullptr,
                           "", false, false);                                  // 1
-    this->layout->AddRow2(tr(S_VIEW_LOGS), CHEVRON, lbl, chv, -1.0f, nullptr,
+    this->layout->AddRow2(tr(S_ADVANCED), CHEVRON, lbl, chv, -1.0f, nullptr,
                           "", false, false);                                  // 2
-    this->layout->AddRow2(tr(S_MANAGE_DATA), CHEVRON, lbl, chv, -1.0f, nullptr,
+    this->layout->AddRow2(tr(S_VIEW_LOGS), CHEVRON, lbl, chv, -1.0f, nullptr,
                           "", false, false);                                  // 3
-    const char *cur = g_prefs.lang[0] ? g_prefs.lang : "en";
-    this->layout->AddRow2(settings_label(tr(S_LANGUAGE)), lang_display_name(cur),
-                          lbl, value_color());                                 // 4
-    this->layout->AddRow2(settings_label(tr(S_THEME)),
-                          is_light_theme() ? tr(S_THEME_LIGHT) : tr(S_THEME_DARK),
-                          lbl, value_color());                                 // 5
+    this->layout->AddRow2(tr(S_MANAGE_DATA), CHEVRON, lbl, chv, -1.0f, nullptr,
+                          "", false, false);                                  // 4
     this->layout->AddRow2(tr(S_CREDITS), CHEVRON, lbl, chv, -1.0f, nullptr, "",
-                          false, false);                                       // 6
+                          false, false);                                       // 5
     char ri[600];
     snprintf(ri, sizeof(ri), tr(S_ROM_FOLDER), roms_root(&g_tico));
     this->layout->SetRomInfo(ri);
@@ -1467,14 +1500,18 @@ void MainApplication::GotoAdvanced() {
     this->layout->SetSubtitle(tr(S_SUB_ADVANCED));
     this->layout->ClearMenu();
     pu::ui::Color lbl = g_theme->row_text;
-    this->layout->AddRow2(tr(S_MANAGE_CONSOLES), CHEVRON, lbl, chevron_color(),
-                          -1.0f, nullptr, "", false, false);       // 0
     bool b;
+    {
+        char v[16];
+        snprintf(v, sizeof(v), "%d", g_prefs.max_downloads);
+        this->layout->AddRow2(settings_label(tr(S_MAX_DOWNLOADS)), v, lbl,
+                              value_color());                      // 0
+    }
     b = g_prefs.prevent_sleep;
     this->layout->AddRow2(settings_label(tr(S_STAY_AWAKE)),
                           b ? tr(S_ON) : tr(S_OFF), lbl, onoff_color(b)); // 1
-    b = g_prefs.group_consoles;
-    this->layout->AddRow2(settings_label(tr(S_GROUP_CONSOLES)),
+    b = g_prefs.net_check;
+    this->layout->AddRow2(settings_label(tr(S_NET_CHECK_STARTUP)),
                           b ? tr(S_ON) : tr(S_OFF), lbl, onoff_color(b)); // 2
     b = g_creds.access_key[0] != '\0';
     this->layout->AddRow2(settings_label(tr(S_ARCHIVE_CREDS)),
@@ -1482,18 +1519,28 @@ void MainApplication::GotoAdvanced() {
     b = g_prefs.use_cache;
     this->layout->AddRow2(settings_label(tr(S_META_CACHE)),
                           b ? tr(S_ON) : tr(S_OFF), lbl, onoff_color(b)); // 4
-    {
-        char v[16];
-        snprintf(v, sizeof(v), "%d", g_prefs.max_downloads);
-        this->layout->AddRow2(settings_label(tr(S_MAX_DOWNLOADS)), v, lbl,
-                              value_color());                      // 5
-    }
-    b = g_prefs.net_check;
-    this->layout->AddRow2(settings_label(tr(S_NET_CHECK_STARTUP)),
-                          b ? tr(S_ON) : tr(S_OFF), lbl, onoff_color(b)); // 6
-    b = g_prefs.card_view;
+}
+
+void MainApplication::GotoUISettings() {
+    this->screen = Screen::UISettings;
+    this->layout->SetTitle(tr(S_TITLE_UI_SETTINGS));
+    this->layout->SetSubtitle(tr(S_SUB_UI_SETTINGS));
+    this->layout->ClearMenu();
+    pu::ui::Color lbl = g_theme->row_text;
+    bool b = g_prefs.card_view;
     this->layout->AddRow2(settings_label(tr(S_CARD_VIEW)),
-                          b ? tr(S_ON) : tr(S_OFF), lbl, onoff_color(b)); // 7
+                          b ? tr(S_ON) : tr(S_OFF), lbl, onoff_color(b)); // 0
+    this->layout->AddRow2(settings_label(tr(S_THEME)),
+                          is_light_theme() ? tr(S_THEME_LIGHT) : tr(S_THEME_DARK),
+                          lbl, value_color());                                 // 1
+    const char *cur = g_prefs.lang[0] ? g_prefs.lang : "en";
+    this->layout->AddRow2(settings_label(tr(S_LANGUAGE)), lang_display_name(cur),
+                          lbl, value_color());                                 // 2
+    b = g_prefs.group_consoles;
+    this->layout->AddRow2(settings_label(tr(S_GROUP_CONSOLES)),
+                          b ? tr(S_ON) : tr(S_OFF), lbl, onoff_color(b)); // 3
+    this->layout->AddRow2(tr(S_MANAGE_CONSOLES), CHEVRON, lbl, chevron_color(),
+                          -1.0f, nullptr, "", false, false);       // 4
 }
 
 void MainApplication::GotoDownloads() {
@@ -1882,8 +1929,7 @@ void MainApplication::GotoLanguage() {
         this->layout->AddRow2(
             g_langs[i].label, active ? "◀" : "",
             g_theme->row_text,
-            is_light_theme() ? pu::ui::Color(20, 115, 165, 255)
-                             : pu::ui::Color(100, 210, 255, 255),
+            accent_green(),
             -1.0f, nullptr, "", false, false);
     }
 }
@@ -1896,8 +1942,7 @@ void MainApplication::GotoManage() {
     for (int i = 0; i < g_cfg.console_count; i++) {
         bool sh = g_cfg.consoles[i].shown;
         bool lt = is_light_theme();
-        pu::ui::Color shown_c = lt ? pu::ui::Color(16, 95, 44, 255)
-                                   : pu::ui::Color(130, 225, 150, 255);
+        pu::ui::Color shown_c = accent_green();
         pu::ui::Color hidden_c = lt ? pu::ui::Color(95, 95, 105, 255)
                                     : pu::ui::Color(150, 150, 162, 255);
         char clabel[160];
@@ -2586,9 +2631,7 @@ void MainApplication::HandleInput(u64 down, u64 held,
             pu::ui::Color rc = c;
             // Colour the result column by outcome: orange = replaced, green = new.
             if (it->status == Q_DONE || it->status == Q_SAVED) {
-                pu::ui::Color newc = is_light_theme()
-                                         ? pu::ui::Color(16, 95, 44, 255)
-                                         : pu::ui::Color(130, 225, 150, 255);
+                pu::ui::Color newc = accent_green();
                 rc = it->overwrote > 0 ? pu::ui::Color(245, 170, 90, 255) : newc;
             }
             // The active download is the "hero" row: accent background + a
@@ -3031,31 +3074,19 @@ void MainApplication::HandleInput(u64 down, u64 held,
                     // fetch retries transient errors and would freeze the UI)
                 this->ChkStart();
                 return;
-            case 1: // Advanced settings (incl. manage consoles)
+            case 1: // User interface settings (theme/cards/consoles/language)
+                this->GotoUISettings();
+                return;
+            case 2: // Advanced settings
                 this->GotoAdvanced();
                 return;
-            case 2: // View logs (download history + debug log)
+            case 3: // View logs (download history + debug log)
                 this->GotoViewLogs();
                 return;
-            case 3: // Manage data (downloads folder + metadata cache)
+            case 4: // Manage data (downloads folder + metadata cache)
                 this->GotoManageData();
                 return;
-            case 4: // Language
-                this->GotoLanguage();
-                return;
-            case 5: // Theme toggle
-            {
-                if (is_light_theme())
-                    strcpy(g_prefs.theme, "dark");
-                else
-                    strcpy(g_prefs.theme, "light");
-                select_theme();
-                this->layout->ApplyTheme();
-                prefs_save(&g_prefs);
-                this->SyncTab();
-                break;
-            }
-            case 6: { // Credits
+            case 5: { // Credits
                 // Big app badge beside the text. Loaded fresh into a handle the
                 // dialog owns and frees on close (so it can't touch the shared
                 // header/console icon cache).
@@ -3090,14 +3121,16 @@ void MainApplication::HandleInput(u64 down, u64 held,
             s32 i = this->layout->Sel();
             switch (i) {
             case 0:
-                this->GotoManage();
-                return;
+                g_prefs.max_downloads = (g_prefs.max_downloads % 5) + 1;
+                queue_set_max_dl(g_prefs.max_downloads);
+                prefs_save(&g_prefs);
+                break;
             case 1:
                 g_prefs.prevent_sleep = !g_prefs.prevent_sleep;
                 prefs_save(&g_prefs);
                 break;
             case 2:
-                g_prefs.group_consoles = !g_prefs.group_consoles;
+                g_prefs.net_check = !g_prefs.net_check;
                 prefs_save(&g_prefs);
                 break;
             case 3:
@@ -3105,19 +3138,6 @@ void MainApplication::HandleInput(u64 down, u64 held,
                 return;
             case 4:
                 g_prefs.use_cache = !g_prefs.use_cache;
-                prefs_save(&g_prefs);
-                break;
-            case 5:
-                g_prefs.max_downloads = (g_prefs.max_downloads % 5) + 1;
-                queue_set_max_dl(g_prefs.max_downloads);
-                prefs_save(&g_prefs);
-                break;
-            case 6:
-                g_prefs.net_check = !g_prefs.net_check;
-                prefs_save(&g_prefs);
-                break;
-            case 7: // console lists as a card grid
-                g_prefs.card_view = !g_prefs.card_view;
                 prefs_save(&g_prefs);
                 break;
             default:
@@ -3130,7 +3150,7 @@ void MainApplication::HandleInput(u64 down, u64 held,
             }
         } else if (down & (HidNpadButton_Left | HidNpadButton_Right)) {
             s32 i = this->layout->Sel();
-            if (i == 5) {
+            if (i == 0) {
                 if (down & HidNpadButton_Right) {
                     g_prefs.max_downloads = (g_prefs.max_downloads % 5) + 1;
                 } else {
@@ -3146,9 +3166,51 @@ void MainApplication::HandleInput(u64 down, u64 held,
         break;
     }
 
-    case Screen::Language: {
+    case Screen::UISettings: {
         if (down & HidNpadButton_B) {
             this->GotoSettings();
+        } else if (down & HidNpadButton_A) {
+            s32 i = this->layout->Sel();
+            switch (i) {
+            case 0: // console lists as a card grid
+                g_prefs.card_view = !g_prefs.card_view;
+                prefs_save(&g_prefs);
+                break;
+            case 1: // Theme toggle
+                if (is_light_theme())
+                    strcpy(g_prefs.theme, "dark");
+                else
+                    strcpy(g_prefs.theme, "light");
+                select_theme();
+                this->layout->ApplyTheme();
+                prefs_save(&g_prefs);
+                this->SyncTab();
+                break;
+            case 2:
+                this->GotoLanguage();
+                return;
+            case 3:
+                g_prefs.group_consoles = !g_prefs.group_consoles;
+                prefs_save(&g_prefs);
+                break;
+            case 4:
+                this->GotoManage();
+                return;
+            default:
+                break;
+            }
+            if (this->screen == Screen::UISettings) {
+                s32 sel = this->layout->Sel();
+                this->GotoUISettings();
+                this->layout->SetSel(sel);
+            }
+        }
+        break;
+    }
+
+    case Screen::Language: {
+        if (down & HidNpadButton_B) {
+            this->GotoUISettings();
         } else if (down & HidNpadButton_A) {
             s32 i = this->layout->Sel();
             if (i >= 0 && i < g_lang_count) {
@@ -3666,7 +3728,7 @@ void MainApplication::HandleInput(u64 down, u64 held,
 
     case Screen::Manage: {
         if (down & HidNpadButton_B) {
-            this->GotoAdvanced(); // manage consoles now lives under Advanced
+            this->GotoUISettings(); // manage consoles lives under UI settings
         } else if (down & HidNpadButton_A) {
             s32 i = this->layout->Sel();
             if (i >= 0 && i < g_cfg.console_count) {

@@ -22,13 +22,13 @@
 
   "title_consoles": "Consoles",
   "title_repos": "Repos",
-  "sub_home_grouped": "A open  Dpad> pin/unpin  Y add repo  - search  L/R tabs  ZL/ZR page",
-  "sub_home_flat": "A open  Y add repo  X edit  Dpad> pin  - delete  L/R tabs  ZL/ZR page",
-  "sub_repos": "A browse  X edit  Y add repo  Dpad> pin  - delete  L/R tabs  B back",
+  "sub_home_grouped": "A open  ▶ pin/unpin  Y add repo  - search  L/R tabs  ZL/ZR page",
+  "sub_home_flat": "A open  Y add repo  X edit  ▶ pin  - delete  L/R tabs  ZL/ZR page",
+  "sub_repos": "A browse  X edit  Y add repo  ▶ pin  - delete  L/R tabs  B back",
   "no_collections": "(no collections - press Y to add)",
   "no_repos": "(no repos - press Y to add)",
 
-  "sub_files": "A get  - all  Y filter  X sort  Dpad< >repo  L/R tabs  B back",
+  "sub_files": "A get  - all  Y filter  X sort  ◀▶ repo  L/R tabs  B back",
   "no_files_match": "(no files match)",
   "meta_failed": "(metadata fetch failed - B back)",
   "loading_meta": "Loading metadata ...",
@@ -40,7 +40,7 @@
   "already_have": "Already have %d — queue %d new (%s)?",
 
   "title_queue": "Download Queue",
-  "sub_queue": "A cancel  X retry  ZL/ZR move  Dpad< top >bottom  Y menu  - log  B back",
+  "sub_queue": "A cancel  X retry  ZL/ZR move  ◀ top ▶ bottom  Y menu  - log  B back",
   "queue_empty": "(queue empty)",
   "cancelled": "Cancelled",
   "retrying": "Retrying",
@@ -56,6 +56,9 @@
   "manage_consoles": "Manage consoles (show/hide)",
   "manage_downloads": "Manage downloads folder",
   "advanced": "Advanced settings",
+  "ui_settings": "User interface settings",
+  "title_ui_settings": "User interface settings",
+  "sub_ui_settings": "A toggle/edit  B back",
   "controls_help": "Controls / Help",
   "credits": "Credits",
   "rom_folder": "ROM folder: %s",
@@ -81,7 +84,7 @@
   "dl_cleared": "Downloads cleared",
 
   "title_installed": "Installed",
-  "sub_installed": "A open  Y select  X rename  Dpad< menu  Dpad> pin  - delete  L/R tabs  B back",
+  "sub_installed": "A open  Y select  X rename  ◀ menu  ▶ pin  - delete  L/R tabs  B back",
   "dir_prefix": "[DIR] ",
   "delete_selected": "Delete %d selected item(s)?",
 
@@ -128,7 +131,7 @@
   "tico_not_found_msg": "The TICO emulator was not found on this console.\nDownloads will go to the default folder:\n%s\n\nContinue without TICO?",
   "continue": "Continue",
 
-  "controls_body": "Tabs: L / R  (Browse | Installed | Queue | Settings)\nNavigate: D-pad (hold to repeat)   ZL/ZR: page\n+: exit   B: back\nBrowse: A open  Y add  X edit/del  - delete\nFiles: A get  - all  Y filter  X refresh  Dpad L/R: repo\nQueue: A cancel  X retry  ZL/ZR move  Y clear  - log",
+  "controls_body": "Tabs: L / R  (Browse | Installed | Queue | Settings)\nNavigate: D-pad (hold to repeat)   ZL/ZR: page\n+: exit   B: back\nBrowse: A open  Y add  X edit/del  - delete\nFiles: A get  - all  Y filter  X refresh  ◀/▶: repo\nQueue: A cancel  X retry  ZL/ZR move  Y clear  - log",
 
   "exit_confirm": "%d download(s) active. Exit anyway?",
 

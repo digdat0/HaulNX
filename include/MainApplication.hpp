@@ -65,6 +65,13 @@ class PillElement : public pu::ui::elm::Element {
         }
         drawer->RenderRoundedRectangleFill(this->clr, rx, ry, this->w, this->h,
                                            this->radius);
+        // Logo-green "lit" line along the bottom edge: the active-tab cue,
+        // matching the green-lit selection. Constant colour — the pill only
+        // ever sits on the charcoal tab shell.
+        drawer->RenderRoundedRectangleFill(pu::ui::Color(146, 214, 36, 255),
+                                           rx + this->radius,
+                                           ry + this->h - 3,
+                                           this->w - 2 * this->radius, 3, 1);
     }
     void OnInput(const u64, const u64, const u64,
                  const pu::ui::TouchPoint) override {}
@@ -81,7 +88,7 @@ class SpinnerElement : public pu::ui::elm::Element {
 
   public:
     SpinnerElement(s32 x, s32 y, s32 w, s32 h)
-        : x(x), y(y), w(w), h(h), active(false), dot_clr(120, 170, 245, 255),
+        : x(x), y(y), w(w), h(h), active(false), dot_clr(146, 214, 36, 255),
           text_clr(150, 160, 185, 255), msg_tex(nullptr) {
         this->font = pu::ui::GetDefaultFont(pu::ui::DefaultFontSize::MediumLarge);
     }
@@ -151,7 +158,7 @@ class PulseDotElement : public pu::ui::elm::Element {
 
   public:
     PulseDotElement(s32 x, s32 y, s32 r)
-        : x(x), y(y), r(r), clr(100, 170, 245, 255), active(false) {}
+        : x(x), y(y), r(r), clr(146, 214, 36, 255), active(false) {}
     PU_SMART_CTOR(PulseDotElement)
     void SetActive(bool a) { this->active = a; }
     void SetPos(s32 nx, s32 ny) { this->x = nx; this->y = ny; }
@@ -176,12 +183,49 @@ class PulseDotElement : public pu::ui::elm::Element {
                  const pu::ui::TouchPoint) override {}
 };
 
+// A thin horizontal green->blue gradient strip — the icon's ring gradient as
+// the accent line under the header/tab shell. Rendered in short segments
+// (per-pixel would be ~1300 draw calls a frame for no visible gain).
+class GradientLineElement : public pu::ui::elm::Element {
+    s32 x, y, w, h;
+    pu::ui::Color c0, c1;
+
+  public:
+    GradientLineElement(s32 x, s32 y, s32 w, s32 h, pu::ui::Color left,
+                        pu::ui::Color right)
+        : x(x), y(y), w(w), h(h), c0(left), c1(right) {}
+    PU_SMART_CTOR(GradientLineElement)
+    s32 GetX() override { return this->x; }
+    s32 GetY() override { return this->y; }
+    s32 GetWidth() override { return this->w; }
+    s32 GetHeight() override { return this->h; }
+    void OnRender(pu::ui::render::Renderer::Ref &drawer, const s32 rx,
+                  const s32 ry) override {
+        constexpr s32 Seg = 4;
+        const float span = this->w > Seg ? (float)(this->w - Seg) : 1.0f;
+        for (s32 sx = 0; sx < this->w; sx += Seg) {
+            float t = (float)sx / span;
+            pu::ui::Color c(
+                (u8)(this->c0.r + ((s32)this->c1.r - this->c0.r) * t),
+                (u8)(this->c0.g + ((s32)this->c1.g - this->c0.g) * t),
+                (u8)(this->c0.b + ((s32)this->c1.b - this->c0.b) * t), 255);
+            s32 seg_w = this->w - sx < Seg ? this->w - sx : Seg;
+            drawer->RenderRectangleFill(c, rx + sx, ry, seg_w, this->h);
+        }
+    }
+    void OnInput(const u64, const u64, const u64,
+                 const pu::ui::TouchPoint) override {}
+};
+
 class MainLayout : public pu::ui::Layout {
   private:
     pu::ui::elm::Rectangle::Ref header;
     pu::ui::elm::Rectangle::Ref tab_bar;
     pu::ui::elm::Rectangle::Ref footer;
     IconElement::Ref header_logo; // app badge, top-left of the title
+    // Tri-colour wordmark (green Tico / white DL / blue +), fixed in the
+    // header; `title` holds only the per-screen breadcrumb after it.
+    pu::ui::elm::TextBlock::Ref wm_tico, wm_dl, wm_plus;
     pu::ui::elm::TextBlock::Ref title;
     IconElement::Ref title_icon; // console icon shown after the title text
     pu::ui::elm::TextBlock::Ref status;
@@ -194,6 +238,7 @@ class MainLayout : public pu::ui::Layout {
     bool cards_mode = false; // which of list/grid is active for this screen
     std::vector<pu::ui::elm::TextBlock::Ref> tabs;
     PillElement::Ref tab_pill;        // rounded highlight behind the active tab
+    GradientLineElement::Ref accent_line; // green->blue strip under the shell
     PulseDotElement::Ref queue_dot;   // "downloads running" pulse on the Queue tab
     IconElement::Ref empty_icon;      // big dimmed icon for empty states
     pu::ui::elm::TextBlock::Ref empty_text;
@@ -269,6 +314,7 @@ class MainApplication : public pu::ui::Application {
         Manage,   // show/hide consoles on the Browse page
         Creds,    // archive.org credentials editor
         Advanced, // advanced settings sub-menu
+        UISettings, // user interface settings sub-menu (theme/cards/consoles/language)
         Downloads, // manage downloads folder
         Language,  // language selector
         Search,    // global file search across cached repos
@@ -377,6 +423,7 @@ class MainApplication : public pu::ui::Application {
     void GotoManage();
     void GotoCreds();
     void GotoAdvanced();
+    void GotoUISettings();
     void GotoDownloads();
     void GotoLanguage();
     void GotoSearch(const std::string &query);

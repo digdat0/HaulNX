@@ -167,6 +167,37 @@ class TableList : public pu::ui::elm::Element {
         this->dirty = false;
     }
 
+    // Glossy progress-bar fill: vertical light->deep gradient of prog_clr with
+    // a bright line along the top, echoing the icon's glossy arrow. Drawn as
+    // 1px strips; the end strips taper inward to approximate the rounded cap.
+    void RenderGlossBar(pu::ui::render::Renderer::Ref &drawer, s32 bx, s32 by,
+                        s32 bw, s32 bh, s32 r) {
+        auto mix = [](u8 a, u8 b, float t) {
+            return (u8)(a + (s32)(((s32)b - (s32)a) * t));
+        };
+        pu::ui::Color top(mix(this->prog_clr.r, 255, 0.35f),
+                          mix(this->prog_clr.g, 255, 0.35f),
+                          mix(this->prog_clr.b, 255, 0.35f), 255);
+        pu::ui::Color bot((u8)(this->prog_clr.r * 3 / 5),
+                          (u8)(this->prog_clr.g * 3 / 5),
+                          (u8)(this->prog_clr.b * 3 / 5), 255);
+        for (s32 i = 0; i < bh; i++) {
+            float t = bh > 1 ? (float)i / (bh - 1) : 0.0f;
+            pu::ui::Color c(mix(top.r, bot.r, t), mix(top.g, bot.g, t),
+                            mix(top.b, bot.b, t), 255);
+            s32 de = i < bh - 1 - i ? i : bh - 1 - i; // distance to nearer edge
+            s32 inset = de < r ? r - de : 0;
+            if (bw - 2 * inset > 0) {
+                drawer->RenderRectangleFill(c, bx + inset, by + i,
+                                            bw - 2 * inset, 1);
+            }
+        }
+        if (bw - 2 * r > 0) {
+            drawer->RenderRectangleFill(pu::ui::Color(255, 255, 255, 85),
+                                        bx + r, by, bw - 2 * r, 1);
+        }
+    }
+
   public:
     TableList(const s32 x, const s32 y, const s32 w, const s32 row_h,
               const s32 rows_visible)
@@ -174,8 +205,8 @@ class TableList : public pu::ui::elm::Element {
           scroll_top(0), row_bg(22, 23, 27, 255), row_alt_bg(28, 30, 36, 255),
           // Blue selection highlight (theme overrides via SetThemeColors).
           focus_bg(45, 95, 180, 255), scroll_clr(80, 86, 100, 255),
-          mark_bg(60, 80, 120, 255), prog_clr(100, 170, 245, 255),
-          accent_bg(30, 60, 85, 255), pill_bg(255, 255, 255, 20),
+          mark_bg(60, 80, 120, 255), prog_clr(146, 214, 36, 255),
+          accent_bg(34, 54, 20, 255), pill_bg(255, 255, 255, 20),
           cache_top(-1), dirty(true) {
         this->font = pu::ui::GetDefaultFont(pu::ui::DefaultFontSize::MediumLarge);
     }
@@ -185,8 +216,8 @@ class TableList : public pu::ui::elm::Element {
 
     void SetThemeColors(pu::ui::Color bg, pu::ui::Color alt, pu::ui::Color focus,
                         pu::ui::Color scroll, pu::ui::Color mark,
-                        pu::ui::Color prog = {100, 170, 245, 255},
-                        pu::ui::Color accent = {30, 60, 85, 255},
+                        pu::ui::Color prog = {146, 214, 36, 255},
+                        pu::ui::Color accent = {34, 54, 20, 255},
                         pu::ui::Color pill = {255, 255, 255, 20}) {
         this->row_bg = bg; this->row_alt_bg = alt; this->focus_bg = focus;
         this->scroll_clr = scroll; this->mark_bg = mark;
@@ -308,21 +339,43 @@ class TableList : public pu::ui::elm::Element {
             drawer->RenderRoundedRectangleFill(base, rrx, rry, rrw, rrh,
                                                RowRadius);
             if (ridx == this->sel) {
-                // Selection: fading blue fill + lighter outline (card style).
+                // Selection: lifted charcoal fill easing in, wrapped in a
+                // logo-green outline + soft outer glow (the "lit" row). The
+                // glow rings stay within the RowGap between rows.
                 auto f = this->focus_bg;
                 f.a = (u8)this->sel_alpha;
                 drawer->RenderRoundedRectangleFill(f, rrx, rry, rrw, rrh,
                                                    RowRadius);
-                auto edge = this->focus_bg;
-                edge.r = (u8)(edge.r + 70 > 255 ? 255 : edge.r + 70);
-                edge.g = (u8)(edge.g + 70 > 255 ? 255 : edge.g + 70);
-                edge.b = (u8)(edge.b + 70 > 255 ? 255 : edge.b + 70);
+                for (s32 g = 1; g <= 3; g++) {
+                    auto gc = this->prog_clr;
+                    gc.a = (u8)((36 - g * 10) * this->sel_alpha / 255);
+                    drawer->RenderRoundedRectangle(gc, rrx - g, rry - g,
+                                                   rrw + 2 * g, rrh + 2 * g,
+                                                   RowRadius + g);
+                }
+                auto edge = this->prog_clr;
                 edge.a = (u8)this->sel_alpha;
-                for (s32 t = 0; t < 3; t++) {
+                for (s32 t = 0; t < 2; t++) {
                     drawer->RenderRoundedRectangle(
                         edge, rrx + t, rry + t, rrw - 2 * t, rrh - 2 * t,
                         RowRadius - t > 4 ? RowRadius - t : 4);
                 }
+            }
+            // 1px top-edge gloss so rows read as raised surfaces (icon-style
+            // bevel); slightly stronger on the selected row.
+            drawer->RenderRectangleFill(
+                pu::ui::Color(255, 255, 255,
+                              (u8)(ridx == this->sel ? 45 : 18)),
+                rrx + RowRadius, rry, rrw - 2 * RowRadius, 1);
+            // ...and a 1px shade along the bottom to complete the bevel.
+            drawer->RenderRectangleFill(pu::ui::Color(0, 0, 0, 50),
+                                        rrx + RowRadius, rry + rrh - 1,
+                                        rrw - 2 * RowRadius, 1);
+            // Marked rows carry a logo-green tag bar down the left edge:
+            // green = "queued for action", scannable during multi-select.
+            if (is_marked) {
+                drawer->RenderRoundedRectangleFill(this->prog_clr, rrx + 9,
+                                                   rry + 9, 5, rrh - 18, 2);
             }
             // Progress bar (e.g. active download): rounded track at the bottom.
             float prog = this->rows[ridx].progress;
@@ -339,8 +392,7 @@ class TableList : public pu::ui::elm::Element {
                 s32 fw = (s32)(bw * prog);
                 if (fw > 2) {
                     s32 r = fw < 8 ? fw / 2 : 4;
-                    drawer->RenderRoundedRectangleFill(this->prog_clr, bx, by,
-                                                       fw, bh, r);
+                    this->RenderGlossBar(drawer, bx, by, fw, bh, r);
                 }
             }
             Cell &lc = this->cache_l[i];
@@ -395,8 +447,17 @@ class TableList : public pu::ui::elm::Element {
                 ry + (maxtop > 0 ? (s32)((double)(track_h - thumb_h) *
                                          this->scroll_top / maxtop)
                                  : 0);
-            drawer->RenderRoundedRectangleFill(this->scroll_clr, sb_x, thumb_y,
-                                               sb_w, thumb_h, 3);
+            // Thumb takes the signature green->blue gradient (echoes the
+            // header strip), drawn in short segments.
+            const pu::ui::Color g0(146, 214, 36, 255), g1(56, 130, 225, 255);
+            for (s32 i = 0; i < thumb_h; i += 4) {
+                float t = (float)i / (thumb_h - 1);
+                pu::ui::Color c((u8)(g0.r + ((s32)g1.r - g0.r) * t),
+                                (u8)(g0.g + ((s32)g1.g - g0.g) * t),
+                                (u8)(g0.b + ((s32)g1.b - g0.b) * t), 255);
+                s32 seg = thumb_h - i < 4 ? thumb_h - i : 4;
+                drawer->RenderRectangleFill(c, sb_x, thumb_y + i, sb_w, seg);
+            }
         }
     }
 

@@ -37,6 +37,12 @@ class CardGrid : public pu::ui::elm::Element {
     std::vector<Cell> cache; // one per card; rebuilt when dirty
     bool dirty;
     pu::ui::Color card_bg, focus_bg, title_clr, sub_clr;
+    // Logo green for the selection outline/glow and the icon halo; the theme
+    // passes its own variant (bright on dark, deep on light) via SetThemeColors.
+    pu::ui::Color glow_clr{146, 214, 36, 255};
+    // Darkening chip behind the subtitle (count/info line), matching the
+    // table view's right-column pills.
+    pu::ui::Color pill_clr{0, 0, 0, 95};
     std::string font_title, font_sub;
 
     // Touch state (mirrors TableList's behaviour).
@@ -215,11 +221,15 @@ class CardGrid : public pu::ui::elm::Element {
     ~CardGrid() { this->FreeCache(); }
 
     void SetThemeColors(pu::ui::Color bg, pu::ui::Color focus,
-                        pu::ui::Color title, pu::ui::Color sub) {
+                        pu::ui::Color title, pu::ui::Color sub,
+                        pu::ui::Color glow = {146, 214, 36, 255},
+                        pu::ui::Color pill = {0, 0, 0, 95}) {
         this->card_bg = bg;
         this->focus_bg = focus;
         this->title_clr = title;
         this->sub_clr = sub;
+        this->glow_clr = glow;
+        this->pill_clr = pill;
         this->dirty = true;
     }
 
@@ -329,27 +339,52 @@ class CardGrid : public pu::ui::elm::Element {
                 drawer->RenderRoundedRectangleFill(this->card_bg, cx, cy, cw,
                                                    CardH, CardRadius);
                 if (selected) {
-                    // Fill eases in, plus a lighter outline "lift".
+                    // Lifted fill eases in, wrapped in a logo-green outline
+                    // + soft outer glow (the "lit" card, matching the list).
                     auto f = this->focus_bg;
                     f.a = (u8)this->sel_alpha;
                     drawer->RenderRoundedRectangleFill(f, cx, cy, cw, CardH,
                                                        CardRadius);
-                    auto edge = this->focus_bg;
-                    edge.r = (u8)(edge.r + 70 > 255 ? 255 : edge.r + 70);
-                    edge.g = (u8)(edge.g + 70 > 255 ? 255 : edge.g + 70);
-                    edge.b = (u8)(edge.b + 70 > 255 ? 255 : edge.b + 70);
+                    for (s32 g = 1; g <= 4; g++) {
+                        auto gc = this->glow_clr;
+                        gc.a = (u8)((40 - g * 9) * this->sel_alpha / 255);
+                        drawer->RenderRoundedRectangle(gc, cx - g, cy - g,
+                                                       cw + 2 * g,
+                                                       CardH + 2 * g,
+                                                       CardRadius + g);
+                    }
+                    auto edge = this->glow_clr;
                     edge.a = (u8)this->sel_alpha;
-                    for (s32 t = 0; t < 3; t++) {
+                    for (s32 t = 0; t < 2; t++) {
                         drawer->RenderRoundedRectangle(
                             edge, cx + t, cy + t, cw - 2 * t, CardH - 2 * t,
                             CardRadius - t > 4 ? CardRadius - t : 4);
                     }
                 }
+                // Bevel: 1px gloss along the top, 1px shade along the bottom,
+                // so cards read as raised tiles (matches the list rows).
+                drawer->RenderRectangleFill(
+                    pu::ui::Color(255, 255, 255, (u8)(selected ? 45 : 18)),
+                    cx + CardRadius, cy, cw - 2 * CardRadius, 1);
+                drawer->RenderRectangleFill(pu::ui::Color(0, 0, 0, 50),
+                                            cx + CardRadius, cy + CardH - 1,
+                                            cw - 2 * CardRadius, 1);
                 if (this->cards[idx].icon) {
                     // The selected card's icon grows slightly with the fade.
                     s32 isz = IconPx;
                     if (selected) {
                         isz += (10 * this->sel_alpha) / 255;
+                        // Soft green glow blooming in behind the icon with the
+                        // same fade. Largest ring (r=67) stays inside the card
+                        // and clear of the title band at cy + 144.
+                        s32 gcx = cx + cw / 2;
+                        s32 gcy = cy + 10 + IconPx / 2;
+                        for (s32 g = 0; g < 4; g++) {
+                            auto gc = this->glow_clr;
+                            gc.a = (u8)((14 + 5 * g) * this->sel_alpha / 255);
+                            drawer->RenderCircleFill(gc, gcx, gcy,
+                                                     IconPx / 2 + 2 - 6 * g);
+                        }
                     }
                     pu::ui::render::TextureRenderOptions o;
                     o.width = isz;
@@ -373,8 +408,14 @@ class CardGrid : public pu::ui::elm::Element {
                                           cy + 178);
                 }
                 if (ce.sub_tex) {
-                    drawer->RenderTexture(ce.sub_tex, cx + (cw - ce.sw) / 2,
-                                          cy + 220);
+                    s32 sx = cx + (cw - ce.sw) / 2;
+                    s32 sy = cy + 220;
+                    s32 padx = 12, pady = 5;
+                    drawer->RenderRoundedRectangleFill(
+                        this->pill_clr, sx - padx, sy - pady,
+                        ce.sw + 2 * padx, ce.sh + 2 * pady,
+                        (ce.sh + 2 * pady) / 2);
+                    drawer->RenderTexture(ce.sub_tex, sx, sy);
                 }
             }
         }
@@ -390,8 +431,18 @@ class CardGrid : public pu::ui::elm::Element {
             s32 ty = ry + (maxs > 0 ? (s32)((double)(track_h - thumb_h) *
                                             this->scroll_row / maxs)
                                     : 0);
-            drawer->RenderRoundedRectangleFill(this->sub_clr, rx + this->w - 6,
-                                               ty, 6, thumb_h, 3);
+            // Thumb takes the signature green->blue gradient (matches the
+            // list view's scrollbar).
+            const pu::ui::Color g0(146, 214, 36, 255), g1(56, 130, 225, 255);
+            for (s32 i = 0; i < thumb_h; i += 4) {
+                float t = (float)i / (thumb_h - 1);
+                pu::ui::Color c((u8)(g0.r + ((s32)g1.r - g0.r) * t),
+                                (u8)(g0.g + ((s32)g1.g - g0.g) * t),
+                                (u8)(g0.b + ((s32)g1.b - g0.b) * t), 255);
+                s32 seg = thumb_h - i < 4 ? thumb_h - i : 4;
+                drawer->RenderRectangleFill(c, rx + this->w - 6, ty + i, 6,
+                                            seg);
+            }
         }
     }
 
