@@ -219,6 +219,11 @@ all	:	$(OUTPUT).nro
 
 ifeq ($(strip $(NO_NACP)),)
 $(OUTPUT).nro	:	$(OUTPUT).elf $(OUTPUT).nacp
+# The base %.nacp rule has no prerequisites, so once the .nacp exists it is
+# never rebuilt and its APP_VERSION (the version Spharia/hbmenu display) stays
+# frozen at whatever VERSION held when it was first created. Depend on VERSION
+# so a bump regenerates it in step with include/version.h.
+$(OUTPUT).nacp	:	$(TOPDIR)/VERSION
 else
 $(OUTPUT).nro	:	$(OUTPUT).elf
 endif
