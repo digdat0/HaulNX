@@ -9,6 +9,7 @@
 
 #include <cmath>
 #include <pu/Plutonium>
+#include <gfx_tile.hpp>
 #include <string>
 #include <vector>
 
@@ -74,6 +75,11 @@ class CardGrid : public pu::ui::elm::Element {
     // Unfilled part of the progress ring; the light theme passes a dark
     // translucent shade (white@20 vanishes on light card backgrounds).
     pu::ui::Color trk_clr{255, 255, 255, 20};
+    // Baked rounded-fill tiles (one blit each instead of a software rounded
+    // fill per card per frame) + scrollbar gradient strip; see gfx_tile.hpp.
+    pu::sdl2::Texture tile_card = nullptr, tile_hero = nullptr,
+                      tile_focus = nullptr, grad_tex = nullptr;
+    bool tiles_dirty = true;
     std::string font_title, font_sub, font_tiny;
 
     // Touch state (mirrors TableList's behaviour).
@@ -152,6 +158,29 @@ class CardGrid : public pu::ui::elm::Element {
             }
         }
         this->cache.clear();
+    }
+
+    void FreeTiles() {
+        pu::sdl2::Texture *ts[] = {&this->tile_card, &this->tile_hero,
+                                   &this->tile_focus, &this->grad_tex};
+        for (auto p : ts) {
+            if (*p) {
+                pu::ui::render::DeleteTexture(*p);
+            }
+        }
+    }
+
+    // Bake the card fill, hero tint and selection fill once for the current
+    // theme (card size is fixed, so exact-size tiles need no stretch).
+    void RebakeTiles() {
+        this->FreeTiles();
+        const s32 cw = this->CardW();
+        this->tile_card = BakeRoundTile(cw, CardH, CardRadius, this->card_bg);
+        this->tile_hero = BakeRoundTile(cw, CardH, CardRadius, this->glow_clr);
+        this->tile_focus = BakeRoundTile(cw, CardH, CardRadius, this->focus_bg);
+        this->grad_tex = BakeVGradient(256, this->glow_clr,
+                                       pu::ui::Color(56, 130, 225, 255));
+        this->tiles_dirty = false;
     }
 
     // (Re)render one cached text texture when its source changed or the
@@ -319,14 +348,25 @@ class CardGrid : public pu::ui::elm::Element {
             fill = L;
         }
         // Terminal states swap the live gradient for a solid ring: green
-        // when done, red when failed.
-        pu::ui::Color g0(146, 214, 36, 255);
+        // when done, red when failed. g0 tracks the theme accent so the
+        // green end stays legible on the light theme's pale cards.
+        pu::ui::Color g0 = this->glow_clr;
+        g0.a = 255;
         pu::ui::Color g1(56, 130, 225, 255);
         if (ring == 1) {
             g1 = g0;
         } else if (ring == 2) {
             g0 = g1 = pu::ui::Color(224, 82, 82, 255);
         }
+        // Terminal rings are a single flat colour and never change, so draw
+        // each straight edge as ONE rect instead of ~40 gradient strips — this
+        // is the common case in a populated queue (done/failed cards), and it
+        // ran every frame. Only the live gradient ring needs the strip loop.
+        const bool solid = (ring != 0);
+        // Live gradient ring: coarser segments (12px vs 6) halve the per-frame
+        // draw calls with no visible change on a 6px-thick ring — this ring is
+        // redrawn every frame per active download, so it scaled the queue lag.
+        const s32 seg_cap = solid ? L : 12;
         auto grad = [&](s32 dd) {
             float t = (float)dd / (float)L;
             return pu::ui::Color((u8)(g0.r + ((s32)g1.r - g0.r) * t),
@@ -338,7 +378,7 @@ class CardGrid : public pu::ui::elm::Element {
         auto straight = [&](s32 len, int edge) {
             s32 done = 0;
             while (done < len && d < fill) {
-                s32 seg = fill - d < 6 ? fill - d : 6;
+                s32 seg = fill - d < seg_cap ? fill - d : seg_cap;
                 if (seg > len - done) {
                     seg = len - done;
                 }
@@ -444,7 +484,10 @@ class CardGrid : public pu::ui::elm::Element {
     }
     PU_SMART_CTOR(CardGrid)
 
-    ~CardGrid() { this->FreeCache(); }
+    ~CardGrid() {
+        this->FreeCache();
+        this->FreeTiles();
+    }
 
     void SetThemeColors(pu::ui::Color bg, pu::ui::Color focus,
                         pu::ui::Color title, pu::ui::Color sub,
@@ -461,9 +504,30 @@ class CardGrid : public pu::ui::elm::Element {
         this->page_bg = page;
         this->trk_clr = track;
         this->dirty = true;
+        this->tiles_dirty = true;
     }
 
     void SetSingle(const bool on) { this->single = on; }
+
+    // True if queue card i could be on screen (one row of margin). Lets the
+    // caller skip building off-screen cards' text every frame — the queue tick
+    // otherwise formats every item (incl. completed/off-screen) per frame.
+    bool QueueIndexVisible(const s32 i) {
+        if (this->single) {
+            return i == 0;
+        }
+        const s32 lo = this->scroll_row * Cols;
+        const s32 hi = (this->scroll_row + this->VisRows() + 1) * Cols;
+        return i >= lo && i < hi;
+    }
+
+    // Bake the tiles up front (renderer must be ready) so the first card screen
+    // doesn't pay the one-time bake as a visible hitch.
+    void PrewarmTiles() {
+        if (this->tiles_dirty) {
+            this->RebakeTiles();
+        }
+    }
 
     void Clear() {
         this->cards.clear();
@@ -471,7 +535,9 @@ class CardGrid : public pu::ui::elm::Element {
         this->sel = 0;
         this->scroll_row = 0;
         this->single = false;
-        this->enter_alpha = 0; // next populate fades the grid in
+        // Enter fade removed for performance (re-rendered the whole grid for
+        // ~8 frames per screen change; stuttered under download load).
+        this->enter_alpha = 255;
         this->dirty = true;
         this->tch_active = false;
         this->tch_card = -1;
@@ -511,7 +577,7 @@ class CardGrid : public pu::ui::elm::Element {
                       const std::string &speed, const std::string &eta,
                       const std::string &file, const float prog,
                       const bool hero, const s32 ring = 0,
-                      const s32 qpos = 0) {
+                      const s32 qpos = 0, const bool refresh_text = true) {
         if (i < 0 || i >= (s32)this->cards.size() ||
             i >= (s32)this->cache.size()) {
             return;
@@ -523,6 +589,18 @@ class CardGrid : public pu::ui::elm::Element {
         cd.prog = prog;
         cd.hero = hero;
         cd.ring = ring;
+        // Only build (rasterize) text for cards that can be on screen. The
+        // queue holds up to QUEUE_MAX items and finished ones accumulate, so
+        // rendering every card's text on tab-entry stalled the switch for 1-2s.
+        // Off-screen cards build when they scroll into view (the queue re-runs
+        // this every frame); one extra row of margin hides the build latency.
+        if (!this->single) {
+            const s32 lo = this->scroll_row * Cols;
+            const s32 hi = (this->scroll_row + this->VisRows() + 1) * Cols;
+            if (i < lo || i >= hi) {
+                return;
+            }
+        }
         const s32 cw = this->single ? SingleW : this->CardW();
         // The huge single card gets a size tier up on every text run.
         const std::string txt_font =
@@ -531,27 +609,33 @@ class CardGrid : public pu::ui::elm::Element {
             this->single
                 ? pu::ui::GetDefaultFont(pu::ui::DefaultFontSize::Medium)
                 : this->font_sub;
-        const bool recolor = cd.st_clr.r != st_clr.r ||
-                             cd.st_clr.g != st_clr.g ||
-                             cd.st_clr.b != st_clr.b ||
-                             cd.st_clr.a != st_clr.a;
-        cd.st_clr = st_clr;
         // Corner labels (console name left, status right) frame a big
-        // centred icon, browse-card style.
+        // centred icon, browse-card style. The console name is stable, so it
+        // updates every frame (a no-op via the diff); the status % and the
+        // size/speed/eta chip change constantly during a download, so their
+        // (expensive) rasterization is throttled by the caller via refresh_text
+        // — that per-active-card text churn is what scaled the queue lag.
         this->UpdText(ce.t1_tex, ce.t1w, ce.t1h, cd.title, console,
                       txt_font, this->title_clr, (u32)(cw - 120));
-        this->UpdText(ce.st_tex, ce.stw, ce.sth, cd.status, status,
-                      st_font, st_clr, (u32)(cw / 2 - 20), recolor);
-        // size / speed / eta join into one pill, like the list view's chip.
-        std::string chip = size;
-        if (!speed.empty()) {
-            chip += (chip.empty() ? "" : " · ") + speed;
+        if (this->single || refresh_text) {
+            const bool recolor = cd.st_clr.r != st_clr.r ||
+                                 cd.st_clr.g != st_clr.g ||
+                                 cd.st_clr.b != st_clr.b ||
+                                 cd.st_clr.a != st_clr.a;
+            cd.st_clr = st_clr;
+            this->UpdText(ce.st_tex, ce.stw, ce.sth, cd.status, status,
+                          st_font, st_clr, (u32)(cw / 2 - 20), recolor);
+            // size / speed / eta join into one pill, like the list view's chip.
+            std::string chip = size;
+            if (!speed.empty()) {
+                chip += (chip.empty() ? "" : " · ") + speed;
+            }
+            if (!eta.empty()) {
+                chip += (chip.empty() ? "" : " · ") + eta;
+            }
+            this->UpdText(ce.ch_tex, ce.chw, ce.chh, cd.chip, chip,
+                          txt_font, this->sub_clr, (u32)(cw - 48));
         }
-        if (!eta.empty()) {
-            chip += (chip.empty() ? "" : " · ") + eta;
-        }
-        this->UpdText(ce.ch_tex, ce.chw, ce.chh, cd.chip, chip,
-                      txt_font, this->sub_clr, (u32)(cw - 48));
         // Queue-position badge ("#2") for waiting cards.
         this->UpdText(ce.qp_tex, ce.qpw, ce.qph, cd.badge,
                       qpos > 0 ? "#" + std::to_string(qpos) : "",
@@ -636,6 +720,9 @@ class CardGrid : public pu::ui::elm::Element {
         }
         if (this->dirty) {
             this->RebuildCache();
+        }
+        if (this->tiles_dirty) {
+            this->RebakeTiles();
         }
         if (this->enter_alpha < 255) {
             s32 e = this->enter_alpha + 32;
@@ -752,23 +839,39 @@ class CardGrid : public pu::ui::elm::Element {
                 s32 cy = ry + vr * (CardH + Gap);
                 bool selected = (idx == this->sel);
                 const Card &cd = this->cards[idx];
-                drawer->RenderRoundedRectangleFill(this->card_bg, cx, cy, cw,
-                                                   CardH, CardRadius);
+                if (this->tile_card) {
+                    drawer->RenderTexture(this->tile_card, cx, cy);
+                } else {
+                    drawer->RenderRectangleFill(this->card_bg, cx, cy, cw,
+                                                CardH);
+                }
                 if (cd.queue && cd.hero) {
                     // Active download: accent-tinted "hero" card, matching
                     // the list view's accent row.
-                    auto hc = this->glow_clr;
-                    hc.a = 30;
-                    drawer->RenderRoundedRectangleFill(hc, cx, cy, cw, CardH,
-                                                       CardRadius);
+                    if (this->tile_hero) {
+                        pu::ui::render::TextureRenderOptions o;
+                        o.alpha_mod = 30;
+                        drawer->RenderTexture(this->tile_hero, cx, cy, o);
+                    } else {
+                        auto hc = this->glow_clr;
+                        hc.a = 30;
+                        drawer->RenderRoundedRectangleFill(hc, cx, cy, cw,
+                                                           CardH, CardRadius);
+                    }
                 }
                 if (selected) {
                     // Lifted fill eases in, wrapped in a logo-green outline
                     // + soft outer glow (the "lit" card, matching the list).
-                    auto f = this->focus_bg;
-                    f.a = (u8)this->sel_alpha;
-                    drawer->RenderRoundedRectangleFill(f, cx, cy, cw, CardH,
-                                                       CardRadius);
+                    if (this->tile_focus) {
+                        pu::ui::render::TextureRenderOptions o;
+                        o.alpha_mod = this->sel_alpha;
+                        drawer->RenderTexture(this->tile_focus, cx, cy, o);
+                    } else {
+                        auto f = this->focus_bg;
+                        f.a = (u8)this->sel_alpha;
+                        drawer->RenderRoundedRectangleFill(f, cx, cy, cw, CardH,
+                                                           CardRadius);
+                    }
                     for (s32 g = 1; g <= 4; g++) {
                         auto gc = this->glow_clr;
                         gc.a = (u8)((40 - g * 9) * this->sel_alpha / 255);
@@ -941,16 +1044,19 @@ class CardGrid : public pu::ui::elm::Element {
                                             this->scroll_row / maxs)
                                     : 0);
             // Thumb takes the signature green->blue gradient (matches the
-            // list view's scrollbar).
-            const pu::ui::Color g0(146, 214, 36, 255), g1(56, 130, 225, 255);
-            for (s32 i = 0; i < thumb_h; i += 4) {
-                float t = (float)i / (thumb_h - 1);
-                pu::ui::Color c((u8)(g0.r + ((s32)g1.r - g0.r) * t),
-                                (u8)(g0.g + ((s32)g1.g - g0.g) * t),
-                                (u8)(g0.b + ((s32)g1.b - g0.b) * t), 255);
-                s32 seg = thumb_h - i < 4 ? thumb_h - i : 4;
-                drawer->RenderRectangleFill(c, rx + this->w - 6, ty + i, 6,
-                                            seg);
+            // list view's scrollbar); green end follows the theme accent.
+            // Thumb takes the signature green->blue gradient via the baked
+            // strip (stretched to the thumb height); flat only as a fallback.
+            if (this->grad_tex) {
+                pu::ui::render::TextureRenderOptions o;
+                o.width = 6;
+                o.height = thumb_h;
+                drawer->RenderTexture(this->grad_tex, rx + this->w - 6, ty, o);
+            } else {
+                pu::ui::Color g0 = this->glow_clr;
+                g0.a = 255;
+                drawer->RenderRectangleFill(g0, rx + this->w - 6, ty, 6,
+                                            thumb_h);
             }
         }
         // Enter fade: a page-coloured veil over the fresh grid thins out

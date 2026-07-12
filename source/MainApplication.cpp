@@ -99,14 +99,14 @@ static const AppTheme g_theme_dark = {
 // Light theme keeps the charcoal header/tab shell (the logo's "case") over a
 // light content area; the same green pill/pulse reads on the dark shell.
 static const AppTheme g_theme_light = {
-    {235,237,242,255},    {30,33,40,255},      {23,25,31,255},
+    {228,231,237,255},    {30,33,40,255},      {23,25,31,255},
     {30,33,40,255},       {255,255,255,255},   {200,207,217,255},
     {150,158,172,255},    {14,16,18,255},      {146,214,36,255},
-    {185,192,204,255},    {90,100,120,255},    {0,0,0,255},
-    {222,225,231,255},    {30,30,40,255},      {50,60,80,255},
-    {30,30,40,255},       {213,231,186,255},
-    {225,228,234,255},    {215,218,224,255},   {206,211,220,255},
-    {160,168,185,255},    {214,226,196,255},
+    {185,192,204,255},    {88,98,116,255},     {26,30,38,255},
+    {240,242,246,255},    {26,30,40,255},      {50,60,80,255},
+    {26,30,40,255},       {206,232,210,255},
+    {252,253,255,255},    {244,246,250,255},   {212,234,214,255},
+    {170,178,192,255},    {192,224,200,255},
 };
 
 static const AppTheme *g_theme = &g_theme_dark;
@@ -179,7 +179,7 @@ static std::string human_size(uint64_t bytes) {
 // Logo green, theme-adjusted: bright on the dark theme, deeper on light so it
 // keeps contrast on light rows.
 static pu::ui::Color accent_green() {
-    return is_light_theme() ? pu::ui::Color(52, 106, 14, 255)
+    return is_light_theme() ? pu::ui::Color(30, 124, 54, 255)
                             : pu::ui::Color(146, 214, 36, 255);
 }
 
@@ -771,6 +771,38 @@ static uint64_t dir_total_size(const std::string &path, int depth = 3) {
     return total;
 }
 
+// Installed-tab folder chips need each console folder's app count and total
+// size. The recursive size walk stats every file underneath, so recomputing it
+// on every visit made navigating the Installed tab laggy. Cache it per folder,
+// keyed by the folder's mtime and immediate entry count: the cheap check (one
+// stat + one readdir, no per-file stat) skips the recursive walk unless the
+// folder actually changed. Adds/removes bump both keys; a same-size rename
+// leaves a stale-but-correct size.
+struct InstStat {
+    time_t mtime;
+    int imm; // immediate entry count (the displayed "N apps")
+    uint64_t size;
+};
+static std::map<std::string, InstStat> g_inst_stat;
+
+static void inst_dir_stats(const std::string &path, int *count,
+                           uint64_t *size) {
+    struct stat ds;
+    time_t mt = (stat(path.c_str(), &ds) == 0) ? ds.st_mtime : 0;
+    int imm = count_dir_entries(path);
+    auto it = g_inst_stat.find(path);
+    if (it != g_inst_stat.end() && it->second.mtime == mt &&
+        it->second.imm == imm) {
+        *count = imm;
+        *size = it->second.size;
+        return;
+    }
+    uint64_t sz = dir_total_size(path);
+    g_inst_stat[path] = {mt, imm, sz};
+    *count = imm;
+    *size = sz;
+}
+
 static std::vector<DirEnt> list_dir(const std::string &path) {
     std::vector<DirEnt> v;
     DIR *d = opendir(path.c_str());
@@ -980,7 +1012,7 @@ void MainLayout::ApplyTheme() {
                                g_theme->tl_mark,
                                accent_green(),
                                is_light_theme()
-                                   ? pu::ui::Color(213, 231, 186, 255)
+                                   ? pu::ui::Color(198, 232, 204, 255)
                                    : pu::ui::Color(34, 54, 20, 255),
                                // Darkening chip: reads consistently on normal,
                                // accent (active-download) and selected rows —
@@ -1132,7 +1164,8 @@ static void layout_status_bar(pu::ui::elm::TextBlock::Ref &storage,
     bat_ic->SetPos(bat->GetX() - 8 - bat_ic->GetWidth(),
                    base - bat_ic->GetHeight());
     s32 stw = storage->GetWidth();
-    storage->SetX(bat_ic->GetX() - gap - stw);
+    // Extra breathing room between the storage (GB) text and the battery icon.
+    storage->SetX(bat_ic->GetX() - (gap + 10) - stw);
     net->SetPos(storage->GetX() - gap - net->GetWidth(),
                 base - net->GetHeight());
 }
@@ -1249,9 +1282,10 @@ void MainLayout::SetQueueCard(s32 i, const std::string &console,
                               const std::string &status, pu::ui::Color st_clr,
                               const std::string &size, const std::string &speed,
                               const std::string &eta, const std::string &file,
-                              float prog, bool hero, s32 ring, s32 qpos) {
+                              float prog, bool hero, s32 ring, s32 qpos,
+                              bool refresh_text) {
     this->grid->SetQueueCard(i, console, icon, status, st_clr, size, speed,
-                             eta, file, prog, hero, ring, qpos);
+                             eta, file, prog, hero, ring, qpos, refresh_text);
 }
 void MainLayout::CardMove(s32 dx, s32 dy) { this->grid->Move(dx, dy); }
 void MainLayout::AddRow(const std::string &name) {
@@ -2360,8 +2394,9 @@ void MainApplication::GotoInstalled(const std::string &path) {
     for (int i = 0; i < (int)g_inst.size(); i++) {
         DirEnt &e = g_inst[i];
         if (e.is_dir) {
-            int n = count_dir_entries(path + "/" + e.name);
-            uint64_t bytes = dir_total_size(path + "/" + e.name);
+            int n = 0;
+            uint64_t bytes = 0;
+            inst_dir_stats(path + "/" + e.name, &n, &bytes);
             char cnt[32];
             snprintf(cnt, sizeof(cnt), tr(S_N_APPS), n);
             // Chip text with the folder's total size: cards lead with the
@@ -2690,6 +2725,9 @@ void MainApplication::HandleInput(u64 down, u64 held,
     // live frame instead of a black screen.
     if (this->startup_checks) {
         this->startup_checks = false;
+        // Bake the rounded tiles now (renderer is live) so the first list/card
+        // screen doesn't pay the one-time bake as a visible load hitch.
+        this->layout->PrewarmTiles();
         if (!g_tico.installed) {
             char tmsg[512];
             snprintf(tmsg, sizeof(tmsg), tr(S_TICO_NOT_FOUND_MSG),
@@ -2946,7 +2984,25 @@ void MainApplication::HandleInput(u64 down, u64 held,
             this->layout->SetCardsMode(true);
         }
         this->layout->SetQueueCount(n);
+        // Throttle the volatile %/speed/eta text rasterization to ~7Hz. It
+        // changes every frame during a download, and re-rendering it per active
+        // card at 60fps is what scaled the queue lag with active count. The
+        // ring/progress still advance every frame; only the text is gated.
+        static u64 qtxt_last = 0;
+        u64 qtxt_now = armGetSystemTick();
+        bool qrefresh = (qtxt_last == 0 ||
+                         armTicksToNs(qtxt_now - qtxt_last) >= 150000000ULL);
+        if (qrefresh) {
+            qtxt_last = qtxt_now;
+        }
         for (int i = 0; i < n; i++) {
+            // Skip off-screen cards entirely: formatting every item's size /
+            // speed / status every frame (incl. completed cards nobody can see)
+            // is what made a page full of finished downloads drag. They build
+            // when scrolled into view (the tick re-runs every frame).
+            if (!this->layout->QueueCardVisible(i)) {
+                continue;
+            }
             const QueueItem *it = &qv[i].item;
             char c0[80] = "", c1[48] = "", c2[48] = "";
             float prog = -1.0f;
@@ -3006,15 +3062,12 @@ void MainApplication::HandleInput(u64 down, u64 held,
             }
             // Waiting cards show their place in line.
             int qpos = it->status == Q_QUEUED ? i + 1 : 0;
-            // Live progress adds a percent readout to the status corner
-            // (terminal states fill the ring but skip the redundant "100%").
+            // Status corner shows just the phase word ("Downloading" etc), no
+            // percent: the ring already shows progress visually, and dropping
+            // the number keeps this label static so it never re-rasterizes
+            // during a download (the % changed it every frame per active card).
             char st[48];
-            if (prog >= 0.0f && ring == 0) {
-                snprintf(st, sizeof(st), "%s %d%%", qstatus(it->status),
-                         (int)(prog * 100.0f + 0.5f));
-            } else {
-                snprintf(st, sizeof(st), "%s", qstatus(it->status));
-            }
+            snprintf(st, sizeof(st), "%s", qstatus(it->status));
             // Hero (tint + ring shimmer) covers the actively-worked item:
             // downloading or unzipping.
             this->layout->SetQueueCard(i, it->target,
@@ -3023,7 +3076,7 @@ void MainApplication::HandleInput(u64 down, u64 held,
                                        it->name, prog,
                                        it->status == Q_DOWNLOADING ||
                                            it->status == Q_EXTRACTING,
-                                       ring, qpos);
+                                       ring, qpos, qrefresh);
         }
         // Offline with work pending: cards persist between frames, so also
         // clear the note once the network is back. Online, the slot shows
@@ -3054,19 +3107,18 @@ void MainApplication::HandleInput(u64 down, u64 held,
             float prog = -1.0f; // no bar unless actively downloading
             if (it->status == Q_DOWNLOADING && it->total) {
                 prog = (float)it->now / (float)it->total;
-                int pct = (int)(prog * 100.0f + 0.5f);
-                // The bar shows progress, the text adds the percent readout
-                // plus size, speed and ETA (matching the card view).
+                // The bottom bar shows progress; the text shows size (+ speed
+                // and ETA), no percent — matching the card view.
                 if (it->speed) {
                     uint64_t eta = (it->total > it->now)
                                        ? (it->total - it->now) / it->speed
                                        : 0;
-                    snprintf(info, sizeof(info), "%d%%  ·  %s @ %s/s  ~%s",
-                             pct, human_size(it->total).c_str(),
+                    snprintf(info, sizeof(info), "%s @ %s/s  ~%s",
+                             human_size(it->total).c_str(),
                              human_size(it->speed).c_str(),
                              human_eta(eta).c_str());
                 } else {
-                    snprintf(info, sizeof(info), "%d%%  ·  %s", pct,
+                    snprintf(info, sizeof(info), "%s",
                              human_size(it->total).c_str());
                 }
             } else if (it->status == Q_PAUSED && it->total) {
@@ -3075,18 +3127,14 @@ void MainApplication::HandleInput(u64 down, u64 held,
                          human_size(it->now).c_str(),
                          human_size(it->total).c_str());
             } else if (it->status == Q_EXTRACTING) {
-                // Percent bar from archive bytes consumed (moves even inside
-                // one huge file) + count of entries finished so far.
+                // Bar shows progress from archive bytes consumed; text shows
+                // just the count of entries finished so far (no percent). This
+                // also keeps the text static between file steps, so it stops
+                // re-rasterizing every frame during a long extract.
                 if (it->total) {
                     prog = (float)it->now / (float)it->total;
                 }
-                if (prog >= 0.0f && it->ex_files > 0) {
-                    snprintf(info, sizeof(info), "%d%% (%d)",
-                             (int)(prog * 100.0f + 0.5f), it->ex_files);
-                } else if (prog >= 0.0f) {
-                    snprintf(info, sizeof(info), "%d%%",
-                             (int)(prog * 100.0f + 0.5f));
-                } else if (it->ex_files > 0) {
+                if (it->ex_files > 0) {
                     snprintf(info, sizeof(info), "(%d)", it->ex_files);
                 }
             } else if (it->status == Q_FAILED && it->fail_reason[0]) {

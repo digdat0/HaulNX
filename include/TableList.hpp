@@ -8,7 +8,9 @@
 // no-op so there's a single source of truth for selection.
 
 #include <pu/Plutonium>
+#include <gfx_tile.hpp>
 #include <string>
+#include <utility>
 #include <vector>
 #include <set>
 
@@ -42,9 +44,17 @@ class TableList : public pu::ui::elm::Element {
 
   private:
     struct Cell {
-        pu::sdl2::Texture tex;
-        s32 w;
-        s32 h;
+        pu::sdl2::Texture tex = nullptr;
+        s32 w = 0;
+        s32 h = 0;
+        // Diff keys: what this texture was rendered from. The live queue list
+        // rebuilds its rows every frame, so RebuildCache keeps a cell whose
+        // text/colour/width are unchanged instead of re-rasterizing it (text
+        // rendering through the CJK+fallback font chain is the expensive part).
+        std::string src;
+        u8 cr = 0, cg = 0, cb = 0, ca = 0;
+        u32 maxw = 0;
+        bool valid = false; // src/clr/maxw hold a rendered (or empty) result
     };
 
     s32 x, y, w, row_h;
@@ -61,6 +71,13 @@ class TableList : public pu::ui::elm::Element {
     pu::ui::Color page_bg{0, 0, 0, 0}; // layout bg; a=0 disables the fade
     pu::ui::Color row_bg, row_alt_bg, focus_bg, scroll_clr, mark_bg, prog_clr,
         accent_bg, pill_bg;
+    // Baked rounded-fill tiles (one blit each instead of a software rounded
+    // fill per row per frame) + scrollbar gradient strip. Rebuilt on theme
+    // change; see gfx_tile.hpp.
+    pu::sdl2::Texture tile_base = nullptr, tile_accent = nullptr,
+                      tile_mark = nullptr, tile_focus = nullptr,
+                      grad_tex = nullptr;
+    bool tiles_dirty = true;
     std::set<s32> marked;
     std::string font;
     std::vector<Row> rows;
@@ -138,40 +155,122 @@ class TableList : public pu::ui::elm::Element {
         this->cache_p.clear();
     }
 
+    void FreeTiles() {
+        pu::sdl2::Texture *ts[] = {&this->tile_base, &this->tile_accent,
+                                   &this->tile_mark, &this->tile_focus,
+                                   &this->grad_tex};
+        for (auto p : ts) {
+            if (*p) {
+                pu::ui::render::DeleteTexture(*p);
+            }
+        }
+    }
+
+    // Bake the per-state row fills and the scrollbar gradient once for the
+    // current theme (row size is fixed, so exact-size tiles need no stretch).
+    void RebakeTiles() {
+        this->FreeTiles();
+        const s32 tw = this->w - 2 * RowMargin;
+        const s32 th = this->row_h - RowGap;
+        this->tile_base = BakeRoundTile(tw, th, RowRadius, this->row_alt_bg);
+        this->tile_accent = BakeRoundTile(tw, th, RowRadius, this->accent_bg);
+        this->tile_mark = BakeRoundTile(tw, th, RowRadius, this->mark_bg);
+        this->tile_focus = BakeRoundTile(tw, th, RowRadius, this->focus_bg);
+        this->grad_tex = BakeVGradient(256, this->prog_clr,
+                                       pu::ui::Color(56, 130, 225, 255));
+        this->tiles_dirty = false;
+    }
+
+    // Render `txt` into `c` only when its text/colour/width differ from what
+    // the cell already holds; otherwise keep the cached texture untouched.
+    void UpdCell(Cell &c, const std::string &txt, const pu::ui::Color clr,
+                 const u32 maxw) {
+        if (c.valid && c.src == txt && c.maxw == maxw && c.cr == clr.r &&
+            c.cg == clr.g && c.cb == clr.b && c.ca == clr.a) {
+            return;
+        }
+        if (c.tex) {
+            pu::ui::render::DeleteTexture(c.tex);
+            c.tex = nullptr;
+        }
+        c.src = txt;
+        c.cr = clr.r; c.cg = clr.g; c.cb = clr.b; c.ca = clr.a;
+        c.maxw = maxw;
+        c.valid = true;
+        c.w = c.h = 0;
+        if (!txt.empty()) {
+            c.tex = maxw
+                        ? pu::ui::render::RenderText(this->font, txt, clr, maxw)
+                        : pu::ui::render::RenderText(this->font, txt, clr);
+            c.w = pu::ui::render::GetTextureWidth(c.tex);
+            c.h = pu::ui::render::GetTextureHeight(c.tex);
+        }
+    }
+
+    // Move the still-visible cells when the list scrolls so their text isn't
+    // re-rasterized every step: slot i takes what was slot i+delta; rows that
+    // scrolled off are freed, newly exposed slots are left invalid to render.
+    void ShiftCache(std::vector<Cell> &c, const s32 delta) {
+        const s32 n = (s32)c.size();
+        std::vector<Cell> nc(n);
+        for (s32 i = 0; i < n; i++) {
+            const s32 src = i + delta;
+            if (src >= 0 && src < n) {
+                nc[i] = std::move(c[src]);
+                c[src].tex = nullptr; // ownership moved to nc
+            }
+        }
+        for (s32 i = 0; i < n; i++) {
+            if (c[i].tex) {
+                pu::ui::render::DeleteTexture(c[i].tex); // scrolled-off row
+                c[i].tex = nullptr;
+            }
+        }
+        c.swap(nc);
+    }
+
     void RebuildCache() {
-        this->FreeCache();
+        // Fixed one-cell-per-visible-slot cache, diff-updated in place: the
+        // queue list rebuilds its rows every frame, so a full re-render here
+        // (RenderText per cell) froze the UI. Only changed cells re-rasterize.
+        bool resized = false;
+        if ((s32)this->cache_l.size() != this->rows_visible) {
+            this->FreeCache();
+            this->cache_l.resize(this->rows_visible);
+            this->cache_r.resize(this->rows_visible);
+            this->cache_p.resize(this->rows_visible);
+            resized = true;
+        }
+        // Reuse cells across a scroll so only the newly exposed rows render.
+        if (!resized && this->cache_top != this->scroll_top) {
+            const s32 delta = this->scroll_top - this->cache_top;
+            this->ShiftCache(this->cache_l, delta);
+            this->ShiftCache(this->cache_r, delta);
+            this->ShiftCache(this->cache_p, delta);
+        }
+        const pu::ui::Color none(0, 0, 0, 0);
         for (s32 i = 0; i < this->rows_visible; i++) {
             s32 ridx = this->scroll_top + i;
-            Cell lc{nullptr, 0, 0}, rc{nullptr, 0, 0}, pc{nullptr, 0, 0};
-            if (ridx >= 0 && ridx < (s32)this->rows.size()) {
-                Row &r = this->rows[ridx];
-                if (r.has_right && !r.right.empty()) {
-                    rc.tex = pu::ui::render::RenderText(this->font, r.right,
-                                                        r.rclr);
-                    rc.w = pu::ui::render::GetTextureWidth(rc.tex);
-                    rc.h = pu::ui::render::GetTextureHeight(rc.tex);
-                }
-                if (!r.prefix.empty()) {
-                    pc.tex = pu::ui::render::RenderText(this->font, r.prefix,
-                                                        r.lclr);
-                    pc.w = pu::ui::render::GetTextureWidth(pc.tex);
-                    pc.h = pu::ui::render::GetTextureHeight(pc.tex);
-                }
-                s32 prefix_inset = pc.tex ? PrefixColW : 0;
-                s32 icon_inset = r.icon ? (this->IconPx() + IconGap) : 0;
-                s32 left_max = this->w - 2 * (RowMargin + PadX) - prefix_inset -
-                               icon_inset - (rc.tex ? rc.w + PadX : 0);
-                if (left_max < 60) {
-                    left_max = 60;
-                }
-                lc.tex = pu::ui::render::RenderText(this->font, r.left, r.lclr,
-                                                    (u32)left_max);
-                lc.w = pu::ui::render::GetTextureWidth(lc.tex);
-                lc.h = pu::ui::render::GetTextureHeight(lc.tex);
+            Cell &lc = this->cache_l[i];
+            Cell &rc = this->cache_r[i];
+            Cell &pc = this->cache_p[i];
+            if (ridx < 0 || ridx >= (s32)this->rows.size()) {
+                this->UpdCell(rc, "", none, 0);
+                this->UpdCell(pc, "", none, 0);
+                this->UpdCell(lc, "", none, 0);
+                continue;
             }
-            this->cache_l.push_back(lc);
-            this->cache_r.push_back(rc);
-            this->cache_p.push_back(pc);
+            Row &r = this->rows[ridx];
+            this->UpdCell(rc, r.has_right ? r.right : std::string(), r.rclr, 0);
+            this->UpdCell(pc, r.prefix, r.lclr, 0);
+            s32 prefix_inset = !r.prefix.empty() ? PrefixColW : 0;
+            s32 icon_inset = r.icon ? (this->IconPx() + IconGap) : 0;
+            s32 left_max = this->w - 2 * (RowMargin + PadX) - prefix_inset -
+                           icon_inset - (rc.tex ? rc.w + PadX : 0);
+            if (left_max < 60) {
+                left_max = 60;
+            }
+            this->UpdCell(lc, r.left, r.lclr, (u32)left_max);
         }
         this->cache_top = this->scroll_top;
         this->dirty = false;
@@ -214,11 +313,14 @@ class TableList : public pu::ui::elm::Element {
     // ends taper to approximate the rounded caps.
     void RenderGradBar(pu::ui::render::Renderer::Ref &drawer, s32 bx, s32 by,
                        s32 fw, s32 bh, s32 r, s32 track_w) {
-        const pu::ui::Color g0(146, 214, 36, 255), g1(56, 130, 225, 255);
+        // Green end follows the theme accent (deeper on the light theme).
+        pu::ui::Color g0 = this->prog_clr;
+        g0.a = 255;
+        const pu::ui::Color g1(56, 130, 225, 255);
         s32 i = 0;
         while (i < fw) {
             s32 de = i < fw - 1 - i ? i : fw - 1 - i; // dist to nearer end
-            s32 step = de < r ? 1 : 2;
+            s32 step = de < r ? 1 : 4;
             if (i + step > fw) {
                 step = fw - i;
             }
@@ -249,7 +351,10 @@ class TableList : public pu::ui::elm::Element {
     }
     PU_SMART_CTOR(TableList)
 
-    ~TableList() { this->FreeCache(); }
+    ~TableList() {
+        this->FreeCache();
+        this->FreeTiles();
+    }
 
     void SetThemeColors(pu::ui::Color bg, pu::ui::Color alt, pu::ui::Color focus,
                         pu::ui::Color scroll, pu::ui::Color mark,
@@ -262,6 +367,15 @@ class TableList : public pu::ui::elm::Element {
         this->prog_clr = prog; this->accent_bg = accent; this->pill_bg = pill;
         this->page_bg = page;
         this->dirty = true;
+        this->tiles_dirty = true;
+    }
+
+    // Bake the tiles up front (renderer must be ready) so the first list screen
+    // doesn't pay the one-time bake as a visible hitch.
+    void PrewarmTiles() {
+        if (this->tiles_dirty) {
+            this->RebakeTiles();
+        }
     }
 
     void Clear(const bool fade = true) {
@@ -269,9 +383,12 @@ class TableList : public pu::ui::elm::Element {
         this->sel = 0;
         this->scroll_top = 0;
         this->marked.clear();
-        if (fade) {
-            this->enter_alpha = 0; // next populate fades the list in
-        }
+        // Enter fade removed for performance: it re-rendered the whole list
+        // for ~8 frames on every screen/tab change, which stuttered under
+        // download load. Screens now appear instantly. `fade` kept for
+        // call-site compatibility.
+        (void)fade;
+        this->enter_alpha = 255;
         this->dirty = true;
         // Content changed under the finger: drop any in-progress touch so a
         // stale tap can't select/activate a row of the new list.
@@ -347,6 +464,9 @@ class TableList : public pu::ui::elm::Element {
         if (this->dirty || this->cache_top != this->scroll_top) {
             this->RebuildCache();
         }
+        if (this->tiles_dirty) {
+            this->RebakeTiles();
+        }
         if (this->enter_alpha < 255) {
             s32 e = this->enter_alpha + 32;
             this->enter_alpha = e > 255 ? 255 : e;
@@ -384,19 +504,33 @@ class TableList : public pu::ui::elm::Element {
             // above the progress bar when present (so nothing overlaps it).
             s32 cont_top = rry;
             s32 cont_h = rrh - (has_bar ? (bar_bh + 5) : 0);
-            pu::ui::Color base = is_marked ? this->mark_bg
-                                 : is_accent ? this->accent_bg
-                                             : this->row_alt_bg;
-            drawer->RenderRoundedRectangleFill(base, rrx, rry, rrw, rrh,
-                                               RowRadius);
+            // Floating rounded row: one blit of the baked tile (flat fill only
+            // if the tile failed to bake).
+            pu::sdl2::Texture tile = is_marked ? this->tile_mark
+                                     : is_accent ? this->tile_accent
+                                                 : this->tile_base;
+            if (tile) {
+                drawer->RenderTexture(tile, rrx, rry);
+            } else {
+                pu::ui::Color base = is_marked ? this->mark_bg
+                                     : is_accent ? this->accent_bg
+                                                 : this->row_alt_bg;
+                drawer->RenderRectangleFill(base, rrx, rry, rrw, rrh);
+            }
             if (ridx == this->sel) {
                 // Selection: lifted charcoal fill easing in, wrapped in a
                 // logo-green outline + soft outer glow (the "lit" row). The
                 // glow rings stay within the RowGap between rows.
-                auto f = this->focus_bg;
-                f.a = (u8)this->sel_alpha;
-                drawer->RenderRoundedRectangleFill(f, rrx, rry, rrw, rrh,
-                                                   RowRadius);
+                if (this->tile_focus) {
+                    pu::ui::render::TextureRenderOptions o;
+                    o.alpha_mod = this->sel_alpha;
+                    drawer->RenderTexture(this->tile_focus, rrx, rry, o);
+                } else {
+                    auto f = this->focus_bg;
+                    f.a = (u8)this->sel_alpha;
+                    drawer->RenderRoundedRectangleFill(f, rrx, rry, rrw, rrh,
+                                                       RowRadius);
+                }
                 for (s32 g = 1; g <= 3; g++) {
                     auto gc = this->prog_clr;
                     gc.a = (u8)((36 - g * 10) * this->sel_alpha / 255);
@@ -515,15 +649,18 @@ class TableList : public pu::ui::elm::Element {
                                          this->scroll_top / maxtop)
                                  : 0);
             // Thumb takes the signature green->blue gradient (echoes the
-            // header strip), drawn in short segments.
-            const pu::ui::Color g0(146, 214, 36, 255), g1(56, 130, 225, 255);
-            for (s32 i = 0; i < thumb_h; i += 4) {
-                float t = (float)i / (thumb_h - 1);
-                pu::ui::Color c((u8)(g0.r + ((s32)g1.r - g0.r) * t),
-                                (u8)(g0.g + ((s32)g1.g - g0.g) * t),
-                                (u8)(g0.b + ((s32)g1.b - g0.b) * t), 255);
-                s32 seg = thumb_h - i < 4 ? thumb_h - i : 4;
-                drawer->RenderRectangleFill(c, sb_x, thumb_y + i, sb_w, seg);
+            // header strip), drawn in short segments; green end = accent.
+            // Thumb takes the signature green->blue gradient via the baked
+            // strip (stretched to the thumb height); flat only as a fallback.
+            if (this->grad_tex) {
+                pu::ui::render::TextureRenderOptions o;
+                o.width = sb_w;
+                o.height = thumb_h;
+                drawer->RenderTexture(this->grad_tex, sb_x, thumb_y, o);
+            } else {
+                pu::ui::Color g0 = this->prog_clr;
+                g0.a = 255;
+                drawer->RenderRectangleFill(g0, sb_x, thumb_y, sb_w, thumb_h);
             }
         }
         // Enter fade: a page-coloured veil over the fresh list thins out

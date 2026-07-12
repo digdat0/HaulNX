@@ -719,10 +719,15 @@ void queue_init(const char *roms_root, int max_dl) {
     queue_load(); /* restore any downloads pending from a previous session */
     g_run = true;
     queue_set_max_dl(max_dl);
-    /* cpuid -2 = default core (–1 is invalid for svcCreateThread). */
+    /* cpuid -2 = default core (–1 is invalid for svcCreateThread).
+     * Worker priorities sit BELOW the main/UI thread (0x2C; higher number =
+     * lower priority) so rendering always preempts them and the UI stays
+     * responsive while downloads/extraction run. Downloads are mostly I/O-bound
+     * (they block on the socket), so a small step down; extraction is pure-CPU
+     * decompression and the worst offender, so it drops much further. */
     g_dl_count = 0;
     for (int i = 0; i < MAX_DL_THREADS; i++) {
-        Result rc = threadCreate(&g_dl_threads[i], dl_worker, NULL, NULL, 0x40000, 0x2C, -2);
+        Result rc = threadCreate(&g_dl_threads[i], dl_worker, NULL, NULL, 0x40000, 0x30, -2);
         if (R_SUCCEEDED(rc)) {
             if (R_SUCCEEDED(threadStart(&g_dl_threads[i]))) {
                 g_dl_count++;
@@ -732,7 +737,7 @@ void queue_init(const char *roms_root, int max_dl) {
         }
     }
     bool ex_ok = false;
-    Result rc2 = threadCreate(&g_ex_thread, ex_worker, NULL, NULL, 0x40000, 0x2C, -2);
+    Result rc2 = threadCreate(&g_ex_thread, ex_worker, NULL, NULL, 0x40000, 0x3B, -2);
     if (R_SUCCEEDED(rc2)) {
         if (R_SUCCEEDED(threadStart(&g_ex_thread))) {
             ex_ok = true;

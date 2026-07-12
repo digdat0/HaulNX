@@ -503,6 +503,10 @@ class MainLayout : public pu::ui::Layout {
     void SetQueueActivity(bool active); // pulse the Queue tab while downloading
     void RefreshTabs();
     void ApplyTheme();
+    // Bake the list/grid tiles up front so the first screen doesn't hitch.
+    void PrewarmTiles() { this->list->PrewarmTiles(); this->grid->PrewarmTiles(); }
+    // True if queue card i could be on screen (skip off-screen text building).
+    bool QueueCardVisible(s32 i) { return this->grid->QueueIndexVisible(i); }
     // fade=false skips the list's enter fade (per-frame queue rebuilds).
     void ClearMenu(bool fade = true);
     void AddRow(const std::string &name);
@@ -529,7 +533,7 @@ class MainLayout : public pu::ui::Layout {
                       pu::ui::Color st_clr, const std::string &size,
                       const std::string &speed, const std::string &eta,
                       const std::string &file, float prog, bool hero,
-                      s32 ring = 0, s32 qpos = 0);
+                      s32 ring = 0, s32 qpos = 0, bool refresh_text = true);
     void CardMove(s32 dx, s32 dy);
     s32 Sel();
     void SetSel(s32 i);
