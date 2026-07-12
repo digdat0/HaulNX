@@ -4,6 +4,33 @@ Notes for each release. `release.sh` pulls the section matching the version in
 `VERSION` and attaches it to the GitHub release. Add a `## <version>` section
 here before running a release.
 
+## 1.6.0-beta
+
+**Performance — the UI stays smooth during downloads, verify and unzip**
+- Background workers (downloads, MD5 verify, archive extraction) now run on
+  their own CPU cores instead of sharing the one the interface draws on, so
+  tabs, lists and metadata no longer lag while work is in progress.
+- Verification and unzipping briefly use the console's boost clock profile (the
+  same one games use on loading screens — not an overclock), so they finish
+  faster.
+- Download writes and MD5 reads are buffered into larger SD-card operations,
+  cutting the stutter that heavy disk activity used to cause.
+- The Queue screen takes a single state snapshot per frame instead of two.
+
+**Installed tab loads faster**
+- Folder sizes are cached to disk, so the first visit after launch no longer
+  re-scans every console folder; only a folder that actually changed (e.g. a
+  fresh download) is recomputed.
+- The file list's "already installed" check does one directory scan for the
+  whole list instead of one per file.
+
+**Fixes**
+- archive.org downloads no longer fail with 401/403 on public items when
+  credentials are set: the app now downloads unauthenticated first (like a
+  browser) and only sends your credentials when the server actually requires
+  them, keeping them across archive.org's download redirect for restricted
+  items.
+
 ## 1.5.0-beta
 
 **New app icon & branding**

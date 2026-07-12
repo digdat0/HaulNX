@@ -232,7 +232,11 @@ bool md5_file(const char *path, char out_hex[33], volatile bool *cancel) {
     if (!f) {
         return false;
     }
-    unsigned char *buf = (unsigned char *)malloc(65536);
+    /* 512KB reads: fewer SD round-trips than 64KB during verification, so the
+     * verify phase finishes faster and holds the (shared) SD bus for less total
+     * time — less contention with the UI thread's own reads. */
+    const size_t MD5_BUF = 512 * 1024;
+    unsigned char *buf = (unsigned char *)malloc(MD5_BUF);
     if (!buf) {
         fclose(f);
         return false;
@@ -243,7 +247,7 @@ bool md5_file(const char *path, char out_hex[33], volatile bool *cancel) {
 
     size_t r;
     bool aborted = false;
-    while ((r = fread(buf, 1, 65536, f)) > 0) {
+    while ((r = fread(buf, 1, MD5_BUF, f)) > 0) {
         MD5_Update(&ctx, buf, (unsigned long)r);
         if (cancel && *cancel) {
             aborted = true;

@@ -486,6 +486,73 @@ static const int g_sort_keys[] = {
     S_SORT_SIZE_DESC, S_SORT_SIZE_ASC
 };
 
+// ASCII lower-fold (locale-free) for case-insensitive path matching, matching
+// FAT's case-insensitivity as strcasecmp/fs_exists do.
+static void ascii_lower(std::string &s) {
+    for (auto &c : s) {
+        if (c >= 'A' && c <= 'Z') {
+            c = (char)(c + 32);
+        }
+    }
+}
+
+// Build a case-folded, sorted index of the console's roms/<target> directory in
+// ONE scan, so the file list can test "already installed?" per row with a binary
+// search instead of an opendir()/readdir() scan per file — the latter made a big
+// repo's list build cost O(files * dir_size) of SD traffic on the UI thread.
+static void build_installed_index(const char *target,
+                                  std::vector<std::string> &out) {
+    out.clear();
+    char dir[1200];
+    snprintf(dir, sizeof(dir), "%s/%s", roms_root(&g_tico), target);
+    DIR *d = opendir(dir);
+    if (!d) {
+        return; // no folder yet: nothing installed
+    }
+    struct dirent *e;
+    while ((e = readdir(d)) != NULL) {
+        if (e->d_name[0] == '.' &&
+            (e->d_name[1] == '\0' ||
+             (e->d_name[1] == '.' && e->d_name[2] == '\0'))) {
+            continue; // skip "." and ".."
+        }
+        std::string s(e->d_name);
+        ascii_lower(s);
+        out.push_back(std::move(s));
+    }
+    closedir(d);
+    std::sort(out.begin(), out.end());
+}
+
+// Installed test against the prebuilt index. Mirrors file_installed(): an exact
+// (case-insensitive) name match, or — for archives — any entry whose name starts
+// with the archive's base name (its name minus the last extension), e.g.
+// "game.zip" already unpacked to "game.sfc" or a "game/" folder.
+static bool index_has_installed(const std::vector<std::string> &idx,
+                                const char *fname) {
+    std::string low(fname);
+    ascii_lower(low);
+    if (std::binary_search(idx.begin(), idx.end(), low)) {
+        return true;
+    }
+    if (!is_archive_name(fname)) {
+        return false;
+    }
+    std::string base = low;
+    size_t dot = base.find_last_of('.');
+    if (dot != std::string::npos && dot != 0) {
+        base.resize(dot);
+    }
+    if (base.empty()) {
+        return false;
+    }
+    // The first entry >= base is the lexicographically smallest string that
+    // could start with base; if it does, an installed match exists.
+    auto it = std::lower_bound(idx.begin(), idx.end(), base);
+    return it != idx.end() && it->size() >= base.size() &&
+           it->compare(0, base.size(), base) == 0;
+}
+
 static void rebuild_files(MainLayout *lay, const char *target) {
     lay->ClearMenu();
     g_files.clear();
@@ -513,9 +580,12 @@ static void rebuild_files(MainLayout *lay, const char *target) {
             }
         });
     }
+    // One directory scan for the whole list instead of one per file.
+    std::vector<std::string> inst_idx;
+    build_installed_index(target, inst_idx);
     for (int k = 0; k < (int)g_files.size(); k++) {
         ArchiveFile *f = &g_item.files[g_files[k]];
-        bool inst = file_installed(target, f->name);
+        bool inst = index_has_installed(inst_idx, f->name);
         g_marks.push_back(inst ? 1 : 0);
         char name[540];
         snprintf(name, sizeof(name), "%s%s", inst ? "* " : "", f->name);
@@ -784,6 +854,81 @@ struct InstStat {
     uint64_t size;
 };
 static std::map<std::string, InstStat> g_inst_stat;
+static bool g_inst_stat_loaded = false;
+static bool g_inst_stat_dirty = false;
+
+#define INST_SIZES_PATH CONFIG_DIR "/inst_sizes.json"
+
+// Persist the folder-size cache across launches. The recursive size walk is the
+// Installed tab's only real load cost; without persistence the whole cache is
+// cold on every launch, so the first Installed visit re-walks (stats every file
+// under) every console folder. Entries are still revalidated per folder by
+// mtime + immediate count in inst_dir_stats, so a folder that changed while the
+// app was closed — e.g. a fresh download — is the only one re-walked.
+static void inst_stat_load(void) {
+    if (g_inst_stat_loaded) {
+        return;
+    }
+    g_inst_stat_loaded = true;
+    size_t len = 0;
+    char *body = json_read_file(INST_SIZES_PATH, &len);
+    if (!body) {
+        return;
+    }
+    int ntok = 0;
+    jsmntok_t *tok = json_parse_alloc(body, len, &ntok);
+    if (tok && tok[0].type == JSMN_ARRAY) {
+        int child = 1;
+        for (int i = 0; i < tok[0].size; i++) {
+            if (tok[child].type == JSMN_OBJECT) {
+                char path[1024] = "";
+                json_copy(body, tok, json_obj_get(body, tok, child, "p"), path,
+                          sizeof(path));
+                if (path[0]) {
+                    InstStat s;
+                    s.mtime = (time_t)json_u64(
+                        body, tok, json_obj_get(body, tok, child, "m"));
+                    s.imm = (int)json_u64(
+                        body, tok, json_obj_get(body, tok, child, "n"));
+                    s.size = json_u64(
+                        body, tok, json_obj_get(body, tok, child, "s"));
+                    g_inst_stat[path] = s;
+                }
+            }
+            child = json_tok_skip(tok, child);
+        }
+    }
+    free(tok);
+    free(body);
+}
+
+// Write the cache back only when a folder was actually (re)walked this visit.
+static void inst_stat_save(void) {
+    if (!g_inst_stat_dirty) {
+        return;
+    }
+    fs_mkdir_p(CONFIG_DIR);
+    FILE *f = fopen(INST_SIZES_PATH, "wb");
+    if (!f) {
+        return;
+    }
+    fputc('[', f);
+    bool first = true;
+    for (const auto &kv : g_inst_stat) {
+        if (!first) {
+            fputc(',', f);
+        }
+        first = false;
+        fputs("{\"p\":", f);
+        json_write_escaped(f, kv.first.c_str());
+        fprintf(f, ",\"m\":%llu,\"n\":%d,\"s\":%llu}",
+                (unsigned long long)kv.second.mtime, kv.second.imm,
+                (unsigned long long)kv.second.size);
+    }
+    fputc(']', f);
+    fclose(f);
+    g_inst_stat_dirty = false;
+}
 
 static void inst_dir_stats(const std::string &path, int *count,
                            uint64_t *size) {
@@ -799,6 +944,7 @@ static void inst_dir_stats(const std::string &path, int *count,
     }
     uint64_t sz = dir_total_size(path);
     g_inst_stat[path] = {mt, imm, sz};
+    g_inst_stat_dirty = true; // a folder was (re)walked: persist on exit
     *count = imm;
     *size = sz;
 }
@@ -2345,6 +2491,7 @@ static const char *inst_disp_name(const DirEnt &d, bool is_root) {
 void MainApplication::GotoInstalled(const std::string &path) {
     this->screen = Screen::Installed;
     this->inst_path = path;
+    inst_stat_load(); // warm the folder-size cache from disk (once per session)
     g_inst = list_dir(path);
     bool is_root = (path == roms_root(&g_tico));
     // Folders stay grouped above files, and pinned folders stay on top at the
@@ -2461,6 +2608,7 @@ void MainApplication::GotoInstalled(const std::string &path) {
     if (g_inst_sort != SORT_DEFAULT) {
         this->layout->SetRomInfo(tr(g_sort_keys[g_inst_sort]));
     }
+    inst_stat_save(); // persist any folder sizes (re)computed this visit
 }
 
 // ---- installed search (recursive scan of the roms folder) -----------------
@@ -2868,8 +3016,10 @@ void MainApplication::HandleInput(u64 down, u64 held,
 
     // Keep the tab bar highlight in sync with whatever screen we're on.
     this->SyncTab();
+    // One active-count scan per frame, reused by the toast detector below.
+    int qac = queue_active_count();
     // Pulse the Queue tab when downloads are active and you're looking elsewhere.
-    this->layout->SetQueueActivity(queue_active_count() > 0 &&
+    this->layout->SetQueueActivity(qac > 0 &&
                                    this->CurrentTab() != Tab::Queue);
 
     // Remember the current selection per browseable list so backing out and
@@ -2890,6 +3040,22 @@ void MainApplication::HandleInput(u64 down, u64 held,
         break;
     }
 
+    // One queue snapshot per frame, shared by the completion-toast detector and
+    // the live queue-list refresh below. Each is a ~120KB locked copy; on the
+    // Queue screen during downloads the two consumers used to snapshot
+    // separately (two per frame). Filled lazily via snap() — taken at most once,
+    // and only when a consumer actually needs it this frame.
+    static QueueView frame_qv[QUEUE_MAX];
+    int frame_qn = 0;
+    bool have_qv = false;
+    auto snap = [&]() -> int {
+        if (!have_qv) {
+            frame_qn = queue_snapshot(frame_qv, QUEUE_MAX);
+            have_qv = true;
+        }
+        return frame_qn;
+    };
+
     // Completion toasts: notice downloads reaching a terminal state on any
     // screen, so you know they finished even from another tab. Only do the
     // (locking) snapshot while the queue is active, plus a couple of frames
@@ -2898,16 +3064,15 @@ void MainApplication::HandleInput(u64 down, u64 held,
         static QStatus last[QUEUE_MAX];
         static bool init = false;
         static int idle = 1000;
-        static QueueView cqv[QUEUE_MAX];
         // Accumulated over the current active run, for a "queue finished"
         // summary once it drains (per-item toasts overwrite each other when
         // several finish together, so a batch needs one final tally).
         static int done_acc = 0, fail_acc = 0;
         static bool was_active = false;
-        int qac = queue_active_count();
         idle = qac > 0 ? 0 : (idle < 1000 ? idle + 1 : idle);
         if (idle <= 2) {
-            int n = queue_snapshot(cqv, QUEUE_MAX);
+            int n = snap();
+            QueueView *cqv = frame_qv;
             QStatus cur[QUEUE_MAX];
             for (int s = 0; s < QUEUE_MAX; s++) {
                 cur[s] = Q_FREE;
@@ -2966,8 +3131,8 @@ void MainApplication::HandleInput(u64 down, u64 held,
 
     // Live-refresh the queue list while it's open.
     if (this->screen == Screen::Queue && g_prefs.card_view) {
-        static QueueView qv[QUEUE_MAX];
-        int n = queue_snapshot(qv, QUEUE_MAX);
+        int n = snap();
+        QueueView *qv = frame_qv;
         if (n == 0) {
             // ClearMenu only on the emptying transition: it clears the empty
             // state too, so running it every frame would make SetEmptyState
@@ -3097,9 +3262,9 @@ void MainApplication::HandleInput(u64 down, u64 held,
         this->layout->SetRomInfo(note);
         }
     } else if (this->screen == Screen::Queue) {
-        static QueueView qv[QUEUE_MAX];
         s32 keep = this->layout->Sel();
-        int n = queue_snapshot(qv, QUEUE_MAX);
+        int n = snap();
+        QueueView *qv = frame_qv;
         this->layout->ClearMenu(false); // rebuilt every frame: no enter fade
         for (int i = 0; i < n; i++) {
             const QueueItem *it = &qv[i].item;

@@ -28,6 +28,44 @@ static Thread g_ex_thread;
 static volatile bool g_run = false;
 static const char *g_roms_root = "sdmc:/tico/roms";
 
+/* Cores this process may use OTHER than core 0 (where the UI/render thread
+ * lives). The CPU-heavy workers (extraction, md5) are pinned here so they run
+ * truly in parallel with rendering instead of preempting it on a shared core.
+ * Homebrew under hb-loader typically has cores 0..2; filled by detect_worker_cores. */
+static int g_worker_cores[4];
+static int g_worker_core_count = 0;
+
+static void detect_worker_cores(void) {
+    g_worker_core_count = 0;
+    u64 mask = 0;
+    if (R_SUCCEEDED(svcGetInfo(&mask, InfoType_CoreMask, CUR_PROCESS_HANDLE, 0))) {
+        for (int c = 1; c < 4; c++) { /* skip core 0: reserved for the UI */
+            if (mask & (1ull << c)) {
+                g_worker_cores[g_worker_core_count++] = c;
+            }
+        }
+    }
+}
+
+/* Pick a core for download worker i: round-robin across the available non-zero
+ * cores, leaving the highest one free for extraction when we have >=2. Returns
+ * -2 (default/creation core) as a fallback when no non-zero core is available. */
+static int dl_worker_core(int i) {
+    if (g_worker_core_count == 0) {
+        return -2;
+    }
+    if (g_worker_core_count == 1) {
+        return g_worker_cores[0]; /* share with extract: downloads are I/O-bound */
+    }
+    return g_worker_cores[i % (g_worker_core_count - 1)];
+}
+
+/* The extract worker (pure-CPU decompression, the worst UI offender) gets the
+ * highest available non-zero core to itself where possible. */
+static int ex_worker_core(void) {
+    return g_worker_core_count > 0 ? g_worker_cores[g_worker_core_count - 1] : -2;
+}
+
 /* ---- network state --------------------------------------------------- */
 
 /* Cached connectivity check (nifm polled at most every ~2s) so the workers can
@@ -61,6 +99,36 @@ static bool net_is_up_fresh(void) {
     g_net_last = 0;
     mutexUnlock(&g_net_mtx);
     return net_is_up();
+}
+
+/* ---- CPU boost (verify / extract) ------------------------------------ */
+
+/* MD5 verification and archive decompression are CPU/memory-bound. Nintendo's
+ * FastLoad boost profile raises the CPU (~1785MHz) and memory (~1600MHz) clocks
+ * — the same firmware-sanctioned profile games use on loading screens; it is NOT
+ * an overclock. It throttles the GPU to minimum, so we hold it ONLY across the
+ * actual verify/extract calls and drop back to Normal immediately after.
+ *
+ * The mode is system-global, and several downloads can verify while an extract
+ * runs, so it's reference-counted: the first worker to enter a heavy phase turns
+ * it on, the last to leave turns it off. */
+static Mutex g_boost_mtx;
+static int g_boost_refs = 0;
+
+static void boost_acquire(void) {
+    mutexLock(&g_boost_mtx);
+    if (g_boost_refs++ == 0) {
+        appletSetCpuBoostMode(ApmCpuBoostMode_FastLoad);
+    }
+    mutexUnlock(&g_boost_mtx);
+}
+
+static void boost_release(void) {
+    mutexLock(&g_boost_mtx);
+    if (g_boost_refs > 0 && --g_boost_refs == 0) {
+        appletSetCpuBoostMode(ApmCpuBoostMode_Normal);
+    }
+    mutexUnlock(&g_boost_mtx);
 }
 
 /* ---- worker-side processing ----------------------------------------- */
@@ -399,13 +467,20 @@ static void process_item(QueueItem *it) {
         return;
     }
 
-    /* Only send archive.org S3 credentials to archive.org hosts, and only
-     * over HTTPS — never leak the secret in cleartext. */
-    const char *auth =
+    /* Archive.org public items need NO credentials — a browser sends none, and
+     * the data node that /download/ redirects to (ia######.us.archive.org)
+     * rejects a LOW S3 header on a public file with 401/403. So download
+     * browser-style: start unauthenticated, and only if we hit an auth error
+     * (the item is actually restricted) retry once WITH the credentials. The
+     * credential is still only ever sent to archive.org over HTTPS, and only
+     * when the server demands it — never leaked, never wasted on public files. */
+    const char *cred_auth =
         (it->auth[0] && strncasecmp(it->url, "https://", 8) == 0 &&
          is_archive_org_url(it->url))
             ? it->auth
             : NULL;
+    const char *auth = NULL; /* unauthenticated first, like a browser */
+    bool tried_auth = false;
     long code = 0;
     bool ok = false;
     /* Transient server errors (5xx/429, e.g. archive.org throttling a burst of
@@ -419,6 +494,24 @@ static void process_item(QueueItem *it) {
         }
         if (!net_is_up_fresh()) {
             break; /* connection is down: park instead of burning retries */
+        }
+        /* Auth error on an unauthenticated request: the item is likely
+         * restricted. If we have credentials, retry once WITH them (no backoff).
+         * If the authenticated attempt also 401/403s, the creds are wrong or
+         * lack access — that falls through to the normal (non-transient) fail. */
+        if ((code == 401 || code == 403) && cred_auth && !tried_auth) {
+            tried_auth = true;
+            auth = cred_auth;
+            struct stat ast;
+            have = (stat(tmp, &ast) == 0) ? (uint64_t)ast.st_size : 0;
+            if (it->size > 0 && have > it->size) {
+                remove(tmp);
+                have = 0;
+            }
+            it->now = have;
+            ctx.last_now = have;
+            ctx.last_tick = armGetSystemTick();
+            continue;
         }
         bool transient = (code == 0 || code == 429 || code >= 500);
         if (!transient || attempt >= 2) {
@@ -512,7 +605,10 @@ static void process_item(QueueItem *it) {
     if (it->md5[0]) {
         it->status = Q_VERIFYING;
         char got[33];
-        if (!md5_file(tmp, got, &it->cancel)) {
+        boost_acquire(); /* CPU-bound hash: boost only across the md5 pass */
+        bool md5ok = md5_file(tmp, got, &it->cancel);
+        boost_release();
+        if (!md5ok) {
             remove(tmp);
             if (it->cancel) {
                 it->status = Q_CANCELLED;
@@ -569,7 +665,9 @@ static void install_item(QueueItem *it) {
     it->now = 0;
     it->ex_files = 0;
     int ow = 0;
+    boost_acquire(); /* CPU-bound decompression: boost only across the extract */
     int n = extract_archive(tmp, destdir, ex_progress, it, &ow);
+    boost_release();
     if (!g_run && !it->cancel) {
         /* Shutting down mid-extract: KEEP the complete .part and leave the
          * item pending (status EXTRACTING is persisted, and reloads straight
@@ -716,18 +814,23 @@ void queue_init(const char *roms_root, int max_dl) {
     memset(g_items, 0, sizeof(g_items));
     mutexInit(&g_mtx);
     mutexInit(&g_net_mtx);
+    mutexInit(&g_boost_mtx);
     queue_load(); /* restore any downloads pending from a previous session */
     g_run = true;
     queue_set_max_dl(max_dl);
-    /* cpuid -2 = default core (–1 is invalid for svcCreateThread).
-     * Worker priorities sit BELOW the main/UI thread (0x2C; higher number =
+    /* Pin the workers to cores OTHER than core 0 so their CPU work runs in
+     * parallel with rendering instead of contending for the UI's core. cpuid
+     * -2 = default/creation core (–1 is invalid for svcCreateThread) is the
+     * fallback when the process only has core 0.
+     * Worker priorities also sit BELOW the main/UI thread (0x2C; higher number =
      * lower priority) so rendering always preempts them and the UI stays
      * responsive while downloads/extraction run. Downloads are mostly I/O-bound
      * (they block on the socket), so a small step down; extraction is pure-CPU
      * decompression and the worst offender, so it drops much further. */
+    detect_worker_cores();
     g_dl_count = 0;
     for (int i = 0; i < MAX_DL_THREADS; i++) {
-        Result rc = threadCreate(&g_dl_threads[i], dl_worker, NULL, NULL, 0x40000, 0x30, -2);
+        Result rc = threadCreate(&g_dl_threads[i], dl_worker, NULL, NULL, 0x40000, 0x30, dl_worker_core(i));
         if (R_SUCCEEDED(rc)) {
             if (R_SUCCEEDED(threadStart(&g_dl_threads[i]))) {
                 g_dl_count++;
@@ -737,7 +840,7 @@ void queue_init(const char *roms_root, int max_dl) {
         }
     }
     bool ex_ok = false;
-    Result rc2 = threadCreate(&g_ex_thread, ex_worker, NULL, NULL, 0x40000, 0x3B, -2);
+    Result rc2 = threadCreate(&g_ex_thread, ex_worker, NULL, NULL, 0x40000, 0x3B, ex_worker_core());
     if (R_SUCCEEDED(rc2)) {
         if (R_SUCCEEDED(threadStart(&g_ex_thread))) {
             ex_ok = true;
@@ -751,9 +854,17 @@ void queue_init(const char *roms_root, int max_dl) {
     fs_mkdir_p(CONFIG_DIR);
     FILE *f = fopen(LOG_PATH, "a");
     if (f) {
-        fprintf(f, "queue: %d/%d dl_workers started (limit %d), ex_worker %s\n",
+        char cores[32] = "";
+        for (int i = 0; i < g_worker_core_count; i++) {
+            char t[6];
+            snprintf(t, sizeof(t), "%s%d", i ? "," : "", g_worker_cores[i]);
+            strncat(cores, t, sizeof(cores) - strlen(cores) - 1);
+        }
+        fprintf(f, "queue: %d/%d dl_workers started (limit %d), ex_worker %s; "
+                   "worker cores [%s] (ex core %d)\n",
                 g_dl_count, MAX_DL_THREADS, (int)g_max_dl,
-                ex_ok ? "started" : "FAILED");
+                ex_ok ? "started" : "FAILED",
+                cores[0] ? cores : "0(fallback)", ex_worker_core());
         fclose(f);
     }
 }
@@ -773,6 +884,12 @@ void queue_exit(void) {
     }
     threadWaitForExit(&g_ex_thread);
     threadClose(&g_ex_thread);
+    /* Both workers are stopped: make sure we didn't leave the system in boost
+     * mode (e.g. a phase interrupted by shutdown). */
+    if (g_boost_refs != 0) {
+        g_boost_refs = 0;
+        appletSetCpuBoostMode(ApmCpuBoostMode_Normal);
+    }
     /* Persist after both threads have stopped so interrupted downloads and
      * pending extractions survive a restart/update and resume next launch. */
     mutexLock(&g_mtx);

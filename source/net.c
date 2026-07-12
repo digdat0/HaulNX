@@ -163,9 +163,18 @@ bool http_download(const char *url, const char *dest_path,
     if (!fp) {
         return false;
     }
+    /* Batch curl's ~16KB chunks into large SD writes: the SD card is a shared,
+     * serializing resource, and many small writes here stall the UI thread's
+     * own SD reads (icons/config/cache) → visible hitches during a download.
+     * Mirrors the extractor's write buffering. Freed after fclose. */
+    char *iobuf = (char *)malloc(512 * 1024);
+    if (iobuf) {
+        setvbuf(fp, iobuf, _IOFBF, 512 * 1024);
+    }
     CURL *c = curl_easy_init();
     if (!c) {
         fclose(fp);
+        free(iobuf);
         return false;
     }
 
@@ -200,6 +209,15 @@ bool http_download(const char *url, const char *dest_path,
     }
     if (hdrs) {
         curl_easy_setopt(c, CURLOPT_HTTPHEADER, hdrs);
+        /* archive.org's /download/ URL redirects to a data node
+         * (ia######.us.archive.org); by default curl drops a custom
+         * Authorization header across that host change, so the node sees an
+         * unauthenticated request and 401s a restricted item. Keep the header
+         * across the redirect (curl's --location-trusted). Only reached with the
+         * archive.org S3 credential, which the caller already gates to
+         * archive.org HTTPS URLs; archive.org only redirects within
+         * *.archive.org, so the secret is never sent off-domain. */
+        curl_easy_setopt(c, CURLOPT_UNRESTRICTED_AUTH, 1L);
     }
     apply_tls(c);
 
@@ -214,6 +232,7 @@ bool http_download(const char *url, const char *dest_path,
     }
     curl_easy_cleanup(c);
     fclose(fp);
+    free(iobuf); /* only after fclose flushes through it */
 
     net_log("DL  %s (resume=%llu) -> curl=%d(%s) http=%ld", url,
             (unsigned long long)resume_from, (int)rc, curl_easy_strerror(rc),
