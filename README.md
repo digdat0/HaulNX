@@ -123,7 +123,9 @@ but it works.**
 
 <img width="1024" height="576" alt="3-installed list" src="https://github.com/user-attachments/assets/c27a79a7-a599-4376-b00c-498f44fd895f" />
 
-<img width="1024" height="576" alt="4-dl queue card" src="https://github.com/user-attachments/assets/34b9d6ac-1231-4e8f-87fd-4b268008cfb7" />
+<img width="1920" height="1080" alt="4-dl cards" src="https://github.com/user-attachments/assets/73d0391d-9dac-4738-908e-b147d40f0ed0" />
+
+<img width="1024" height="576" alt="11- dl list" src="https://github.com/user-attachments/assets/d86354e0-7017-441f-b3b8-73fcc6bf27de" />
 
 <img width="1024" height="576" alt="5-browse list" src="https://github.com/user-attachments/assets/2bd5a11e-f82d-4529-a22e-26b950f26578" />
 
