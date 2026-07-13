@@ -116,15 +116,25 @@ but it works.**
 ## Screenshots
 
 <img width="1920" height="1080" alt="0-browse" src="https://github.com/user-attachments/assets/77375940-4123-425b-ad8d-2cd098f0f11b" />
+
 <img width="1024" height="576" alt="1-browse repo" src="https://github.com/user-attachments/assets/615582df-d71c-41f8-95be-8d40ef493a4f" />
+
 <img width="1920" height="1080" alt="2-installed cards" src="https://github.com/user-attachments/assets/58f7e0f8-8eeb-45a1-81da-070064357544" />
+
 <img width="1024" height="576" alt="3-installed list" src="https://github.com/user-attachments/assets/c27a79a7-a599-4376-b00c-498f44fd895f" />
+
 <img width="1024" height="576" alt="4-dl queue card" src="https://github.com/user-attachments/assets/34b9d6ac-1231-4e8f-87fd-4b268008cfb7" />
+
 <img width="1024" height="576" alt="5-browse list" src="https://github.com/user-attachments/assets/2bd5a11e-f82d-4529-a22e-26b950f26578" />
+
 <img width="1024" height="576" alt="6-browse list" src="https://github.com/user-attachments/assets/2bf0c73e-043e-4c54-bc5d-f0729ba9b77e" />
+
 <img width="1920" height="1080" alt="7-installed list" src="https://github.com/user-attachments/assets/38faa657-3b3e-408d-89dd-100b4e9ddc9b" />
+
 <img width="1024" height="576" alt="8-installed apps list" src="https://github.com/user-attachments/assets/58d5e9e0-2655-47e6-a41f-ba44929d2edf" />
+
 <img width="1920" height="1080" alt="9-options card" src="https://github.com/user-attachments/assets/e86feeda-e7ba-43ae-aec6-b36ccc6a197b" />
+
 <img width="1920" height="1080" alt="10-options card png" src="https://github.com/user-attachments/assets/2826f510-af90-429a-87c7-7dd07f4e9d09" />
 
 ---
