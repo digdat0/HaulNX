@@ -4,6 +4,17 @@ Notes for each release. `release.sh` pulls the section matching the version in
 `VERSION` and attaches it to the GitHub release. Add a `## <version>` section
 here before running a release.
 
+## 1.6.1-beta
+
+**Custom ROM folder (Advanced)**
+- New **Advanced settings → ROM folder** option lets you override where ROMs are
+  installed and browsed, instead of the auto-detected `tico/roms`. It opens an
+  **SD-card folder browser**: **A** enters a folder, **B** goes up a level, **X**
+  uses the folder you're in as your ROM root, and **Y** resets to automatic TICO
+  detection. A warning before you confirm explains the folder must match where
+  TICO reads ROMs, or your games won't appear in the emulator. Takes effect
+  immediately and persists in `prefs.json`.
+
 ## 1.6.0-beta
 
 **Performance — the UI stays smooth during downloads, verify and unzip**

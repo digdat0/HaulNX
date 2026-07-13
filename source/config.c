@@ -388,6 +388,7 @@ void prefs_load(Prefs *p) {
     p->lang[0] = '\0';
     strcpy(p->theme, "dark");
     p->card_view = false;
+    p->roms_override[0] = '\0';
     p->pinned_dir_count = 0;
     size_t len = 0;
     char *js = json_read_file(PREFS_PATH, &len);
@@ -430,6 +431,11 @@ void prefs_load(Prefs *p) {
         if (idx >= 0) {
             p->card_view = json_bool(js, tok, idx);
         }
+        idx = json_obj_get(js, tok, 0, "romsOverride");
+        if (idx >= 0 && tok[idx].type == JSMN_STRING) {
+            json_copy(js, tok, idx, p->roms_override,
+                      sizeof(p->roms_override));
+        }
         idx = json_obj_get(js, tok, 0, "pinnedDirs");
         if (idx >= 0 && tok[idx].type == JSMN_ARRAY) {
             int n = tok[idx].size;
@@ -471,6 +477,8 @@ bool prefs_save(const Prefs *p) {
     fputs(",\n  \"theme\": ", f);
     json_write_escaped(f, p->theme);
     fprintf(f, ",\n  \"cardView\": %s", p->card_view ? "true" : "false");
+    fputs(",\n  \"romsOverride\": ", f);
+    json_write_escaped(f, p->roms_override);
     fputs(",\n  \"pinnedDirs\": [", f);
     for (int i = 0; i < p->pinned_dir_count; i++) {
         if (i) {
@@ -604,4 +612,42 @@ void tico_init(TicoState *ts) {
 
 const char *roms_root(const TicoState *ts) {
     return ts->roms_path;
+}
+
+void roms_normalize_path(const char *in, char *out, size_t out_sz) {
+    if (out_sz == 0) {
+        return;
+    }
+    out[0] = '\0';
+    if (!in) {
+        return;
+    }
+    /* Skip leading whitespace. */
+    while (*in == ' ' || *in == '\t') {
+        in++;
+    }
+    if (!*in) {
+        return; /* blank -> auto */
+    }
+    if (strncasecmp(in, "sdmc:", 5) == 0) {
+        sset(out, out_sz, in);
+    } else {
+        /* Strip leading slashes so we don't produce "sdmc://...". */
+        while (*in == '/' || *in == '\\') {
+            in++;
+        }
+        snprintf(out, out_sz, "sdmc:/%s", in);
+    }
+    trim_trailing_slash(out);
+}
+
+void tico_set_roms_override(TicoState *ts, const char *path) {
+    if (!path || !path[0]) {
+        return;
+    }
+    char norm[512];
+    roms_normalize_path(path, norm, sizeof(norm));
+    if (norm[0]) {
+        sset(ts->roms_path, sizeof(ts->roms_path), norm);
+    }
 }

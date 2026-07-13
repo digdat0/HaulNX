@@ -96,6 +96,10 @@ but it works.**
 - **TICO integration**
   - Auto-detects TICO and reads its ROM folder path
   - Falls back to the default path with a warning if TICO isn't found
+  - **Override the ROM folder** from **Settings → Advanced settings → ROM
+    folder** if you don't use `tico/roms` (e.g. a plain `roms/` on your SD root):
+    an on-screen SD-card browser lets you navigate to the folder and pick it
+    (**X** to use the current folder, **Y** to reset to automatic detection)
 
 - **Data management**
   - **Settings → Manage data**: clean up the temporary downloads folder and the

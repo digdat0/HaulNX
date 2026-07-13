@@ -88,6 +88,17 @@ enum {
     S_OFF,
     S_SET,
     S_UNSET,
+    S_ROMS_OVERRIDE,
+    S_ROMS_AUTO,
+    S_ROMS_OVERRIDE_TITLE,
+    S_ROMS_OVERRIDE_WARN,
+    S_ROMS_OVERRIDE_SET,
+    S_ROMS_OVERRIDE_CLEARED,
+    S_TITLE_ROM_PICKER,
+    S_SUB_ROM_PICKER,
+    S_ROMS_CURRENT,
+    S_NO_SUBFOLDERS,
+    S_ROMS_USE_ROOT_WARN,
 
     /* ---- downloads folder ---- */
     S_TITLE_DOWNLOADS,

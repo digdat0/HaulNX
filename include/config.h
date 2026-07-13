@@ -77,6 +77,9 @@ typedef struct {
     char lang[16];       /* language code, e.g. "en", "es", "ja"; empty = English */
     char theme[16];      /* "dark" (default) or "light" */
     bool card_view;      /* true: console lists render as a card grid */
+    /* Advanced override for the ROM install root. Empty = auto (detect from
+     * TICO). When set, this exact path is used instead of tico/roms. */
+    char roms_override[512];
     /* Top-level ROM folders pinned to the top of the Installed tab. */
     char pinned_dirs[MAX_PINNED_DIRS][64];
     int pinned_dir_count;
@@ -140,6 +143,17 @@ void tico_init(TicoState *ts);
 
 /* Returns the current roms root (pointer into ts->roms_path). */
 const char *roms_root(const TicoState *ts);
+
+/* Force the roms root to a user-supplied path (overriding TICO detection).
+ * No-op if path is NULL/empty. The path is normalised (see
+ * roms_normalize_path) and its trailing slash trimmed. Call after tico_init. */
+void tico_set_roms_override(TicoState *ts, const char *path);
+
+/* Normalise a user-entered SD-card path to libnx "sdmc:/..." form:
+ * leading whitespace and slashes are stripped and an "sdmc:/" prefix added
+ * unless one is already present; trailing slashes are trimmed. A blank input
+ * yields a blank output (meaning "auto"). */
+void roms_normalize_path(const char *in, char *out, size_t out_sz);
 
 #ifdef __cplusplus
 }

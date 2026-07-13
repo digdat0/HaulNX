@@ -52,6 +52,7 @@ struct DirEnt {
 static std::vector<DirEnt> g_inst;
 static std::vector<DirEnt> g_dlfiles; // files in the downloads temp folder
 static std::vector<std::string> g_picker; // sorted supported consoles for the picker
+static std::vector<DirEnt> g_rompick; // subfolders in the ROM-folder picker
 static std::vector<int> g_home_map; // grouped Browse: visible row -> console index
 static std::string g_launch_path;   // argv[0] from main(), for self-update
 static bool g_net_ok = true;        // last connectivity poll (RefreshStatus)
@@ -1921,6 +1922,42 @@ void MainApplication::GotoAdvanced() {
     b = g_prefs.use_cache;
     this->layout->AddRow2(settings_label(tr(S_META_CACHE)),
                           b ? tr(S_ON) : tr(S_OFF), lbl, onoff_color(b)); // 4
+    {
+        bool custom = g_prefs.roms_override[0] != '\0';
+        this->layout->AddRow2(settings_label(tr(S_ROMS_OVERRIDE)),
+                              custom ? roms_root(&g_tico) : tr(S_ROMS_AUTO), lbl,
+                              custom ? value_color() : onoff_color(false)); // 5
+    }
+}
+
+/* Browse the SD card and choose a folder to use as the ROM root. Shows only
+ * directories (you're picking a folder, not a file). */
+void MainApplication::GotoRomPicker(const std::string &path) {
+    this->screen = Screen::RomPicker;
+    this->picker_path = path;
+    this->layout->SetTitle(tr(S_TITLE_ROM_PICKER));
+    this->layout->SetSubtitle(tr(S_SUB_ROM_PICKER));
+    this->layout->ClearMenu();
+
+    g_rompick = list_dir(path);
+    /* Directories only. */
+    g_rompick.erase(std::remove_if(g_rompick.begin(), g_rompick.end(),
+                                   [](const DirEnt &e) { return !e.is_dir; }),
+                    g_rompick.end());
+
+    pu::ui::Color lbl = g_theme->row_text;
+    if (g_rompick.empty()) {
+        this->layout->AddRow(tr(S_NO_SUBFOLDERS));
+    } else {
+        for (const auto &e : g_rompick) {
+            this->layout->AddRow2(std::string(tr(S_DIR_PREFIX)) + e.name,
+                                  CHEVRON, lbl, chevron_color(), -1.0f, nullptr,
+                                  "", false, false);
+        }
+    }
+    char info[600];
+    snprintf(info, sizeof(info), tr(S_ROMS_CURRENT), this->picker_path.c_str());
+    this->layout->SetRomInfo(info);
 }
 
 void MainApplication::GotoUISettings() {
@@ -3867,6 +3904,17 @@ void MainApplication::HandleInput(u64 down, u64 held,
                 g_prefs.use_cache = !g_prefs.use_cache;
                 prefs_save(&g_prefs);
                 break;
+            case 5: { // Custom ROM folder — browse the SD card and pick a folder
+                /* Start inside the current override if it still exists,
+                 * otherwise at the SD-card root. */
+                std::string start = "sdmc:/";
+                if (g_prefs.roms_override[0] &&
+                    fs_exists(g_prefs.roms_override)) {
+                    start = g_prefs.roms_override;
+                }
+                this->GotoRomPicker(start);
+                return;
+            }
             default:
                 break;
             }
@@ -3889,6 +3937,60 @@ void MainApplication::HandleInput(u64 down, u64 held,
                 this->GotoAdvanced();
                 this->layout->SetSel(sel);
             }
+        }
+        break;
+    }
+
+    case Screen::RomPicker: {
+        // Apply a chosen ROM root (empty string = reset to auto), then return
+        // to Advanced. queue.c holds a pointer into g_tico.roms_path, so
+        // rewriting that buffer takes effect without restarting the queue.
+        auto apply_roms = [&](const char *chosen) {
+            char norm[512];
+            roms_normalize_path(chosen, norm, sizeof(norm));
+            snprintf(g_prefs.roms_override, sizeof(g_prefs.roms_override), "%s",
+                     norm);
+            prefs_save(&g_prefs);
+            tico_init(&g_tico);
+            tico_set_roms_override(&g_tico, g_prefs.roms_override);
+            this->inst_path = roms_root(&g_tico);
+            this->Toast(norm[0] ? tr(S_ROMS_OVERRIDE_SET)
+                                : tr(S_ROMS_OVERRIDE_CLEARED));
+            this->GotoAdvanced();
+        };
+        bool at_root = (this->picker_path == "sdmc:/");
+        if (down & HidNpadButton_B) {
+            if (at_root) {
+                this->GotoAdvanced();
+            } else {
+                // Up one level (never above the SD root).
+                std::string up = this->picker_path;
+                while (up.size() > 6 && up.back() == '/') up.pop_back();
+                auto p = up.find_last_of('/');
+                this->GotoRomPicker((p == std::string::npos || p < 5)
+                                        ? std::string("sdmc:/")
+                                        : up.substr(0, p + 1));
+            }
+        } else if (down & HidNpadButton_A) {
+            s32 i = this->layout->Sel();
+            if (i >= 0 && i < (s32)g_rompick.size()) {
+                std::string next = this->picker_path;
+                if (next.empty() || next.back() != '/') next += "/";
+                next += g_rompick[i].name;
+                this->GotoRomPicker(next);
+            }
+        } else if (down & HidNpadButton_X) {
+            // Use the folder currently being browsed as the ROM root.
+            if (at_root) {
+                this->ToastErr(tr(S_ROMS_USE_ROOT_WARN));
+            } else if (this->Confirm(tr(S_ROMS_OVERRIDE_TITLE),
+                                     this->picker_path + "\n\n" +
+                                         tr(S_ROMS_OVERRIDE_WARN))) {
+                apply_roms(this->picker_path.c_str());
+            }
+        } else if (down & HidNpadButton_Y) {
+            // Reset to automatic TICO detection.
+            apply_roms("");
         }
         break;
     }
@@ -4594,6 +4696,8 @@ void MainApplication::OnLoad() {
     config_sort(&g_cfg);
     creds_load(&g_creds);
     prefs_load(&g_prefs);
+    /* Advanced: a user-set ROM folder overrides TICO auto-detection. */
+    tico_set_roms_override(&g_tico, g_prefs.roms_override);
     select_theme();
     if (g_prefs.lang[0] && strcmp(g_prefs.lang, "en") != 0) {
         char lpath[256];

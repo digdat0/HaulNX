@@ -575,7 +575,8 @@ class MainApplication : public pu::ui::Application {
         ViewLogs,  // settings submenu: download log + debug log
         DebugLog,  // debug.log viewer
         QueueState, // persisted queue-data (queue.json) viewer
-        InstSearch // search across installed games (roms folder)
+        InstSearch, // search across installed games (roms folder)
+        RomPicker  // SD-card folder browser for choosing a custom ROM root
     };
     enum class Pending { None, AddRepo, Manual };
     enum class Tab { Browse = 0, Installed = 1, Queue = 2, Settings = 3 };
@@ -588,6 +589,7 @@ class MainApplication : public pu::ui::Application {
     Pending pending;
     std::string pending_id;  // archive id for a Manual-URL download
     std::string inst_path;   // current dir in the installed browser
+    std::string picker_path; // current dir in the ROM-folder picker
     Screen log_origin;       // screen to return to from the log viewer
 
     // One-shot startup dialogs (TICO missing / no network), run on the first
@@ -676,6 +678,7 @@ class MainApplication : public pu::ui::Application {
     void GotoManage();
     void GotoCreds();
     void GotoAdvanced();
+    void GotoRomPicker(const std::string &path);
     void GotoUISettings();
     void GotoDownloads();
     void GotoLanguage();
