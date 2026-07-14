@@ -32,9 +32,10 @@ but it works.**
   - **Global search** with **−** across every cached repo — results tagged with
     their console (and a `*` if already installed), downloadable straight from
     the results
-  - Show/hide consoles from **Settings → Advanced settings → Manage consoles**
   - On-screen name filter (**Y**), sort by name/size (**X**), `*` markers for
     already-installed files, ZL/ZR paging
+  - Show/hide consoles from **Settings → Advanced settings → Manage consoles**
+
 
 - **Download queue**
   - Queue files and keep browsing — downloads run in the background
@@ -45,13 +46,13 @@ but it works.**
   - Transient server errors (HTTP 5xx / throttling) are retried automatically
     with backoff, resuming the partial file
   - Pipelined extraction — the next download starts while the previous archive unpacks
-  - Progress bar, speed, ETA, cancel, retry (resumes in place), reorder one row
-    (ZL/ZR) or jump to top/bottom (D-pad ◀/▶) — the active download stays put
+  - Progress bar, speed, ETA, cancel, retry (resumes in place),
+  - Reorder one row (ZL/ZR) or jump to top/bottom (D-pad ◀/▶) — the active download stays put
   - Queue actions menu (**Y**): retry every failed item or clear finished ones
     at once; a summary toast reports the tally when a batch finishes
   - Queue the entire file list at once with **−** (free-space check included)
   - Queue persists across app restarts; interrupted downloads resume automatically
-  - **Network-loss aware**: if the connection drops, active downloads pause
+  - Network-loss aware: if the connection drops, active downloads pause
     (keeping their partial files) and the rest stay queued — everything
     resumes automatically, in order, when the network comes back
   - Stalled transfers time out instead of hanging, and resume from where they
@@ -85,7 +86,8 @@ but it works.**
 
 - **25 languages & themes**
   - Full UI translation (English, Español, Français, Deutsch, 日本語, 中文, and
-    20 more) from **Settings → Language**
+    20 more) from **Settings → Language** (if you speak a native language and can
+    improve, log an issue or drop a PR. Lang files here: https://github.com/digdat0/ticodlplus/tree/main/lang
   - Light and dark themes (**Settings → Theme**)
 
 - **Status header**
@@ -114,6 +116,7 @@ but it works.**
     background with a retry counter; **B** dismisses the check or cancels the
     download. Installs are validated and staged so a power loss can't corrupt
     the app
+  
 
 ---
 
