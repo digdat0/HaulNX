@@ -221,14 +221,44 @@ static void url_encode_path(const char *in, char *out, size_t out_sz) {
 
 void ia_file_url(const ArchiveItem *item, const ArchiveFile *file,
                  char *out, size_t out_sz) {
-    char enc[1024];
-    url_encode_path(file->name, enc, sizeof(enc));
+    char base[512];
     if (item->download_base[0]) {
-        snprintf(out, out_sz, "%s/%s", item->download_base, enc);
+        snprintf(base, sizeof(base), "%s", item->download_base);
     } else {
-        snprintf(out, out_sz, "https://archive.org/download/%s/%s",
-                 item->identifier, enc);
+        snprintf(base, sizeof(base), "https://archive.org/download/%s",
+                 item->identifier);
     }
+    strip_trailing_slashes(base);
+
+    /* A base may point into a subfolder of the item, e.g.
+     *   https://archive.org/download/nds_apfix/apfix
+     * Metadata file names are relative to the item root and already carry that
+     * subfolder ("apfix/rom.zip"), so appending the name whole would double it
+     * and 404. Strip the subfolder from the name instead -- and for a file
+     * that lives outside the subfolder (item-level metadata, a sibling
+     * folder), fall back to the item root, which is what its name is relative
+     * to. Custom mirror bases have no such marker and are used as-is. */
+    size_t skip = 0;
+    if (item->identifier[0]) {
+        char marker[288];
+        snprintf(marker, sizeof(marker), "/download/%s", item->identifier);
+        char *m = strstr(base, marker);
+        char *sub = m ? m + strlen(marker) : NULL;
+        if (sub && *sub == '/') {
+            const char *prefix = sub + 1; /* subfolder path within the item */
+            size_t plen = strlen(prefix);
+            if (plen > 0 && strncmp(file->name, prefix, plen) == 0 &&
+                file->name[plen] == '/') {
+                skip = plen + 1;
+            } else {
+                *sub = '\0'; /* outside the subfolder: use the item root */
+            }
+        }
+    }
+
+    char enc[1024];
+    url_encode_path(file->name + skip, enc, sizeof(enc));
+    snprintf(out, out_sz, "%s/%s", base, enc);
 }
 
 void ia_free(ArchiveItem *item) {

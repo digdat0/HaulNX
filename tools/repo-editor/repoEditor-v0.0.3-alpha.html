@@ -331,17 +331,20 @@ function basePrefix(base){
     .match(/^https?:\/\/[^\/]*archive\.org\/(?:download|serve|compress)\/[^\/]+\/(.+)$/i);
   return m ? decodeURIComponent(m[1]) : "";
 }
-// Join base + file name without duplicating path segments the base already ends
-// with. base=".../nds_apfix/apfix" + "apfix/rom.zip" -> ".../nds_apfix/apfix/rom.zip"
+// Join base + file name. If the base points into a subfolder of the item, the
+// name already carries that subfolder, so strip it rather than double it; a
+// file outside the subfolder resolves against the item root instead. Only the
+// subfolder counts as overlap -- an item id that happens to match the first
+// path segment (item "ps2", file "ps2/game.iso") must NOT be collapsed.
 function fileUrl(base, name){
   const b = String(base||"").replace(/\/+$/,"");
-  const bsegs = b.split("/").map(s=>{ try{ return decodeURIComponent(s); }catch(e){ return s; } });
-  const nsegs = String(name).split("/").filter(Boolean);
-  let overlap = 0;
-  for(let k=Math.min(nsegs.length-1, bsegs.length); k>0; k--){
-    if(bsegs.slice(-k).join("/") === nsegs.slice(0,k).join("/")){ overlap=k; break; }
-  }
-  return b + "/" + encodePath(nsegs.slice(overlap).join("/"));
+  const m = b.match(/^(https?:\/\/[^\/]*archive\.org\/(?:download|serve|compress)\/[^\/]+)\/(.+)$/i);
+  if(!m) return b + "/" + encodePath(name);      // custom mirror: use as-is
+  const root = m[1];
+  const prefix = basePrefix(b);
+  if(prefix && String(name).startsWith(prefix+"/"))
+    return b + "/" + encodePath(String(name).slice(prefix.length+1));
+  return root + "/" + encodePath(name);
 }
 const ARCH = [".zip",".7z",".rar",".tar",".tgz",".tbz",".tbz2",".txz",".tar.gz",".tar.bz2",".tar.xz"];
 const isArchive = n => ARCH.some(x=>n.toLowerCase().endsWith(x));

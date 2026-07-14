@@ -4,6 +4,25 @@ Notes for each release. `release.sh` pulls the section matching the version in
 `VERSION` and attaches it to the GitHub release. Add a `## <version>` section
 here before running a release.
 
+## 1.6.2-beta
+
+**Fix — downloads from repos that live in a subfolder**
+- Items whose download URL points into a subfolder (for example
+  `archive.org/download/nds_apfix/apfix/`) failed to download. archive.org
+  already includes the subfolder in each file's name, so the app was appending
+  it a second time and requesting a path that doesn't exist. Files under such a
+  repo now download correctly, and files that sit outside the subfolder resolve
+  against the item root.
+
+**Repo editor is now part of the release**
+- `repoEditor-*.html` is attached below. It's a single self-contained file —
+  download it, open it in any browser (no install, nothing uploaded), and use it
+  to build or edit your `dl_sources.json`: manage console groups and repos,
+  browse an item's files, and test a download before putting it on the SD card.
+- This release's editor: console groups shown as an A–Z card grid you click into,
+  repos two per row, archive.org credentials behind a settings dialog, and a file
+  browser whose header stays put while the list scrolls.
+
 ## 1.6.1-beta
 
 **Custom ROM folder (Advanced)**

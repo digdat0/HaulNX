@@ -22,6 +22,12 @@ cd "$(dirname "$0")"
 nro="TicoDLplus.nro"
 [ -f "$nro" ] || { echo "No $nro found - run 'make' first."; exit 1; }
 
+# The repo editor ships with every release: a single self-contained HTML file
+# users open in a browser to build/edit dl_sources.json. Newest version wins if
+# several are lying around.
+editor="$(ls -1 tools/repo-editor/repoEditor-*.html 2>/dev/null | sort -V | tail -n 1)"
+[ -n "$editor" ] || { echo "No tools/repo-editor/repoEditor-*.html found."; exit 1; }
+
 v="$(cat VERSION)"
 repo="$(grep -oE '#define[[:space:]]+UPDATE_REPO[[:space:]]+"[^"]+"' include/config.h \
         | sed -E 's/.*"([^"]+)".*/\1/')"
@@ -117,6 +123,7 @@ echo "Releasing v$v to $repo with notes:"
 echo "----------------------------------------"
 cat "$notesfile"
 echo "----------------------------------------"
-gh release create "$v" "$nro" -R "$repo" -t "TicoDL+ $v" -F "$notesfile" \
+echo "Assets: $nro, $editor"
+gh release create "$v" "$nro" "$editor" -R "$repo" -t "TicoDL+ $v" -F "$notesfile" \
   --target "$local_head" --latest
 echo "Done. Users can now update in-app via Settings (L) -> R."
