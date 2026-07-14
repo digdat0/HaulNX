@@ -119,49 +119,64 @@ but it works.**
 
 ## Screenshots
 
+Console list with repo's underneath, card view
+
 <img width="1920" height="1080" alt="0-browse" src="https://github.com/user-attachments/assets/77375940-4123-425b-ad8d-2cd098f0f11b" />
 
 #
+
+Browse Repo List per Console,
 
 <img width="1024" height="576" alt="1-browse repo" src="https://github.com/user-attachments/assets/615582df-d71c-41f8-95be-8d40ef493a4f" />
 
 #
 
+Installed app console view, filesize and number of files, card view
+
+
 <img width="1920" height="1080" alt="2-installed cards" src="https://github.com/user-attachments/assets/58f7e0f8-8eeb-45a1-81da-070064357544" />
 
----
+#
+Installed apps list view
 
 <img width="1024" height="576" alt="3-installed list" src="https://github.com/user-attachments/assets/c27a79a7-a599-4376-b00c-498f44fd895f" />
 
----
+#
+Download Queue - Progress, Speed, File size, time remaining, card view
 
 <img width="1920" height="1080" alt="4-dl cards" src="https://github.com/user-attachments/assets/73d0391d-9dac-4738-908e-b147d40f0ed0" />
 
 ---
 
+Download Queue - Progress, Speed, File size, time remaining, list view
+
 <img width="1024" height="576" alt="11- dl list" src="https://github.com/user-attachments/assets/d86354e0-7017-441f-b3b8-73fcc6bf27de" />
 
 ---
+
+Console list with repo's underneath, list view
 
 <img width="1024" height="576" alt="5-browse list" src="https://github.com/user-attachments/assets/2bd5a11e-f82d-4529-a22e-26b950f26578" />
 
 ---
 
-<img width="1024" height="576" alt="6-browse list" src="https://github.com/user-attachments/assets/2bf0c73e-043e-4c54-bc5d-f0729ba9b77e" />
-
----
+Installed games by console, list view
 
 <img width="1920" height="1080" alt="7-installed list" src="https://github.com/user-attachments/assets/38faa657-3b3e-408d-89dd-100b4e9ddc9b" />
 
 ---
+Installed games, list view
+
 
 <img width="1024" height="576" alt="8-installed apps list" src="https://github.com/user-attachments/assets/58d5e9e0-2655-47e6-a41f-ba44929d2edf" />
 
 ---
+Options card view
 
 <img width="1920" height="1080" alt="9-options card" src="https://github.com/user-attachments/assets/e86feeda-e7ba-43ae-aec6-b36ccc6a197b" />
 
 ---
+Options list view
 
 <img width="1920" height="1080" alt="10-options card png" src="https://github.com/user-attachments/assets/2826f510-af90-429a-87c7-7dd07f4e9d09" />
 
