@@ -121,11 +121,11 @@ but it works.**
 
 <img width="1920" height="1080" alt="0-browse" src="https://github.com/user-attachments/assets/77375940-4123-425b-ad8d-2cd098f0f11b" />
 
----
+#
 
 <img width="1024" height="576" alt="1-browse repo" src="https://github.com/user-attachments/assets/615582df-d71c-41f8-95be-8d40ef493a4f" />
 
----
+#
 
 <img width="1920" height="1080" alt="2-installed cards" src="https://github.com/user-attachments/assets/58f7e0f8-8eeb-45a1-81da-070064357544" />
 
