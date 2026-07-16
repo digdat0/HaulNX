@@ -129,9 +129,9 @@ static std::string icon_key(const char *s) {
 
 static void load_console_icons() {
     static const char *keys[] = {
-        "nes", "snes", "n64", "gb", "gbc", "gba", "gc", "wii", "genesis",
-        "master-system", "game-gear", "sega-cd", "saturn", "dc", "atomiswave",
-        "naomi", "psx", "psp", "default",
+        "nes", "snes", "n64", "gb", "gbc", "gba", "3ds", "nds", "gc", "wii",
+        "genesis", "master-system", "game-gear", "sega-cd", "saturn", "dc",
+        "atomiswave", "naomi", "psx", "ps2", "psp", "default",
         // settings-screen card icons (same cache, "set-" prefixed keys)
         "set-updates", "set-ui", "set-advanced", "set-logs", "set-data",
         "set-credits"};
@@ -219,6 +219,8 @@ static const char *console_full_name(const char *abbr) {
         {"gb", "Game Boy"},
         {"gbc", "Game Boy Color"},
         {"gba", "Game Boy Advance"},
+        {"3ds", "Nintendo 3DS"},
+        {"nds", "Nintendo DS"},
         {"gc", "Nintendo GameCube"},
         {"wii", "Nintendo Wii"},
         {"genesis", "Sega Genesis"},
@@ -230,6 +232,7 @@ static const char *console_full_name(const char *abbr) {
         {"atomiswave", "Sammy Atomiswave"},
         {"naomi", "Sega NAOMI"},
         {"psx", "Sony PlayStation"},
+        {"ps2", "Sony PlayStation 2"},
         {"psp", "Sony PlayStation Portable"},
     };
     for (size_t i = 0; i < sizeof(map) / sizeof(map[0]); i++) {
@@ -623,7 +626,7 @@ void MainApplication::MetaThread(void *arg) {
                       CACHE_DIR);
     }
     self->meta_ok = ok;
-    self->meta_done = true;
+    self->meta.done = true;
 }
 
 void MainApplication::StartMetaLoad(const std::string &id,
@@ -639,21 +642,17 @@ void MainApplication::StartMetaLoad(const std::string &id,
     }
     this->meta_force = force;
     this->meta_done_subtitle = done_subtitle;
-    this->meta_done = false;
     this->meta_ok = false;
-    this->meta_running = true;
 
     this->layout->SetSubtitle(tr(S_LOADING_META));
     this->layout->ClearMenu();
     this->layout->ShowSpinner(tr(S_LOADING_META));
 
-    Result rc = threadCreate(&this->meta_thread, &MainApplication::MetaThread,
-                             this, NULL, 0x40000, 0x2C, -2);
-    if (R_SUCCEEDED(rc) && R_SUCCEEDED(threadStart(&this->meta_thread))) {
+    if (this->meta.Start(&MainApplication::MetaThread, this)) {
         return;
     }
     // Couldn't spawn: fall back to a synchronous fetch so the list still loads.
-    this->meta_running = false;
+    this->layout->HideSpinner();
     if (g_files_id[0] &&
         ia_fetch(g_files_id, &g_item, g_prefs.use_cache && !force, CACHE_DIR)) {
         if (g_files_base[0]) {
@@ -668,13 +667,11 @@ void MainApplication::StartMetaLoad(const std::string &id,
 }
 
 void MainApplication::MetaTick() {
-    if (!this->meta_done) {
+    if (!this->meta.done) {
         return; // the spinner overlay animates itself
     }
     this->layout->HideSpinner();
-    threadWaitForExit(&this->meta_thread);
-    threadClose(&this->meta_thread);
-    this->meta_running = false;
+    this->meta.Join();
     if (this->meta_ok) {
         if (g_files_base[0]) {
             snprintf(g_item.download_base, sizeof(g_item.download_base), "%s",
@@ -1752,6 +1749,7 @@ MainApplication::Tab MainApplication::CurrentTab() {
     case Screen::ManageData:
     case Screen::ViewLogs:
     case Screen::DebugLog:
+    case Screen::Import:
     case Screen::QueueState: return Tab::Settings;
     default:                return Tab::Browse; // Home/Repos/Files/RepoEdit/Picker/Search
     }
@@ -2064,6 +2062,220 @@ void MainApplication::GotoManageData() {
     this->layout->AddRow(tr(S_MANAGE_DOWNLOADS)); // 0
     this->layout->AddRow(tr(S_MANAGE_CACHE));     // 1
     this->layout->AddRow(tr(S_REFRESH_ALL));      // 2
+    this->layout->AddRow(tr(S_IMPORT_COLLECTION)); // 3
+    this->layout->AddRow(tr(S_RESTORE_COLLECTION)); // 4
+}
+
+// Append a timestamped line to the collection-transfer log. An import replaces
+// dl_sources.json outright, so what arrived and what became of it is worth a
+// durable record — the one .bak slot only survives until the next import.
+static void xfer_log(const char *fmt, ...) {
+    fs_mkdir_p(CONFIG_DIR);
+    FILE *f = fopen(XFERLOG_PATH, "a");
+    if (!f) {
+        return;
+    }
+    char ts[32] = "";
+    time_t t = time(NULL);
+    struct tm tmv;
+    struct tm *tm = localtime_r(&t, &tmv);
+    if (tm) {
+        strftime(ts, sizeof(ts), "%Y-%m-%d %H:%M", tm);
+    }
+    fprintf(f, "%s  ", ts);
+    va_list ap;
+    va_start(ap, fmt);
+    vfprintf(f, fmt, ap);
+    va_end(ap);
+    fputc('\n', f);
+    fclose(f);
+}
+
+// ---- import a collection from a PC on the same LAN ------------------------
+// The console serves a one-page upload form for as long as this screen is up;
+// the user drops dl_sources.json into it from their browser. Nothing leaves the
+// local network and no third-party service is involved.
+void MainApplication::ImportStart() {
+    char ip[64];
+    if (!httpsrv_local_ip(ip, sizeof(ip))) {
+        this->ToastErr(tr(S_IMPORT_NO_NET));
+        return;
+    }
+    if (!httpsrv_open(&this->imp_srv)) {
+        this->ToastErr(tr(S_IMPORT_SRV_FAIL));
+        return;
+    }
+    this->imp_open = true;
+    this->imp_grace = 0; // nothing pending from a previous import
+    this->screen = Screen::Import;
+
+    char url[96];
+    snprintf(url, sizeof(url), "http://%s:%d", ip, HTTPSRV_PORT);
+
+    xfer_log("listening  %s", url);
+
+    this->layout->SetTitle(tr(S_TITLE_IMPORT));
+    this->layout->SetSubtitle(tr(S_SUB_IMPORT));
+    this->layout->ClearMenu();
+    // The console is the instruction sheet until the user reaches the page, so
+    // it carries the address and the steps: badge, URL, then what to do.
+    this->layout->SetEmptyState(g_header_logo, url, tr(S_IMPORT_STEPS));
+}
+
+void MainApplication::ImportStop() {
+    if (this->imp_open) {
+        this->layout->ClearEmptyState();
+        httpsrv_close(&this->imp_srv);
+        this->imp_open = false;
+    }
+}
+
+// How long to keep answering the browser after a file lands, so its redirect
+// to /sent is served before the confirm dialog takes over the render loop.
+// ~1s at 60fps, but it ends as soon as the page is collected.
+static const int IMPORT_GRACE_FRAMES = 60;
+
+// Serve one request and record the transfers worth keeping. Doing the logging
+// here rather than in httpsrv.c keeps that module a plain transport.
+int MainApplication::ImportPoll() {
+    int r = httpsrv_poll(&this->imp_srv);
+    if (r == 3) {
+        xfer_log("export     dl_sources.json downloaded to a browser");
+    }
+    return r;
+}
+
+void MainApplication::ImportTick() {
+    if (this->imp_grace > 0) {
+        // A file is in hand and the browser is being redirected off its POST.
+        // Serve until that lands: once ImportApply opens a dialog, nothing here
+        // answers requests, and a browser left on a POST re-sends it on reload.
+        if (this->ImportPoll() != 2 && --this->imp_grace > 0) {
+            return;
+        }
+        this->ImportApply();
+        return;
+    }
+    if (this->ImportPoll() == 1) {
+        this->imp_grace = IMPORT_GRACE_FRAMES;
+    }
+}
+
+void MainApplication::ImportApply() {
+    // Take the file and stop listening: the import is a one-shot, and the
+    // confirm dialog must not run with a live socket behind it.
+    char *body = this->imp_srv.body;
+    size_t len = this->imp_srv.body_len;
+    this->imp_srv.body = NULL; // taken over here; httpsrv_close must not free it
+    this->imp_grace = 0;
+    this->ImportStop();
+    if (!body) {
+        this->GotoManageData();
+        return;
+    }
+
+    // Check it before saying anything about it: the confirm dialog quotes what
+    // the file holds, and nothing on disk is touched until the user agrees.
+    int consoles = 0, repos = 0;
+    if (!config_probe_json(body, len, &consoles, &repos)) {
+        xfer_log("rejected   upload of %zu bytes: no collections in it", len);
+        free(body);
+        this->ToastErr(tr(S_IMPORT_BAD_FILE));
+        this->GotoManageData();
+        return;
+    }
+
+    char msg[256];
+    snprintf(msg, sizeof(msg), tr(S_IMPORT_CONFIRM), consoles, repos);
+    if (!this->ConfirmDanger(tr(S_IMPORT_COLLECTION), msg)) {
+        xfer_log("cancelled  upload of %d console(s), %d repo(s) not applied",
+                 consoles, repos);
+        free(body);
+        this->GotoManageData();
+        return;
+    }
+    bool ok = config_import_json(&g_cfg, body, len, &consoles, &repos);
+    free(body);
+    if (!ok) {
+        // The file parsed a moment ago, so this is the write failing — a full
+        // card, most likely. config_import_json has put the old file back.
+        xfer_log("FAILED     import could not be written to %s", SOURCES_PATH);
+        this->ToastErr(tr(S_IMPORT_SAVE_FAIL));
+        this->GotoManageData();
+        return;
+    }
+    xfer_log("import     applied %d console(s), %d repo(s); previous %d kept for "
+             "restore", consoles, repos, SOURCES_BAK_SLOTS);
+    config_seed_rom_folders(&g_cfg, roms_root(&g_tico));
+
+    char done[96];
+    snprintf(done, sizeof(done), tr(S_IMPORT_DONE), consoles, repos);
+    this->Toast(done);
+    this->GotoManageData();
+}
+
+// Put one of the backups kept by past imports back. These files are unreachable
+// from the console otherwise, so this is the only way out of an import that turned
+// out to be wrong.
+void MainApplication::RestoreBackup() {
+    // Offer only the slots that hold something restorable: slot 1 is empty until
+    // a second import has happened, and an interrupted rotation can leave gaps.
+    int slot[SOURCES_BAK_SLOTS], scon[SOURCES_BAK_SLOTS], srep[SOURCES_BAK_SLOTS];
+    std::vector<std::string> opts;
+    int n = 0;
+    for (int i = 0; i < SOURCES_BAK_SLOTS; i++) {
+        int c = 0, r = 0;
+        if (!config_backup_info(i, &c, &r)) {
+            continue;
+        }
+        char lbl[96];
+        snprintf(lbl, sizeof(lbl), tr(i == 0 ? S_RESTORE_RECENT : S_RESTORE_OLDER),
+                 c, r);
+        opts.push_back(lbl);
+        slot[n] = i;
+        scon[n] = c;
+        srep[n] = r;
+        n++;
+    }
+    if (n == 0) {
+        this->ToastErr(tr(S_RESTORE_NONE));
+        return;
+    }
+
+    int pick = 0;
+    if (n > 1) {
+        opts.push_back(tr(S_CANCEL));
+        // Last option as cancel, so it and B both come back as -1.
+        int r = this->CreateShowDialog(tr(S_RESTORE_COLLECTION),
+                                       tr(S_RESTORE_PICK), opts, true, {},
+                                       style_dialog);
+        if (r < 0 || r >= n) {
+            return;
+        }
+        pick = r;
+    }
+
+    int consoles = scon[pick], repos = srep[pick];
+    char msg[256];
+    snprintf(msg, sizeof(msg), tr(S_RESTORE_CONFIRM), consoles, repos);
+    if (!this->ConfirmDanger(tr(S_RESTORE_COLLECTION), msg)) {
+        xfer_log("cancelled  restore of %d console(s), %d repo(s) from slot %d",
+                 consoles, repos, slot[pick]);
+        return;
+    }
+    if (!config_restore_backup(&g_cfg, slot[pick], &consoles, &repos)) {
+        xfer_log("FAILED     restore could not be written to %s", SOURCES_PATH);
+        this->ToastErr(tr(S_IMPORT_SAVE_FAIL));
+        return;
+    }
+    xfer_log("restore    applied %d console(s), %d repo(s) from backup slot %d",
+             consoles, repos, slot[pick]);
+    config_seed_rom_folders(&g_cfg, roms_root(&g_tico));
+
+    char done[96];
+    snprintf(done, sizeof(done), tr(S_RESTORE_DONE), consoles, repos);
+    this->Toast(done);
+    this->GotoManageData();
 }
 
 // ---- bulk metadata refresh (Manage data -> Refresh all metadata) ----------
@@ -2088,7 +2300,7 @@ void MainApplication::RaThread(void *arg) {
             self->ra_fail = self->ra_fail + 1;
         }
     }
-    self->ra_done = true;
+    self->ra.done = true;
 }
 
 void MainApplication::RaStart() {
@@ -2111,7 +2323,6 @@ void MainApplication::RaStart() {
         return;
     }
 
-    this->ra_done = false;
     this->ra_cancel = false;
     this->ra_idx = 0;
     this->ra_total = (int)g_ra_ids.size();
@@ -2119,29 +2330,24 @@ void MainApplication::RaStart() {
     this->ra_fail = 0;
     g_ra_cur[0] = '\0';
 
-    Result rc = threadCreate(&this->ra_thread, &MainApplication::RaThread,
-                             this, NULL, 0x40000, 0x2C, -2);
-    if (R_FAILED(rc) || R_FAILED(threadStart(&this->ra_thread))) {
+    if (!this->ra.Start(&MainApplication::RaThread, this)) {
         this->ToastErr(tr(S_META_FAILED));
         return;
     }
-    this->ra_running = true;
     this->layout->SetTitle(tr(S_REFRESH_ALL));
     this->layout->ClearMenu();
     this->layout->ShowSpinner(tr(S_REFRESH_ALL));
 }
 
 void MainApplication::RaTick() {
-    if (!this->ra_done) {
+    if (!this->ra.done) {
         char s[320];
         snprintf(s, sizeof(s), "(%d/%d)  %s   B %s", (int)this->ra_idx,
                  (int)this->ra_total, g_ra_cur, tr(S_CANCEL));
         this->layout->SetSubtitle(s);
         return;
     }
-    threadWaitForExit(&this->ra_thread);
-    threadClose(&this->ra_thread);
-    this->ra_running = false;
+    this->ra.Join();
     char t[96];
     snprintf(t, sizeof(t), tr(S_REFRESH_DONE), (int)this->ra_ok,
              (int)this->ra_fail);
@@ -2161,6 +2367,7 @@ void MainApplication::GotoViewLogs() {
     this->layout->AddRow(tr(S_VIEW_LOG));    // 0: download history
     this->layout->AddRow(tr(S_DEBUG_LOG));   // 1: debug.log
     this->layout->AddRow(tr(S_QUEUE_STATE)); // 2: persisted queue.json
+    this->layout->AddRow(tr(S_XFER_LOG));    // 3: transfers.log
 }
 
 // Rows truncate long log lines; pressing A shows the full text in a dialog.
@@ -2203,12 +2410,29 @@ static std::string wrap_for_dialog(const std::string &s) {
 static std::vector<std::string> g_debug_lines;
 
 void MainApplication::GotoDebugLog() {
+    this->GotoTextLog(LOG_PATH, tr(S_TITLE_DEBUG_LOG), S_CLEAR_DEBUG_CONFIRM);
+}
+
+void MainApplication::GotoXferLog() {
+    this->GotoTextLog(XFERLOG_PATH, tr(S_TITLE_XFER_LOG),
+                      S_CLEAR_XFER_CONFIRM);
+}
+
+// Plain-text log viewer, shared by the debug and transfer logs: same rows, same
+// A-to-expand, same X-to-clear — only the file and its labels differ.
+// Takes its strings by value: reloading passes the members back in, so they
+// must be copied before being assigned over.
+void MainApplication::GotoTextLog(std::string path, std::string title,
+                                  int clear_msg) {
     this->screen = Screen::DebugLog;
-    this->layout->SetTitle(tr(S_TITLE_DEBUG_LOG));
+    this->log_view_path = path;
+    this->log_view_title = title;
+    this->log_clear_msg = clear_msg;
+    this->layout->SetTitle(title);
     this->layout->SetSubtitle(tr(S_SUB_DEBUG_LOG));
     this->layout->ClearMenu();
     // Newest first, capped so a huge log doesn't stall the UI.
-    std::ifstream f(LOG_PATH);
+    std::ifstream f(path);
     std::string line;
     std::vector<std::string> lines;
     while (std::getline(f, line)) {
@@ -2306,19 +2530,26 @@ struct SearchHit {
 static std::vector<SearchHit> g_search_results;
 static std::string g_search_query;
 
-void MainApplication::GotoSearch(const std::string &query) {
-    this->screen = Screen::Search;
-    g_search_query = query;
-    g_search_results.clear();
-    this->layout->SetTitle(tr(S_TITLE_SEARCH));
-    this->layout->SetSubtitle(tr(S_SUB_SEARCH));
-    this->layout->ClearMenu();
+// Result-cap state shared between the scan and the finalize step. Capping is
+// decided during the scan (off the main thread); FinishSearch reads it.
+static bool g_search_capped = false;
 
-    // Map repo id -> target console folder for download context.
+// The heavy part of a search: walk the metadata cache on disk, parse each file
+// and collect matching entries into g_search_results. Touches no UI, so it is
+// safe to run on a background thread.
+static void run_search_scan(const std::string &query, int scope_ci,
+                            int scope_ri) {
+    g_search_results.clear();
+    g_search_capped = false;
+
+    // Map repo id -> target console folder for download context, limited to the
+    // requested scope (a single console, or a single repo within it).
     struct RepoRef { std::string id; std::string target; std::string base; };
     std::vector<RepoRef> repos;
     for (int c = 0; c < g_cfg.console_count; c++) {
+        if (scope_ci >= 0 && c != scope_ci) continue;
         for (int r = 0; r < g_cfg.consoles[c].repo_count; r++) {
+            if (scope_ci >= 0 && scope_ri >= 0 && r != scope_ri) continue;
             Repo *rp = &g_cfg.consoles[c].repos[r];
             if (!rp->enabled || !rp->id[0]) continue;
             repos.push_back({rp->id, g_cfg.consoles[c].target,
@@ -2435,7 +2666,53 @@ void MainApplication::GotoSearch(const std::string &query) {
               [](const SearchHit &a, const SearchHit &b) {
                   return strcasecmp(a.name.c_str(), b.name.c_str()) < 0;
               });
+    g_search_capped = capped;
+}
 
+void MainApplication::GotoSearch(const std::string &query, int scope_ci,
+                                 int scope_ri) {
+    this->screen = Screen::Search;
+    this->search_ci = scope_ci;
+    this->search_ri = scope_ri;
+    g_search_query = query;
+    g_search_results.clear();
+    this->layout->SetTitle(tr(S_TITLE_SEARCH));
+    this->layout->ClearMenu();
+    this->layout->SetRomInfo("");
+    this->layout->SetSubtitle(tr(S_SEARCHING));
+
+    // Run the cache scan on a background thread so the "Searching..." spinner
+    // animates instead of the whole UI freezing while a large metadata cache
+    // is walked and parsed.
+    this->layout->ShowSpinner(tr(S_SEARCHING));
+    if (this->search.Start(&MainApplication::SearchThread, this)) {
+        return;
+    }
+    // Couldn't spawn a thread: fall back to a synchronous scan.
+    this->layout->HideSpinner();
+    run_search_scan(query, scope_ci, scope_ri);
+    this->FinishSearch();
+}
+
+void MainApplication::SearchThread(void *arg) {
+    auto self = static_cast<MainApplication *>(arg);
+    run_search_scan(g_search_query, self->search_ci, self->search_ri);
+    self->search.done = true;
+}
+
+void MainApplication::SearchTick() {
+    if (!this->search.done) {
+        return; // the spinner overlay animates itself
+    }
+    this->layout->HideSpinner();
+    this->search.Join();
+    this->FinishSearch();
+}
+
+// Build the result list on the main thread once the background scan finishes
+// (Plutonium UI calls must not run off-thread).
+void MainApplication::FinishSearch() {
+    this->layout->ClearMenu();
     for (const auto &h : g_search_results) {
         // "* " marks a file already present in its console folder, so you can
         // avoid re-downloading (same cue the file list uses).
@@ -2451,14 +2728,16 @@ void MainApplication::GotoSearch(const std::string &query) {
                                     tr(S_SEARCH_NO_RESULTS));
     } else {
         char info[128];
-        if (capped) {
-            snprintf(info, sizeof(info), tr(S_SEARCH_CAPPED), max_results);
+        if (g_search_capped) {
+            snprintf(info, sizeof(info), tr(S_SEARCH_CAPPED),
+                     (int)g_search_results.size());
         } else {
             snprintf(info, sizeof(info), tr(S_SEARCH_N_RESULTS),
                      (int)g_search_results.size());
         }
         this->layout->SetRomInfo(info);
     }
+    this->layout->SetSubtitle(tr(S_SUB_SEARCH));
 }
 
 void MainApplication::GotoLanguage() {
@@ -2954,7 +3233,7 @@ void MainApplication::HandleInput(u64 down, u64 held,
     }
     // A self-update download owns the UI while it runs: drive its progress /
     // finish and swallow all other input until it completes.
-    if (this->upd_running) {
+    if (this->upd.running) {
         if (down & HidNpadButton_B) {
             this->upd_cancel = true;
         }
@@ -2966,7 +3245,7 @@ void MainApplication::HandleInput(u64 down, u64 held,
     // the attempt counter and swallow input until it finishes. B dismisses it —
     // the fetch can't be aborted mid-request, so it finishes silently in the
     // background and the result is discarded.
-    if (this->chk_running) {
+    if (this->chk.running) {
         if (!this->chk_discard) {
             if (down & HidNpadButton_B) {
                 this->chk_discard = true;
@@ -2977,16 +3256,14 @@ void MainApplication::HandleInput(u64 down, u64 held,
             return;
         }
         // Dismissed: reap the thread when it finishes; input flows normally.
-        if (this->chk_done) {
-            threadWaitForExit(&this->chk_thread);
-            threadClose(&this->chk_thread);
-            this->chk_running = false;
+        if (this->chk.done) {
+            this->chk.Join();
         }
     }
 
     // A bulk metadata refresh owns the UI while it runs: show (n/total)
     // progress; B cancels after the in-flight repo finishes.
-    if (this->ra_running) {
+    if (this->ra.running) {
         if (down & HidNpadButton_B) {
             this->ra_cancel = true;
         }
@@ -2996,10 +3273,31 @@ void MainApplication::HandleInput(u64 down, u64 held,
 
     // A repo's metadata is loading on a background thread: animate the indicator
     // and swallow input until it's ready.
-    if (this->meta_running) {
+    if (this->meta.running) {
         (void)down;
         (void)held;
         this->MetaTick();
+        return;
+    }
+
+    // The search cache scan is running on a background thread: animate the
+    // spinner and swallow input until the result list is ready.
+    if (this->search.running) {
+        (void)down;
+        (void)held;
+        this->SearchTick();
+        return;
+    }
+
+    // Waiting for a dl_sources.json upload: serve the LAN receiver a frame at a
+    // time and swallow input except B, which gives up and closes the socket.
+    if (this->imp_open) {
+        if (down & HidNpadButton_B) {
+            this->ImportStop();
+            this->GotoManageData();
+            return;
+        }
+        this->ImportTick();
         return;
     }
 
@@ -3622,12 +3920,14 @@ void MainApplication::HandleInput(u64 down, u64 held,
                 }
             }
             this->GotoRepos(this->sel_ci);
-        } else if ((down & HidNpadButton_Minus) && g->repo_count > 0) {
-            if (this->ConfirmDanger(tr(S_DELETE_REPO), tr(S_DELETE_REPO_CONFIRM))) {
-                config_remove_repo(g, this->layout->Sel());
-                config_save(&g_cfg);
-                this->Toast(tr(S_DELETED));
-                this->GotoRepos(this->sel_ci);
+        } else if (down & HidNpadButton_Minus) {
+            // Search across every repo in this console. (Repo deletion now lives
+            // in the edit screen, X.)
+            char q[256] = {0};
+            if (prompt_raw(tr(S_SEARCH_CONSOLE), nullptr, q, sizeof(q)) &&
+                q[0]) {
+                this->GotoSearch(q, this->sel_ci, -1);
+                return;
             }
         } else if ((down & HidNpadButton_Right) && g->repo_count > 0) {
             s32 sel = this->layout->Sel();
@@ -3682,52 +3982,12 @@ void MainApplication::HandleInput(u64 down, u64 held,
                     }
                 }
             }
-        } else if (down & HidNpadButton_Minus) {
-            // Download all: queue every file matching the current filter.
-            if (g_have_item && !g_files.empty()) {
-                uint64_t total_sz = 0;
-                for (int k = 0; k < (int)g_files.size(); k++) {
-                    total_sz += g_item.files[g_files[k]].size;
-                }
-                uint64_t avail = fs_free_bytes("sdmc:/");
-                char msg[300];
-                snprintf(msg, sizeof(msg), tr(S_QUEUE_ALL_CONFIRM),
-                         (int)g_files.size(),
-                         human_size(total_sz).c_str(),
-                         avail != UINT64_MAX
-                             ? human_size(avail).c_str() : "?");
-                if (avail != UINT64_MAX && total_sz > avail) {
-                    size_t ml = strlen(msg);
-                    snprintf(msg + ml, sizeof(msg) - ml, "\n\n%s",
-                             tr(S_FREE_SPACE_WARN));
-                }
-                if (this->Confirm(tr(S_DOWNLOAD_ALL), msg)) {
-                    char auth[320];
-                    creds_auth_header(&g_creds, auth, sizeof(auth));
-                    int ok = 0;
-                    bool full = false;
-                    for (int k = 0; k < (int)g_files.size(); k++) {
-                        ArchiveFile *f = &g_item.files[g_files[k]];
-                        char url[1024];
-                        ia_file_url(&g_item, f, url, sizeof(url));
-                        if (queue_add(url, f->name, g_files_target, auth,
-                                      f->size, is_archive_name(f->name),
-                                      f->md5)) {
-                            ok++;
-                        } else {
-                            full = true;
-                            break;
-                        }
-                    }
-                    char t[80];
-                    if (full) {
-                        snprintf(t, sizeof(t), tr(S_QUEUED_N_FULL), ok);
-                        this->ToastErr(t);
-                    } else {
-                        snprintf(t, sizeof(t), tr(S_QUEUED_N), ok);
-                        this->Toast(t);
-                    }
-                }
+        } else if ((down & HidNpadButton_Minus) && !g_files_manual) {
+            // Search within the opened repo.
+            char q[256] = {0};
+            if (prompt_raw(tr(S_SEARCH_REPO), nullptr, q, sizeof(q)) && q[0]) {
+                this->GotoSearch(q, this->sel_ci, this->sel_ri);
+                return;
             }
         } else if (down & HidNpadButton_Y) {
             char fb[64] = {0};
@@ -4072,7 +4332,9 @@ void MainApplication::HandleInput(u64 down, u64 held,
             switch (this->layout->Sel()) {
             case 0: this->GotoDownloads(); return;
             case 1: this->GotoCache(); return;
-            case 2: this->RaStart(); return; // refresh all metadata
+            case 2: this->RaStart(); return;      // refresh all metadata
+            case 3: this->ImportStart(); return;  // receive dl_sources.json
+            case 4: this->RestoreBackup(); return;
             default: break;
             }
         }
@@ -4087,6 +4349,7 @@ void MainApplication::HandleInput(u64 down, u64 held,
             case 0: this->GotoLog(); return;        // download history
             case 1: this->GotoDebugLog(); return;   // debug.log
             case 2: this->GotoQueueState(); return; // queue.json
+            case 3: this->GotoXferLog(); return;    // transfers.log
             default: break;
             }
         }
@@ -4100,15 +4363,16 @@ void MainApplication::HandleInput(u64 down, u64 held,
             // Rows truncate long lines: show the full entry in a dialog.
             s32 i = this->layout->Sel();
             if (i >= 0 && i < (s32)g_debug_lines.size()) {
-                this->CreateShowDialog(tr(S_TITLE_DEBUG_LOG),
+                this->CreateShowDialog(this->log_view_title,
                                        wrap_for_dialog(g_debug_lines[i]),
                                        {tr(S_OK)}, true, {}, style_dialog);
             }
         } else if (down & HidNpadButton_X) {
-            if (this->ConfirmDanger(tr(S_CLEAR_LOG), tr(S_CLEAR_DEBUG_CONFIRM))) {
-                remove(LOG_PATH);
+            if (this->ConfirmDanger(tr(S_CLEAR_LOG), tr(this->log_clear_msg))) {
+                remove(this->log_view_path.c_str());
                 this->Toast(tr(S_LOG_CLEARED));
-                this->GotoDebugLog();
+                this->GotoTextLog(this->log_view_path, this->log_view_title,
+                                  this->log_clear_msg);
             }
         }
         break;
@@ -4656,7 +4920,14 @@ void MainApplication::HandleInput(u64 down, u64 held,
 
     case Screen::Search: {
         if (down & HidNpadButton_B) {
-            this->GotoHome();
+            // Return to wherever the search was launched from.
+            if (this->search_ri >= 0) {
+                this->GotoFiles(this->search_ci, this->search_ri);
+            } else if (this->search_ci >= 0) {
+                this->GotoRepos(this->search_ci);
+            } else {
+                this->GotoHome();
+            }
         } else if (down & HidNpadButton_A) {
             s32 i = this->layout->Sel();
             if (i >= 0 && i < (s32)g_search_results.size()) {
@@ -4672,10 +4943,14 @@ void MainApplication::HandleInput(u64 down, u64 held,
                     this->ToastErr(tr(S_QUEUE_FULL));
             }
         } else if (down & HidNpadButton_Y) {
+            // New search, keeping the current scope.
+            int prompt_id = this->search_ri >= 0   ? S_SEARCH_REPO
+                            : this->search_ci >= 0 ? S_SEARCH_CONSOLE
+                                                   : S_SEARCH_PROMPT;
             char q[256] = {0};
-            if (prompt_raw(tr(S_SEARCH_PROMPT), g_search_query.c_str(),
+            if (prompt_raw(tr(prompt_id), g_search_query.c_str(),
                            q, sizeof(q)) && q[0]) {
-                this->GotoSearch(q);
+                this->GotoSearch(q, this->search_ci, this->search_ri);
             }
         }
         break;
@@ -4698,6 +4973,10 @@ void MainApplication::OnLoad() {
     prefs_load(&g_prefs);
     /* Advanced: a user-set ROM folder overrides TICO auto-detection. */
     tico_set_roms_override(&g_tico, g_prefs.roms_override);
+    /* Pre-create a folder for every supported console so they appear in the
+     * Installed tab before their first download (downloads mkdir on their own,
+     * but an untouched console would otherwise never show). */
+    config_seed_rom_folders(&g_cfg, roms_root(&g_tico));
     select_theme();
     if (g_prefs.lang[0] && strcmp(g_prefs.lang, "en") != 0) {
         char lpath[256];
@@ -4743,26 +5022,12 @@ void MainApplication::OnLoad() {
 // down in reverse init order; queue_exit before net_exit since the worker uses
 // sockets/curl.
 void MainApplication::Shutdown() {
-    if (this->upd_running) {
-        threadWaitForExit(&this->upd_thread);
-        threadClose(&this->upd_thread);
-        this->upd_running = false;
-    }
-    if (this->ra_running) {
-        this->ra_cancel = true;
-        threadWaitForExit(&this->ra_thread);
-        threadClose(&this->ra_thread);
-        this->ra_running = false;
-    }
-    if (this->chk_running) {
-        threadWaitForExit(&this->chk_thread);
-        threadClose(&this->chk_thread);
-        this->chk_running = false;
-    }
-    if (this->meta_running) {
-        threadWaitForExit(&this->meta_thread);
-        threadClose(&this->meta_thread);
-        this->meta_running = false;
+    this->ImportStop(); // the listening socket must go before net_exit()
+    // Ask the only worker that polls a cancel flag to stop, then join them all.
+    this->ra_cancel = true;
+    for (BgTask *t : {&this->upd, &this->ra, &this->chk, &this->meta,
+                      &this->search}) {
+        t->Join();
     }
     queue_exit();
     appletSetMediaPlaybackState(false);
@@ -4779,27 +5044,23 @@ void MainApplication::ChkThread(void *arg) {
                                        sizeof(self->chk_tag), self->chk_url,
                                        sizeof(self->chk_url),
                                        &self->chk_attempt);
-    self->chk_done = true;
+    self->chk.done = true;
 }
 
 void MainApplication::ChkStart() {
-    if (this->chk_running) {
+    if (this->chk.running) {
         // A dismissed check is still finishing: re-attach to it (progress UI
         // comes back) instead of spawning a second thread over the first.
         this->chk_discard = false;
         return;
     }
     this->chk_attempt = 1;
-    this->chk_done = false;
     this->chk_ok = false;
     this->chk_discard = false;
     this->chk_tag[0] = '\0';
     this->chk_url[0] = '\0';
 
-    Result rc = threadCreate(&this->chk_thread, &MainApplication::ChkThread,
-                             this, NULL, 0x40000, 0x2C, -2);
-    if (R_SUCCEEDED(rc) && R_SUCCEEDED(threadStart(&this->chk_thread))) {
-        this->chk_running = true;
+    if (this->chk.Start(&MainApplication::ChkThread, this)) {
         return;
     }
     // Couldn't spawn: fetch synchronously so the check still works.
@@ -4810,7 +5071,7 @@ void MainApplication::ChkStart() {
 }
 
 void MainApplication::ChkTick() {
-    if (!this->chk_done) {
+    if (!this->chk.done) {
         // Live status with the attempt number, e.g. "Check for updates... (2/3)".
         char s[160];
         snprintf(s, sizeof(s), "%s...  (%d/3)  B %s", tr(S_CHECK_UPDATES),
@@ -4818,9 +5079,7 @@ void MainApplication::ChkTick() {
         this->layout->SetSubtitle(s);
         return;
     }
-    threadWaitForExit(&this->chk_thread);
-    threadClose(&this->chk_thread);
-    this->chk_running = false;
+    this->chk.Join();
     this->ChkFinish();
 }
 
@@ -4867,7 +5126,7 @@ void MainApplication::UpdThread(void *arg) {
     bool ok = http_download(self->upd_url.c_str(), self->upd_dl.c_str(), NULL,
                             &MainApplication::UpdProgress, self, 0, &code);
     self->upd_ok = ok;
-    self->upd_done = true;
+    self->upd.done = true;
 }
 
 // Append a line to the debug log: the self-updater's install steps must be
@@ -4902,10 +5161,8 @@ void MainApplication::UpdStart(const std::string &url, const std::string &dl,
     this->upd_tag = tag;
     this->upd_now = 0;
     this->upd_total = 0;
-    this->upd_done = false;
     this->upd_ok = false;
     this->upd_cancel = false;
-    this->upd_running = true;
 
     this->layout->SetTitle(tr(S_UPDATING));
     this->layout->SetSubtitle(std::string("Downloading ") + tag + "...  (B to cancel)");
@@ -4924,19 +5181,16 @@ void MainApplication::UpdStart(const std::string &url, const std::string &dl,
         this->layout->AddRow(tr(S_UPDATE_DL_CANCEL));
     }
 
-    Result rc = threadCreate(&this->upd_thread, &MainApplication::UpdThread, this,
-                             NULL, 0x40000, 0x2C, -2);
-    if (R_SUCCEEDED(rc) && R_SUCCEEDED(threadStart(&this->upd_thread))) {
+    if (this->upd.Start(&MainApplication::UpdThread, this)) {
         return;
     }
-    this->upd_running = false;
     this->CreateShowDialog(tr(S_TITLE_UPDATE), tr(S_UPDATE_START_FAIL), {tr(S_OK)},
                            true, {}, style_dialog);
     this->GotoSettings();
 }
 
 void MainApplication::UpdTick() {
-    if (!this->upd_done) {
+    if (!this->upd.done) {
         // Still downloading: show live progress in the subtitle.
         u64 now = this->upd_now, total = this->upd_total;
         int pct = total ? (int)((now * 100) / total) : 0;
@@ -4965,9 +5219,7 @@ void MainApplication::UpdTick() {
     }
 
     // Download finished: join the worker and install on the main thread.
-    threadWaitForExit(&this->upd_thread);
-    threadClose(&this->upd_thread);
-    this->upd_running = false;
+    this->upd.Join();
 
     if (this->upd_cancel) {
         remove(this->upd_dl.c_str());

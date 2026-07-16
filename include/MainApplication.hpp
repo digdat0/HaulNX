@@ -1,6 +1,7 @@
 #pragma once
 
 #include <pu/Plutonium>
+#include <atomic>
 #include <cmath>
 #include <string>
 #include <vector>
@@ -8,6 +9,7 @@
 #include <switch.h>
 #include "TableList.hpp"
 #include "CardGrid.hpp"
+#include "httpsrv.h"
 
 // Draws a BORROWED texture (an icon owned by a shared cache) at a fixed size
 // and position. Used for the console icon shown next to the header title.
@@ -576,7 +578,8 @@ class MainApplication : public pu::ui::Application {
         DebugLog,  // debug.log viewer
         QueueState, // persisted queue-data (queue.json) viewer
         InstSearch, // search across installed games (roms folder)
-        RomPicker  // SD-card folder browser for choosing a custom ROM root
+        RomPicker, // SD-card folder browser for choosing a custom ROM root
+        Import     // waiting for a dl_sources.json upload over the LAN
     };
     enum class Pending { None, AddRepo, Manual };
     enum class Tab { Browse = 0, Installed = 1, Queue = 2, Settings = 3 };
@@ -586,11 +589,19 @@ class MainApplication : public pu::ui::Application {
     Screen screen;
     int sel_ci;
     int sel_ri;
+    // Scope of the current search results, so B returns to the originating
+    // screen and "new search" (Y) keeps the same scope. -1 = all.
+    int search_ci = -1;
+    int search_ri = -1;
     Pending pending;
     std::string pending_id;  // archive id for a Manual-URL download
     std::string inst_path;   // current dir in the installed browser
     std::string picker_path; // current dir in the ROM-folder picker
     Screen log_origin;       // screen to return to from the log viewer
+    // Which file the shared text-log viewer is showing, and its labels.
+    std::string log_view_path;
+    std::string log_view_title;
+    int log_clear_msg = 0;
 
     // One-shot startup dialogs (TICO missing / no network), run on the first
     // frame of the UI loop — OnLoad is too early to render a dialog.
@@ -603,27 +614,59 @@ class MainApplication : public pu::ui::Application {
     int files_sel = 0;
     std::string files_sel_id;
 
+    // One background worker: the Thread plus the running/done handshake every
+    // background task below shares. Task-specific state (cancel flags, progress
+    // counters) stays with its task. The worker sets `done`; the main thread
+    // polls it from OnInput and calls Join(), which is the barrier that makes
+    // the worker's writes visible before any result is read.
+    struct BgTask {
+        Thread thread;
+        std::atomic<bool> running{false};
+        std::atomic<bool> done{false};
+
+        // Spawn entry(arg). False means the thread couldn't be created, and the
+        // caller is expected to do the work inline instead.
+        bool Start(ThreadFunc entry, void *arg) {
+            this->done = false;
+            Result rc = threadCreate(&this->thread, entry, arg, NULL, 0x40000,
+                                     0x2C, -2);
+            if (R_FAILED(rc) || R_FAILED(threadStart(&this->thread))) {
+                return false;
+            }
+            this->running = true;
+            return true;
+        }
+
+        // Reap a finished worker and go idle. No-op when not running.
+        void Join() {
+            if (!this->running) {
+                return;
+            }
+            threadWaitForExit(&this->thread);
+            threadClose(&this->thread);
+            this->running = false;
+        }
+    };
+
     // In-app self-update download. Runs on its own thread so the UI keeps
     // rendering progress instead of looking hung; the install itself happens
     // back on the main thread (romfs/applet calls) once the download finishes.
-    Thread upd_thread;
-    volatile bool upd_running = false;
-    volatile bool upd_done = false;
-    volatile bool upd_ok = false;
-    volatile bool upd_cancel = false;
-    volatile u64 upd_now = 0;
-    volatile u64 upd_total = 0;
+    BgTask upd;
+    std::atomic<bool> upd_ok{false};
+    std::atomic<bool> upd_cancel{false};
+    std::atomic<u64> upd_now{0};
+    std::atomic<u64> upd_total{0};
     std::string upd_url;
     std::string upd_dl;
     std::string upd_tag;
 
     // Background update *check* (release-list fetch), so "Check for updates"
     // doesn't freeze the UI during retries. Shows the attempt number (1/3).
-    Thread chk_thread;
-    volatile bool chk_running = false;
-    volatile bool chk_done = false;
-    volatile bool chk_ok = false;
-    volatile bool chk_discard = false; // B pressed: drop the result silently
+    BgTask chk;
+    std::atomic<bool> chk_ok{false};
+    std::atomic<bool> chk_discard{false}; // B pressed: drop the result silently
+    // Written by update_fetch_latest() in C, so it keeps the C-compatible
+    // volatile int the update.h API takes; read-only (display) on the UI side.
     volatile int chk_attempt = 1;
     char chk_tag[64];
     char chk_url[1024];
@@ -631,23 +674,30 @@ class MainApplication : public pu::ui::Application {
     // Background bulk metadata refresh (Manage data -> Refresh all metadata):
     // force-fetches every enabled repo's file list, with live (n/total)
     // progress and B to cancel between repos.
-    Thread ra_thread;
-    volatile bool ra_running = false;
-    volatile bool ra_done = false;
-    volatile bool ra_cancel = false;
-    volatile int ra_idx = 0;
-    volatile int ra_total = 0;
-    volatile int ra_ok = 0;
-    volatile int ra_fail = 0;
+    BgTask ra;
+    std::atomic<bool> ra_cancel{false};
+    std::atomic<int> ra_idx{0};
+    std::atomic<int> ra_total{0};
+    std::atomic<int> ra_ok{0};
+    std::atomic<int> ra_fail{0};
 
     // Background metadata (ia_fetch) load, so the file list doesn't freeze the
     // UI while a repo's metadata downloads. Shows an animated loading indicator.
-    Thread meta_thread;
-    volatile bool meta_running = false;
-    volatile bool meta_done = false;
-    volatile bool meta_ok = false;
+    BgTask meta;
+    std::atomic<bool> meta_ok{false};
     bool meta_force = false;
     std::string meta_done_subtitle;
+
+    // Background search scan: walks the metadata cache off the main thread so a
+    // large cache shows an animated "Searching..." spinner instead of freezing.
+    BgTask search;
+
+    // LAN collection import: a tiny HTTP server the user's PC uploads
+    // dl_sources.json to. No thread — it is polled once per frame and only
+    // exists while the Import screen is open.
+    HttpSrv imp_srv;
+    bool imp_open = false;
+    int imp_grace = 0; // >0: a file is in hand, still serving the redirect
 
   public:
     using Application::Application;
@@ -682,11 +732,20 @@ class MainApplication : public pu::ui::Application {
     void GotoUISettings();
     void GotoDownloads();
     void GotoLanguage();
-    void GotoSearch(const std::string &query);
+    // Search cached metadata. scope_ci < 0 searches every repo; scope_ci >= 0
+    // restricts to one console; scope_ri >= 0 further restricts to one repo.
+    void GotoSearch(const std::string &query, int scope_ci = -1,
+                    int scope_ri = -1);
+    void SearchTick();
+    void FinishSearch();
+    static void SearchThread(void *arg);
     void GotoCache();
     void GotoManageData();
     void GotoViewLogs();
     void GotoDebugLog();
+    void GotoXferLog();
+    // Shared plain-text log viewer; `clear_msg` is the S_ id of its X confirm.
+    void GotoTextLog(std::string path, std::string title, int clear_msg);
     void GotoQueueState();
 
     Tab CurrentTab();      // which tab the current screen belongs to
@@ -708,6 +767,14 @@ class MainApplication : public pu::ui::Application {
     void RaStart();
     void RaTick(); // poll progress / finish; called each frame while running
     static void RaThread(void *arg);
+
+    // LAN collection import helpers.
+    void ImportStart();
+    void ImportTick(); // serve one request per frame while the screen is open
+    int ImportPoll();  // serve one request, logging what it did
+    void ImportApply(); // consume the uploaded file, confirm, and write it
+    void ImportStop();
+    void RestoreBackup(); // swap the last import's backup back in
 
     // Background update-check helpers.
     void ChkStart();

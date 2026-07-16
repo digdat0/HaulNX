@@ -74,6 +74,20 @@ ConsoleGroup *config_find_console(SourcesConfig *cfg, const char *name) {
     return NULL;
 }
 
+/* Consoles that ship hidden on a fresh install: niche arcade / dual-screen
+ * systems most users won't want cluttering the Browse list. They still exist
+ * and can be re-shown via Settings -> Manage consoles. Only affects newly
+ * seeded consoles; an existing saved config keeps whatever the user set. */
+static bool console_hidden_by_default(const char *name) {
+    static const char *hidden[] = {"atomiswave", "naomi", "ps2", "nds"};
+    for (size_t i = 0; i < sizeof(hidden) / sizeof(hidden[0]); i++) {
+        if (strcasecmp(name, hidden[i]) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
 ConsoleGroup *config_add_console(SourcesConfig *cfg, const char *name) {
     if (!name || !name[0]) {
         return NULL;
@@ -89,7 +103,7 @@ ConsoleGroup *config_add_console(SourcesConfig *cfg, const char *name) {
     memset(g, 0, sizeof(*g));
     sset(g->console, sizeof(g->console), name);
     sset(g->target, sizeof(g->target), name);
-    g->shown = true;
+    g->shown = !console_hidden_by_default(name);
     return g;
 }
 
@@ -112,6 +126,24 @@ static int cmp_console(const void *a, const void *b) {
 
 void config_sort(SourcesConfig *cfg) {
     qsort(cfg->consoles, cfg->console_count, sizeof(ConsoleGroup), cmp_console);
+}
+
+void config_seed_rom_folders(const SourcesConfig *cfg, const char *roms_root) {
+    if (!cfg || !roms_root || !roms_root[0]) {
+        return;
+    }
+    /* fs_mkdir_p is a no-op when the folder already exists, so this only ever
+     * creates the missing ones. Uses the master supported list (tico_consoles),
+     * which covers every console the app knows about, not just those with
+     * repos configured. */
+    for (int i = 0; i < cfg->supported_count; i++) {
+        if (!cfg->supported[i][0]) {
+            continue;
+        }
+        char dir[1024];
+        snprintf(dir, sizeof(dir), "%s/%s", roms_root, cfg->supported[i]);
+        fs_mkdir_p(dir);
+    }
 }
 
 Repo *config_add_repo(ConsoleGroup *g, const char *label, const char *id) {
@@ -254,20 +286,14 @@ static void load_legacy(const char *js, jsmntok_t *tok, SourcesConfig *cfg) {
     }
 }
 
-void config_load(SourcesConfig *cfg) {
-    memset(cfg, 0, sizeof(*cfg));
-    seed_from_romfs();
-
-    size_t len = 0;
-    char *js = json_read_file(SOURCES_PATH, &len);
-    if (!js) {
-        return;
-    }
+/* Parse a dl_sources.json document into cfg (which the caller has zeroed).
+ * Shared by config_load and config_import_json so an imported file goes through
+ * exactly the same schema handling as the one on disk. */
+static void parse_sources_buf(const char *js, size_t len, SourcesConfig *cfg) {
     int ntok = 0;
     jsmntok_t *tok = json_parse_alloc(js, len, &ntok);
     if (!tok || tok[0].type != JSMN_OBJECT) {
         free(tok);
-        free(js);
         return;
     }
 
@@ -295,12 +321,165 @@ void config_load(SourcesConfig *cfg) {
     }
 
     free(tok);
+}
+
+void config_load(SourcesConfig *cfg) {
+    memset(cfg, 0, sizeof(*cfg));
+    seed_from_romfs();
+
+    size_t len = 0;
+    char *js = json_read_file(SOURCES_PATH, &len);
+    if (!js) {
+        return;
+    }
+    parse_sources_buf(js, len, cfg);
     free(js);
+}
+
+static int count_repos(const SourcesConfig *cfg) {
+    int n = 0;
+    for (int i = 0; i < cfg->console_count; i++) {
+        n += cfg->consoles[i].repo_count;
+    }
+    return n;
+}
+
+bool config_probe_json(const char *js, size_t len, int *out_consoles,
+                       int *out_repos) {
+    /* SourcesConfig is ~850 KB: far too big to sit on any stack here. */
+    SourcesConfig *in = calloc(1, sizeof(*in));
+    if (!in) {
+        return false;
+    }
+    parse_sources_buf(js, len, in);
+    bool ok = in->console_count > 0;
+    if (ok) {
+        if (out_consoles) {
+            *out_consoles = in->console_count;
+        }
+        if (out_repos) {
+            *out_repos = count_repos(in);
+        }
+    }
+    free(in);
+    return ok;
+}
+
+static const char *backup_path(int slot) {
+    return slot == 0 ? SOURCES_BAK_PATH : SOURCES_BAK2_PATH;
+}
+
+bool config_backup_info(int slot, int *out_consoles, int *out_repos) {
+    if (slot < 0 || slot >= SOURCES_BAK_SLOTS) {
+        return false;
+    }
+    size_t len = 0;
+    char *js = json_read_file(backup_path(slot), &len);
+    if (!js) {
+        return false;
+    }
+    bool ok = config_probe_json(js, len, out_consoles, out_repos);
+    free(js);
+    return ok;
+}
+
+/* Install `in` as the live collection, parking the current file at `park`.
+ * Takes ownership of `in`.
+ *
+ * `rotate` ages slot 0 into slot 1 first. An import does that, because a new
+ * document arrives and the oldest version has to give way. A restore must not:
+ * it only shuffles versions that already exist, so it parks the live file in the
+ * slot it is restoring from — a straight swap that drops nothing and undoes
+ * itself if repeated. Rotating there would destroy the other backup and refill
+ * it with a copy of what just went live. */
+static bool commit_config(SourcesConfig *cfg, SourcesConfig *in, bool rotate,
+                          const char *park, int *out_consoles, int *out_repos) {
+    /* The incoming file may leave out tico_consoles; the master folder list must
+     * never shrink because of what someone chose to export. */
+    for (int i = 0; i < cfg->supported_count; i++) {
+        add_supported(in, cfg->supported[i]);
+    }
+    int repos = count_repos(in);
+    config_sort(in);
+
+    /* Move rather than copy: each step is then atomic, since a rename can't
+     * half-finish, and config_save writes a fresh live file immediately after. */
+    if (rotate) {
+        fs_move(SOURCES_BAK_PATH, SOURCES_BAK2_PATH);
+    }
+    fs_move(SOURCES_PATH, park);
+    if (!config_save(in)) {
+        /* Nothing reached disk. Unwind in reverse rather than leave the console
+         * with no collections, and leave cfg untouched so memory and disk agree. */
+        fs_move(park, SOURCES_PATH);
+        if (rotate) {
+            fs_move(SOURCES_BAK2_PATH, SOURCES_BAK_PATH);
+        }
+        free(in);
+        return false;
+    }
+    *cfg = *in;
+    free(in);
+    if (out_consoles) {
+        *out_consoles = cfg->console_count;
+    }
+    if (out_repos) {
+        *out_repos = repos;
+    }
+    return true;
+}
+
+/* Parse js/len into a fresh config, or NULL if it holds no collections. */
+static SourcesConfig *parse_sources_alloc(const char *js, size_t len) {
+    SourcesConfig *in = calloc(1, sizeof(*in));
+    if (!in) {
+        return NULL;
+    }
+    parse_sources_buf(js, len, in);
+    if (in->console_count <= 0) {
+        free(in); /* not a collection file */
+        return NULL;
+    }
+    return in;
+}
+
+bool config_restore_backup(SourcesConfig *cfg, int slot, int *out_consoles,
+                           int *out_repos) {
+    if (slot < 0 || slot >= SOURCES_BAK_SLOTS) {
+        return false;
+    }
+    size_t len = 0;
+    char *js = json_read_file(backup_path(slot), &len);
+    if (!js) {
+        return false;
+    }
+    SourcesConfig *in = parse_sources_alloc(js, len);
+    free(js); /* parsed into `in` already; the slot file is about to be replaced */
+    if (!in) {
+        return false;
+    }
+    /* Swap: the live file takes the slot this came from. */
+    return commit_config(cfg, in, false, backup_path(slot), out_consoles,
+                         out_repos);
+}
+
+bool config_import_json(SourcesConfig *cfg, const char *js, size_t len,
+                        int *out_consoles, int *out_repos) {
+    SourcesConfig *in = parse_sources_alloc(js, len);
+    if (!in) {
+        return false; /* not a collection file — leave the live config alone */
+    }
+    return commit_config(cfg, in, true, SOURCES_BAK_PATH, out_consoles,
+                         out_repos);
 }
 
 bool config_save(const SourcesConfig *cfg) {
     fs_mkdir_p(CONFIG_DIR);
-    FILE *f = fopen(SOURCES_PATH, "wb");
+    /* Stage to a temp file and move it into place. dl_sources.json is the entire
+     * collection list, so truncating it in place means a full SD card or a console
+     * that dies mid-write leaves the user with nothing. Same pattern a finished
+     * download uses in queue.c. */
+    FILE *f = fopen(SOURCES_TMP_PATH, "wb");
     if (!f) {
         return false;
     }
@@ -337,8 +516,17 @@ bool config_save(const SourcesConfig *cfg) {
         }
     }
     fputs("]\n}\n", f);
-    fclose(f);
-    return true;
+    /* stdio reports a full card at either of these, and defers most of the real
+     * writing to fclose, so both have to pass before the temp file is trusted. */
+    bool ok = ferror(f) == 0;
+    if (fclose(f) != 0) {
+        ok = false;
+    }
+    if (!ok) {
+        remove(SOURCES_TMP_PATH);
+        return false;
+    }
+    return fs_move(SOURCES_TMP_PATH, SOURCES_PATH);
 }
 
 /* ---- credentials ------------------------------------------------------ */

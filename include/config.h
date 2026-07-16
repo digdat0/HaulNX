@@ -20,11 +20,22 @@ extern "C" {
 
 #define CONFIG_DIR    "sdmc:/switch/ticodlplus"
 #define SOURCES_PATH  "sdmc:/switch/ticodlplus/dl_sources.json"
+/* The two previous dl_sources.json files, rotated on every import so that two
+ * bad imports in a row can still be walked back. Slot 0 is the most recent. */
+#define SOURCES_BAK_PATH  "sdmc:/switch/ticodlplus/dl_sources.bak.json"
+#define SOURCES_BAK2_PATH "sdmc:/switch/ticodlplus/dl_sources.bak2.json"
+#define SOURCES_BAK_SLOTS 2
+/* Staging file for config_save; never read back. */
+#define SOURCES_TMP_PATH "sdmc:/switch/ticodlplus/dl_sources.tmp.json"
 #define CREDS_PATH    "sdmc:/switch/ticodlplus/credentials.json"
 #define PREFS_PATH    "sdmc:/switch/ticodlplus/prefs.json"
 #define LANG_DIR      "sdmc:/switch/ticodlplus/lang"
 #define CACHE_DIR     "sdmc:/switch/ticodlplus/cache"
 #define LOG_PATH      "sdmc:/switch/ticodlplus/debug.log"
+/* Collection imports/exports. Kept apart from debug.log: an import rewrites
+ * dl_sources.json wholesale, and that record must not scroll away under the
+ * churn of routine HTTP logging. */
+#define XFERLOG_PATH  "sdmc:/switch/ticodlplus/transfers.log"
 #define DLLOG_PATH    "sdmc:/switch/ticodlplus/downloads.log"
 #define DLLOG_JSON    "sdmc:/switch/ticodlplus/downloads.jsonl"
 #define DL_TMP_DIR    "sdmc:/switch/ticodlplus/downloads"
@@ -103,6 +114,35 @@ bool config_remove_console(SourcesConfig *cfg, int idx);
 
 /* Sort console groups alphabetically (case-insensitive) by console name. */
 void config_sort(SourcesConfig *cfg);
+
+/* Create <roms_root>/<target> for every supported console that doesn't already
+ * have a folder, so consoles show in the Installed tab before their first
+ * download. Existing folders are left untouched. */
+void config_seed_rom_folders(const SourcesConfig *cfg, const char *roms_root);
+
+/* Check whether js/len is a usable dl_sources.json without touching disk or
+ * the live config, reporting what it holds. False if it has no consoles. */
+bool config_probe_json(const char *js, size_t len, int *out_consoles,
+                       int *out_repos);
+
+/* Replace the collections in cfg (and on disk) with the dl_sources.json
+ * document in js/len, after moving the current file to SOURCES_BAK_PATH.
+ * Returns false and changes nothing if the document holds no consoles.
+ * On success *out_consoles / *out_repos report what was imported (may be NULL).
+ * The master tico_consoles list is preserved even if the import omits it. */
+bool config_import_json(SourcesConfig *cfg, const char *js, size_t len,
+                        int *out_consoles, int *out_repos);
+
+/* Report what backup `slot` (0 = most recent) holds, without changing anything.
+ * False when that slot is empty or has no consoles — nothing worth restoring. */
+bool config_backup_info(int slot, int *out_consoles, int *out_repos);
+
+/* Make backup `slot` the live collection, swapping the current one into that
+ * slot. Unlike an import this does not rotate, so the other backup is left
+ * alone and restoring the same slot twice returns to where you started.
+ * False (changing nothing) if the slot is empty. */
+bool config_restore_backup(SourcesConfig *cfg, int slot, int *out_consoles,
+                           int *out_repos);
 
 /* Append a repo to a console. Returns the new repo, or NULL if full. */
 Repo *config_add_repo(ConsoleGroup *g, const char *label, const char *id);

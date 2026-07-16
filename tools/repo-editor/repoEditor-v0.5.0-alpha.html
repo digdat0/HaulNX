@@ -164,8 +164,36 @@
     style="font-size:16px; padding:4px 8px;">⚙️</button>
   <button id="btnTheme" class="ghost" title="Toggle theme" style="font-size:16px; padding:4px 8px;">☀️</button>
   <button id="btnImport">Import JSON…</button>
+  <button id="btnSend" title="Send straight to a Switch running TicoDL+">Send to Switch…</button>
   <button id="btnExport" class="primary">Export dl_sources.json</button>
 </header>
+
+<div class="modal" id="sendModal">
+  <div class="sheet" style="max-width:520px">
+    <div class="sheet-hd">
+      <div class="hd-row">
+        <b>Send to Switch</b>
+        <span class="muted">·&nbsp; both devices on the same network</span>
+      </div>
+    </div>
+    <div class="sheet-bd">
+      <div class="row" style="margin-top:14px">
+        <div class="grow"><label class="fld">Switch address</label>
+          <input id="sendIp" placeholder="192.168.1.42" spellcheck="false"></div>
+      </div>
+      <div class="hint">On the Switch, open <b>Settings &rsaquo; Manage data &rsaquo;
+        Import collection</b>. It shows the address to type here. Leave that screen
+        open — it stops listening once a file arrives, and you confirm the import
+        there.</div>
+      <div id="sendMsg" class="hint"></div>
+    </div>
+    <div class="sheet-ft">
+      <div class="sp" style="flex:1"></div>
+      <button id="sendGo" class="primary">Send</button>
+      <button id="sendClose" class="sm">Close</button>
+    </div>
+  </div>
+</div>
 
 <main>
   <div id="warnBox"></div>
@@ -513,7 +541,8 @@ $("#btnCredsOpen").onclick=()=>{
 $("#credClose").onclick=()=>$("#credModal").classList.remove("on");
 $("#credModal").onclick=e=>{ if(e.target.id==="credModal") $("#credModal").classList.remove("on"); };
 document.addEventListener("keydown", e=>{ if(e.key==="Escape"){
-  $("#credModal").classList.remove("on"); $("#modal").classList.remove("on"); } });
+  $("#credModal").classList.remove("on"); $("#modal").classList.remove("on");
+  $("#sendModal").classList.remove("on"); } });
 
 // ---- files modal / download test -----------------------------------------
 let lastFiles=[];
@@ -663,6 +692,56 @@ $("#btnExport").onclick=async()=>{
   }
   downloadText("dl_sources.json", txt);
 };
+// ---- send to a Switch on the LAN -----------------------------------------
+// The app serves a tiny HTTP receiver while its Import collection screen is open.
+// Post the same document Export writes, as multipart/form-data: it is the exact
+// request the app's own upload page makes, and it is a CORS-simple request, so no
+// preflight is needed (the receiver answers OPTIONS without allow-headers).
+$("#btnSend").onclick=()=>{
+  $("#sendMsg").textContent="";
+  $("#sendIp").value=localStorage.getItem("switchIp")||"";
+  $("#sendModal").classList.add("on");
+  $("#sendIp").focus();
+};
+$("#sendClose").onclick=()=>$("#sendModal").classList.remove("on");
+$("#sendModal").onclick=e=>{ if(e.target.id==="sendModal") $("#sendModal").classList.remove("on"); };
+$("#sendIp").onkeydown=e=>{ if(e.key==="Enter") $("#sendGo").click(); };
+
+$("#sendGo").onclick=async()=>{
+  // Accept a bare IP, or the whole "http://ip:8080" the Switch puts on screen.
+  const raw=$("#sendIp").value.trim().replace(/^https?:\/\//,"").replace(/\/+$/,"");
+  const host=raw.split(":")[0];
+  if(!/^\d{1,3}(\.\d{1,3}){3}$/.test(host)){
+    $("#sendMsg").innerHTML='<div class="warn">Enter the IP shown on the Switch, e.g. 192.168.1.42.</div>';
+    return;
+  }
+  localStorage.setItem("switchIp",host);
+  showWarnings();
+  const txt=JSON.stringify(buildJson(),null,2);
+  const fd=new FormData();
+  fd.append("file",new Blob([txt],{type:"application/json"}),"dl_sources.json");
+  $("#sendMsg").textContent="Sending…";
+  try{
+    // No timeout of our own: an unreachable host fails on the browser's own
+    // connect timeout, and a reachable one answers in milliseconds on a LAN.
+    const res=await fetch("http://"+host+":8080/",{method:"POST",body:fd});
+    if(!res.ok){
+      // It answered, so the address is right and only the upload was refused —
+      // 413 means the file is over the receiver's 1 MB limit.
+      $("#sendMsg").innerHTML='<div class="warn">The Switch refused it (HTTP '+res.status+
+        (res.status===413?" — the file is over the 1 MB limit":"")+").</div>";
+      return;
+    }
+    $("#sendMsg").innerHTML='<b class="green">Sent ✓</b> &nbsp;Confirm the import on your Switch.';
+    flash($("#btnSend"),"Sent ✓");
+  }catch(e){
+    // fetch hides the cause of a network-level failure, so cover the likely ones
+    // rather than repeat a message that says nothing.
+    $("#sendMsg").innerHTML='<div class="warn">Couldn\'t reach the Switch. Check the IP, '+
+      'and that <b>Import collection</b> is open and still waiting.</div>';
+  }
+};
+
 $("#btnCreds").onclick=()=>{
   downloadText("credentials.json", JSON.stringify(
     {accessKey:state.creds.accessKey, secret:state.creds.secret}, null, 2));

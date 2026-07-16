@@ -4,6 +4,36 @@ Notes for each release. `release.sh` pulls the section matching the version in
 `VERSION` and attaches it to the GitHub release. Add a `## <version>` section
 here before running a release.
 
+## 1.7.0-beta
+
+**Send your collection to the Switch over Wi-Fi**
+- New **Settings → Manage data → Import collection**. The console shows an address;
+  open it in a browser on any computer on the same network and you get a small page
+  to send your `dl_sources.json` straight across — no SD card, no file copying. The
+  Switch shows you what the file contains and asks before replacing anything.
+- The same page has a **Download current dl_sources.json** button, so you can pull
+  the collection *off* the console to edit it.
+- The repo editor can now skip the page entirely: its new **Send to Switch** button
+  posts your work directly to a console that has the Import screen open.
+
+**Your previous collections are kept, and you can go back**
+- Importing keeps the two collections that came before it. **Manage data → Restore
+  previous collection** lists what each one holds and swaps it back. Restoring is
+  itself reversible — your current list is kept, so you can swap back again.
+
+**New: transfer log**
+- **Settings → View logs → Transfer log** records every import, export, rejection
+  and cancellation, with what each file held. Kept separate from the debug log, so
+  routine network chatter can't bury it.
+
+**Fixes**
+- `dl_sources.json` is now written to a temporary file and moved into place, and
+  write errors are actually detected. Previously a full SD card or a console that
+  lost power mid-write could leave the file truncated — losing every collection —
+  while the app reported success. This affects every save, not just imports.
+- Downloads whose filename legitimately contains `..` (for example
+  `Zelda..Oracle.zip`) were refused as a path-traversal attempt.
+
 ## 1.6.2-beta
 
 **Fix — downloads from repos that live in a subfolder**

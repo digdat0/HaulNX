@@ -48,8 +48,17 @@ bool is_archive_name(const char *filename) {
  * slashes, normalize backslashes, replace FAT-illegal chars, keep '/' as the
  * separator. Returns false if the entry should be skipped (e.g. traversal). */
 static bool sanitize_rel(const char *in, char *out, size_t out_sz) {
-    if (strstr(in, "..")) {
-        return false; /* refuse path traversal */
+    /* Refuse path traversal, but only when ".." is a whole path segment: a
+     * substring test would also drop legitimate names like "Zelda..Oracle.zip". */
+    for (const char *p = in; *p; p++) {
+        if (p[0] != '.' || p[1] != '.') {
+            continue;
+        }
+        bool at_start = (p == in) || p[-1] == '/' || p[-1] == '\\';
+        bool at_end = (p[2] == '\0') || p[2] == '/' || p[2] == '\\';
+        if (at_start && at_end) {
+            return false;
+        }
     }
     while (*in == '/' || *in == '\\') {
         in++;

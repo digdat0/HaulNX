@@ -24,11 +24,11 @@
   "title_repos": "Repos",
   "sub_home_grouped": "A open  ▶ pin/unpin  Y add repo  - search  L/R tabs  ZL/ZR page",
   "sub_home_flat": "A open  Y add repo  X edit  ▶ pin  - delete  L/R tabs  ZL/ZR page",
-  "sub_repos": "A browse  X edit  Y add repo  ▶ pin  - delete  L/R tabs  B back",
+  "sub_repos": "A browse  X edit  Y add repo  ▶ pin  - search  L/R tabs  B back",
   "no_collections": "(no collections - press Y to add)",
   "no_repos": "(no repos - press Y to add)",
 
-  "sub_files": "A get  - all  Y filter  X sort  ◀▶ repo  L/R tabs  B back",
+  "sub_files": "A get  - search  Y filter  X sort  ◀▶ repo  L/R tabs  B back",
   "no_files_match": "(no files match)",
   "meta_failed": "(metadata fetch failed - B back)",
   "loading_meta": "Loading metadata ...",
@@ -147,7 +147,7 @@
   "tico_not_found_msg": "The TICO emulator was not found on this console.\nDownloads will go to the default folder:\n%s\n\nContinue without TICO?",
   "continue": "Continue",
 
-  "controls_body": "Tabs: L / R  (Browse | Installed | Queue | Settings)\nNavigate: D-pad (hold to repeat)   ZL/ZR: page\n+: exit   B: back\nBrowse: A open  Y add  X edit/del  - delete\nFiles: A get  - all  Y filter  X refresh  ◀/▶: repo\nQueue: A cancel  X retry  ZL/ZR move  Y clear  - log",
+  "controls_body": "Tabs: L / R  (Browse | Installed | Queue | Settings)\nNavigate: D-pad (hold to repeat)   ZL/ZR: page\n+: exit   B: back\nBrowse: A open  Y add  X edit/del  - search\nFiles: A get  - search  Y filter  X sort  ◀/▶: repo\nQueue: A cancel  X retry  ZL/ZR move  Y clear  - log",
 
   "exit_confirm": "%d download(s) active. Exit anyway?",
 
@@ -180,6 +180,9 @@
   "title_search": "Search Results",
   "sub_search": "A download  Y new search  B back",
   "search_prompt": "Search all repos",
+  "search_console": "Search this console",
+  "search_repo": "Search this repo",
+  "searching": "Searching ...",
   "search_no_results": "(no matches found)",
   "search_n_results": "%d results",
 
@@ -237,5 +240,25 @@
   "sub_home_flat_cards": "A open  X edit  Y add repo  - delete  L/R tabs  ZL/ZR page",
   "sub_installed_cards": "A open  X pin  - search  L/R tabs  B back",
   "sub_queue_cards": "A cancel  X retry  ZL/ZR move  Y menu  - log  B back",
-  "cant_undo": "This can't be undone."
+  "cant_undo": "This can't be undone.",
+  "import_collection": "Import collection",
+  "title_import": "Import collection",
+  "sub_import": "Waiting for a file...  B cancel",
+  "import_steps": "1.  On a computer on this network, type the address above into a browser\n2.  Choose the dl_sources.json you saved from the repo editor\n3.  Send it, then confirm the import back here",
+  "import_no_net": "No network connection.",
+  "import_srv_fail": "Couldn't start the import server.",
+  "import_bad_file": "That file has no collections in it.",
+  "import_confirm": "Replace your collections with %d console(s) and %d repo(s)?\nYour current list is kept as dl_sources.bak.json.",
+  "import_done": "Imported %d console(s), %d repo(s)",
+  "import_save_fail": "Couldn't save. Your collections are unchanged.",
+  "xfer_log": "Transfer log",
+  "title_xfer_log": "Transfer log",
+  "clear_xfer_confirm": "Clear the transfer log?",
+  "restore_collection": "Restore previous collection",
+  "restore_none": "No previous collection to restore.",
+  "restore_pick": "Which one do you want to go back to?",
+  "restore_recent": "Previous — %d console(s), %d repo(s)",
+  "restore_older": "Older — %d console(s), %d repo(s)",
+  "restore_confirm": "Go back to %d console(s) and %d repo(s)?\nYour current list is kept, so you can swap back.",
+  "restore_done": "Restored %d console(s), %d repo(s)"
 }

@@ -206,6 +206,9 @@ enum {
     S_TITLE_SEARCH,
     S_SUB_SEARCH,
     S_SEARCH_PROMPT,
+    S_SEARCH_CONSOLE,
+    S_SEARCH_REPO,
+    S_SEARCHING,
     S_SEARCH_NO_RESULTS,
     S_SEARCH_N_RESULTS,
 
@@ -293,6 +296,30 @@ enum {
     S_SUB_QUEUE_STATE,
     S_CLEAR_QUEUE_STATE,
     S_CLEAR_QUEUE_CONFIRM,
+
+    /* ---- import collection over the LAN ---- */
+    S_IMPORT_COLLECTION,
+    S_TITLE_IMPORT,
+    S_SUB_IMPORT,
+    S_IMPORT_STEPS,
+    S_IMPORT_NO_NET,
+    S_IMPORT_SRV_FAIL,
+    S_IMPORT_BAD_FILE,
+    S_IMPORT_CONFIRM,
+    S_IMPORT_DONE,
+    S_IMPORT_SAVE_FAIL,
+    S_XFER_LOG,
+    S_TITLE_XFER_LOG,
+    S_CLEAR_XFER_CONFIRM,
+
+    /* ---- restore the backup an import left behind ---- */
+    S_RESTORE_COLLECTION,
+    S_RESTORE_NONE,
+    S_RESTORE_PICK,
+    S_RESTORE_RECENT,
+    S_RESTORE_OLDER,
+    S_RESTORE_CONFIRM,
+    S_RESTORE_DONE,
 
     S__COUNT
 };

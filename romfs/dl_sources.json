@@ -1,5 +1,5 @@
 {
   "_comment": "TicoDL+ ships with NO collections. Add your own repos in-app (Y) or by editing this file on your SD card at sdmc:/switch/ticodlplus/dl_sources.json. Each repo needs an archive.org item id you provide.",
   "console_list_groups": [],
-  "tico_consoles": ["nes", "snes", "n64", "gb", "gbc", "gba", "gc", "wii", "genesis", "master-system", "game-gear", "sega-cd", "saturn", "dc", "atomiswave", "naomi", "psx", "psp"]
+  "tico_consoles": ["nes", "snes", "n64", "gb", "gbc", "gba", "3ds", "nds", "gc", "wii", "genesis", "master-system", "game-gear", "sega-cd", "saturn", "dc", "atomiswave", "naomi", "psx", "ps2", "psp"]
 }
