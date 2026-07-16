@@ -26,6 +26,11 @@ here before running a release.
   and cancellation, with what each file held. Kept separate from the debug log, so
   routine network chatter can't bury it.
 
+**Translations**
+- All of the above is translated into the 24 supported languages. The two prompts
+  that stand between you and overwriting a collection — the import and restore
+  confirmations — are worth a careful read in your language; corrections welcome.
+
 **Fixes**
 - `dl_sources.json` is now written to a temporary file and moved into place, and
   write errors are actually detected. Previously a full SD card or a console that
