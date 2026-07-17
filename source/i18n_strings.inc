@@ -1,4 +1,4 @@
-/* AUTO-GENERATED from lang/en.json — do not edit by hand. */
+/* AUTO-GENERATED from romfs/lang/en.json — do not edit by hand. */
 /* Run: python3 tools/gen_i18n.py */
 
 static const char *const g_en[S__COUNT] = {

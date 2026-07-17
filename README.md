@@ -350,15 +350,14 @@ returned to Settings. Close and relaunch to run the new build.
 ## Translations
 
 TicoDL+ ships 25 languages. All translation files live in the repo as plain
-JSON — one file per language, keyed by English:
-
-- [`lang/`](lang/) — the source of truth (edit here)
-- [`romfs/lang/`](romfs/lang/) — the copy bundled into the app (keep in sync)
+JSON — one file per language, keyed by English, in
+[`romfs/lang/`](romfs/lang/). These are bundled into the app and loaded at
+runtime; there is a single source of truth, so edit here.
 
 Spotted a wrong or awkward translation? Please
 [open an issue](https://github.com/digdat0/ticodlplus/issues) naming the
 language, the key (or the on-screen text), and your suggested wording — or send
-a PR updating the file in **both** folders. For English (`en.json`) changes,
+a PR updating the file in `romfs/lang/`. For English (`en.json`) changes,
 `tools/gen_i18n.py` must be re-run afterwards (it regenerates the strings baked
 into the binary).
 
@@ -472,7 +471,7 @@ attaches the `.nro`, and uses the matching `CHANGELOG.md` section as the notes.
 | `update.*` | GitHub release check + in-app self-update |
 | `md5.*` | MD5 for download verification |
 | `jsonutil.*`, `jsmn.*` | JSON parsing (vendored jsmn) |
-| `i18n.*`, `lang/`, `tools/gen_i18n.py` | translations — English strings are generated into the binary from `lang/en.json`; the other 24 languages load from romfs |
+| `i18n.*`, `romfs/lang/`, `tools/gen_i18n.py` | translations — English strings are generated into the binary from `romfs/lang/en.json`; the other 24 languages load from romfs |
 | `Plutonium/` | UI library (git submodule) |
 
 The backend (`net`/`archive`/`queue`/`extract`/`config`/`fsutil`/`md5`/`json`/

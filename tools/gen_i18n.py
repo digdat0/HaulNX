@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate i18n_strings.inc from lang/en.json and include/i18n.h.
+"""Generate i18n_strings.inc from romfs/lang/en.json and include/i18n.h.
 
 Reads the enum order from i18n.h, reads English values from en.json,
 and emits the C initializers for g_en[] and g_key_names[].
@@ -13,7 +13,7 @@ import json, re, sys, os
 topdir = sys.argv[1] if len(sys.argv) > 1 else os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 header = os.path.join(topdir, "include", "i18n.h")
-en_json = os.path.join(topdir, "lang", "en.json")
+en_json = os.path.join(topdir, "romfs", "lang", "en.json")
 out_inc = os.path.join(topdir, "source", "i18n_strings.inc")
 
 # Parse enum names from i18n.h in declaration order
@@ -55,7 +55,7 @@ if missing:
 
 # Generate
 lines = []
-lines.append("/* AUTO-GENERATED from lang/en.json — do not edit by hand. */")
+lines.append("/* AUTO-GENERATED from romfs/lang/en.json — do not edit by hand. */")
 lines.append("/* Run: python3 tools/gen_i18n.py */")
 lines.append("")
 lines.append("static const char *const g_en[S__COUNT] = {")

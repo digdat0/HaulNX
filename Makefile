@@ -8,7 +8,7 @@ endif
 
 TOPDIR ?= $(CURDIR)
 # Python for tools/gen_i18n.py (regenerates the baked English strings from
-# lang/en.json). Override with PYTHON=<path> if it isn't on your PATH; if no
+# romfs/lang/en.json). Override with PYTHON=<path> if it isn't on your PATH; if no
 # python is available the committed source/i18n_strings.inc is used as-is.
 PYTHON ?= $(firstword $(wildcard /c/Users/Steve/AppData/Local/Programs/Python/Python310/python.exe) python)
 include $(DEVKITPRO)/libnx/switch_rules
