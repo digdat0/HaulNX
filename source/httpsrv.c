@@ -54,7 +54,7 @@
 static const char PAGE[] =
     "<!doctype html><meta charset=utf-8>"
     "<meta name=viewport content=\"width=device-width,initial-scale=1\">"
-    "<title>TicoDL+ - Import collection</title>" PAGE_CSS
+    "<title>ticodl+ - Import collection</title>" PAGE_CSS
     "<style>"
     "ol{margin:0 0 1.25rem;padding-left:1.25rem;color:var(--dim);"
     "font-size:.9rem}"
@@ -80,7 +80,7 @@ static const char PAGE[] =
     "</style>"
     "<div class=card>"
     "<header><img src=\"/logo.png\" alt=\"\">"
-    "<div><h1>TicoDL<span>+</span></h1><p>Import collection</p></div></header>"
+    "<div><h1>ticodl<span>+</span></h1><p>Import collection</p></div></header>"
     "<ol>"
     "<li>Find the <b>dl_sources.json</b> you saved from the repo editor.</li>"
     "<li>Drop it below, or click to browse for it.</li>"
@@ -114,7 +114,7 @@ static const char PAGE[] =
 static const char PAGE_OK[] =
     "<!doctype html><meta charset=utf-8>"
     "<meta name=viewport content=\"width=device-width,initial-scale=1\">"
-    "<title>TicoDL+ - Sent</title>" PAGE_CSS
+    "<title>ticodl+ - Sent</title>" PAGE_CSS
     "<style>"
     "p.m{margin:0 0 .75rem}"
     "p.n{color:var(--dim);font-size:.875rem;margin:0 0 1.25rem}"
@@ -125,7 +125,7 @@ static const char PAGE_OK[] =
     "</style>"
     "<div class=card>"
     "<header><img src=\"/logo.png\" alt=\"\">"
-    "<div><h1>TicoDL<span>+</span></h1><p>File sent</p></div></header>"
+    "<div><h1>ticodl<span>+</span></h1><p>File sent</p></div></header>"
     "<p class=m>Confirm the import on your Switch to apply it.</p>"
     "<p class=n>The console stops listening once a file arrives. To send "
     "another, re-open <b>Manage data &rsaquo; Import collection</b> on your "

@@ -4,6 +4,21 @@ Notes for each release. `release.sh` pulls the section matching the version in
 `VERSION` and attaches it to the GitHub release. Add a `## <version>` section
 here before running a release.
 
+## 1.9.0-beta
+
+**Won't fit? You'll know before it downloads**
+- Before a download is queued, TicoDL+ now checks whether it — together with everything
+  already waiting in the queue — will actually fit on your SD card. If it won't, you get
+  a heads-up showing space needed vs free, and can still choose to queue it anyway. It
+  only advises; it never blocks a download on its own.
+
+**A cleaner, lowercase wordmark**
+- The app now styles its name in lowercase — **ticodl+** — everywhere it appears: the
+  header, credits, the home-menu tile, in-app messages, and the LAN import pages, to
+  match the repo editor. The name's colours now match the editor's exactly. Brand text
+  was updated across all 24 languages.
+- The repo editor now shows the app icon beside its title.
+
 ## 1.8.0-beta
 
 **Know when an update is waiting — without lifting a finger**

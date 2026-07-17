@@ -1067,16 +1067,19 @@ MainLayout::MainLayout() : Layout::Layout() {
     // Tri-colour wordmark echoing the icon lockup; constant colours since the
     // header shell stays charcoal in both themes.
     s32 wx = title_x;
-    this->wm_tico = pu::ui::elm::TextBlock::New(wx, 24, "Tico");
-    this->wm_tico->SetColor(pu::ui::Color(146, 214, 36, 255));
+    // Lowercase wordmark matching the repo editor's "ticodl+": tico green,
+    // dl off-white, + accent-blue — using the editor's exact CSS colours
+    // (--green #8fd329, --text #e7eaf0, --accent-lite #5aa0f5).
+    this->wm_tico = pu::ui::elm::TextBlock::New(wx, 24, "tico");
+    this->wm_tico->SetColor(pu::ui::Color(143, 211, 41, 255));
     this->Add(this->wm_tico);
     wx += this->wm_tico->GetWidth();
-    this->wm_dl = pu::ui::elm::TextBlock::New(wx, 24, "DL");
-    this->wm_dl->SetColor(pu::ui::Color(255, 255, 255, 255));
+    this->wm_dl = pu::ui::elm::TextBlock::New(wx, 24, "dl");
+    this->wm_dl->SetColor(pu::ui::Color(231, 234, 240, 255));
     this->Add(this->wm_dl);
     wx += this->wm_dl->GetWidth();
     this->wm_plus = pu::ui::elm::TextBlock::New(wx, 24, "+");
-    this->wm_plus->SetColor(pu::ui::Color(66, 138, 230, 255));
+    this->wm_plus->SetColor(pu::ui::Color(90, 160, 245, 255));
     this->Add(this->wm_plus);
     wx += this->wm_plus->GetWidth();
     this->title = pu::ui::elm::TextBlock::New(wx + 24, 24, " ");
@@ -1604,6 +1607,29 @@ bool MainApplication::ConfirmDanger(const std::string &title,
     int r = this->CreateShowDialog(title, m, {tr(S_CANCEL), tr(S_YES)}, false,
                                    {}, style_dialog_danger);
     return r == 1;
+}
+
+bool MainApplication::SpaceOkToQueue(uint64_t add_size) {
+    if (add_size == 0) return true; // size unknown from metadata: don't block
+    uint64_t freeb = fs_free_bytes("sdmc:/");
+    if (freeb == UINT64_MAX) return true; // statvfs failed: don't block
+    // Sum what the queue still has to pull (metadata size minus any .part
+    // already on disk) so the check accounts for items queued earlier.
+    uint64_t need = add_size;
+    QueueView v[QUEUE_MAX];
+    int n = queue_snapshot(v, QUEUE_MAX);
+    for (int i = 0; i < n; i++) {
+        QStatus s = v[i].item.status;
+        if (s == Q_DONE || s == Q_SAVED || s == Q_FAILED || s == Q_CANCELLED)
+            continue; // finished/failed items no longer need space
+        if (v[i].item.size > v[i].item.now)
+            need += v[i].item.size - v[i].item.now;
+    }
+    if (need <= freeb) return true;
+    // "needed > free" mirrors the warning sentence ("total size exceeds free
+    // space") and reads the same in any language, so no new strings are needed.
+    return this->Confirm(tr(S_FREE_SPACE_WARN),
+                         human_size(need) + "  >  " + human_size(freeb));
 }
 
 void MainApplication::RefreshStatus() {
@@ -4154,6 +4180,7 @@ void MainApplication::HandleInput(u64 down, u64 held,
                 s32 i = this->layout->Sel();
                 if (i >= 0 && i < (s32)g_files.size()) {
                     ArchiveFile *f = &g_item.files[g_files[i]];
+                    if (!this->SpaceOkToQueue(f->size)) return;
                     char url[1024];
                     ia_file_url(&g_item, f, url, sizeof(url));
                     char auth[320];
@@ -4310,7 +4337,7 @@ void MainApplication::HandleInput(u64 down, u64 held,
                 // option, so it and B both return -1.
                 int cr = this->CreateShowDialog(
                     tr(S_CREDITS),
-                    std::string("TicoDL+ v") + APP_VERSION_STR + " by digdat0\n\n"
+                    std::string("ticodl+ v") + APP_VERSION_STR + " by digdat0\n\n"
                     "Plutonium UI library provided by XorTroll\n\n"
                     "TICO emulator - https://ticoverse.com/",
                     {tr(S_RELEASE_NOTES), tr(S_OK)}, true, logo, style_dialog);
@@ -5068,6 +5095,7 @@ void MainApplication::HandleInput(u64 down, u64 held,
                         tr(S_TITLE_LOG), wrap_for_dialog(body),
                         {tr(S_RETRY), tr(S_OK)}, true, {}, style_dialog);
                     if (opt == 0) {
+                        if (!this->SpaceOkToQueue(e.size)) return;
                         char auth[320];
                         creds_auth_header(&g_creds, auth, sizeof(auth));
                         bool ok = queue_add(e.url.c_str(), e.name.c_str(),
@@ -5162,6 +5190,7 @@ void MainApplication::HandleInput(u64 down, u64 held,
             s32 i = this->layout->Sel();
             if (i >= 0 && i < (s32)g_search_results.size()) {
                 const SearchHit &h = g_search_results[i];
+                if (!this->SpaceOkToQueue(h.size)) return;
                 char auth[320];
                 creds_auth_header(&g_creds, auth, sizeof(auth));
                 bool ok = queue_add(h.url.c_str(), h.name.c_str(),
@@ -5683,7 +5712,7 @@ void MainApplication::UpdStart(const std::string &url, const std::string &dl,
         this->layout->SetCardsMode(true);
         this->layout->SetSingleCard(true);
         this->layout->SetQueueCount(1);
-        this->layout->SetQueueCard(0, "TicoDL+", upd_card_icon(),
+        this->layout->SetQueueCard(0, "ticodl+", upd_card_icon(),
                                    qstatus(Q_DOWNLOADING),
                                    qstatus_color(Q_DOWNLOADING), tag, "", "",
                                    "TicoDLplus.nro", 0.0f, true);
@@ -5717,7 +5746,7 @@ void MainApplication::UpdTick() {
             char c1[64];
             snprintf(c1, sizeof(c1), "%s / %s", human_size(now).c_str(),
                      total ? human_size(total).c_str() : "?");
-            this->layout->SetQueueCard(0, "TicoDL+", upd_card_icon(), st,
+            this->layout->SetQueueCard(0, "ticodl+", upd_card_icon(), st,
                                        qstatus_color(Q_DOWNLOADING),
                                        this->upd_tag, c1, "",
                                        "TicoDLplus.nro",

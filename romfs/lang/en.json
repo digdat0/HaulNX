@@ -141,7 +141,7 @@
   "update_dl_cancel": "Downloading update - press B to cancel",
   "update_start_fail": "Could not start the downloader.",
   "update_fail": "Update download failed.",
-  "update_ok": "Update installed — v%s.\n\nClose and relaunch TicoDL+.",
+  "update_ok": "Update installed — v%s.\n\nClose and relaunch ticodl+.",
 
   "tico_not_found": "TICO not detected",
   "tico_not_found_msg": "The TICO emulator was not found on this console.\nDownloads will go to the default folder:\n%s\n\nContinue without TICO?",
@@ -157,7 +157,7 @@
   "language": "Language: %s",
   "title_language": "Language",
   "sub_language": "A select  B back",
-  "lang_restart": "Language changed. Relaunch TicoDL+ for full effect.",
+  "lang_restart": "Language changed. Relaunch ticodl+ for full effect.",
 
   "theme": "Theme: %s",
   "theme_dark": "Dark",
@@ -261,8 +261,8 @@
   "restore_older": "Older — %d console(s), %d repo(s)",
   "restore_confirm": "Go back to %d console(s) and %d repo(s)?\nYour current list is kept, so you can swap back.",
   "restore_done": "Restored %d console(s), %d repo(s)",
-  "welcome_title": "Welcome to TicoDL+",
-  "welcome_body": "TicoDL+ starts empty — you decide what goes in it.\n\nSend a collection from a computer on your network, or add a repo by hand.",
+  "welcome_title": "Welcome to ticodl+",
+  "welcome_body": "ticodl+ starts empty — you decide what goes in it.\n\nSend a collection from a computer on your network, or add a repo by hand.",
   "welcome_import": "Send from a computer",
   "welcome_manual": "Add a repo by hand",
   "welcome_later": "Not now",
