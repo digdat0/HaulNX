@@ -260,5 +260,14 @@
   "restore_recent": "Previous — %d console(s), %d repo(s)",
   "restore_older": "Older — %d console(s), %d repo(s)",
   "restore_confirm": "Go back to %d console(s) and %d repo(s)?\nYour current list is kept, so you can swap back.",
-  "restore_done": "Restored %d console(s), %d repo(s)"
+  "restore_done": "Restored %d console(s), %d repo(s)",
+  "welcome_title": "Welcome to TicoDL+",
+  "welcome_body": "TicoDL+ starts empty — you decide what goes in it.\n\nSend a collection from a computer on your network, or add a repo by hand.",
+  "welcome_import": "Send from a computer",
+  "welcome_manual": "Add a repo by hand",
+  "welcome_later": "Not now",
+  "updates_avail": "%d update(s) available",
+  "release_notes": "Release notes",
+  "update_avail": "Update available",
+  "chk_updates_startup": "Check for updates on startup: %s"
 }

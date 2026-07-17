@@ -321,6 +321,19 @@ enum {
     S_RESTORE_CONFIRM,
     S_RESTORE_DONE,
 
+    /* ---- first-run welcome (shown while there are no collections) ---- */
+    S_WELCOME_TITLE,
+    S_WELCOME_BODY,
+    S_WELCOME_IMPORT,
+    S_WELCOME_MANUAL,
+    S_WELCOME_LATER,
+
+    /* ---- update detection + release-notes viewer ---- */
+    S_UPDATES_AVAIL,
+    S_RELEASE_NOTES,
+    S_UPDATE_AVAIL,          /* count-less "Update available" chip */
+    S_CHK_UPDATES_STARTUP,   /* advanced toggle: check for updates on startup */
+
     S__COUNT
 };
 

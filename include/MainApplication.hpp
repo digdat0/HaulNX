@@ -476,6 +476,7 @@ class MainLayout : public pu::ui::Layout {
     PillElement::Ref tab_pill;        // rounded highlight behind the active tab
     GradientLineElement::Ref accent_line; // green->blue strip under the shell
     PulseDotElement::Ref queue_dot;   // "downloads running" pulse on the Queue tab
+    PulseDotElement::Ref settings_dot; // "update available" pulse on the Settings tab
     IconElement::Ref empty_icon;      // big dimmed icon for empty states
     pu::ui::elm::TextBlock::Ref empty_text;
     pu::ui::elm::TextBlock::Ref empty_hint; // smaller "what to do" line
@@ -503,6 +504,7 @@ class MainLayout : public pu::ui::Layout {
     void SetRomInfo(const std::string &t);
     void SetActiveTab(int idx); // 0=Browse 1=Installed 2=Queue 3=Settings
     void SetQueueActivity(bool active); // pulse the Queue tab while downloading
+    void SetUpdateAvailable(bool avail); // pulse the Settings tab when an update is up
     void RefreshTabs();
     void ApplyTheme();
     // Bake the list/grid tiles up front so the first screen doesn't hitch.
@@ -579,7 +581,9 @@ class MainApplication : public pu::ui::Application {
         QueueState, // persisted queue-data (queue.json) viewer
         InstSearch, // search across installed games (roms folder)
         RomPicker, // SD-card folder browser for choosing a custom ROM root
-        Import     // waiting for a dl_sources.json upload over the LAN
+        Import,    // waiting for a dl_sources.json upload over the LAN
+        ReleaseNotes, // GitHub release list (version + date)
+        ReleaseNote   // one release's notes
     };
     enum class Pending { None, AddRepo, Manual };
     enum class Tab { Browse = 0, Installed = 1, Queue = 2, Settings = 3 };
@@ -671,6 +675,16 @@ class MainApplication : public pu::ui::Application {
     char chk_tag[64];
     char chk_url[1024];
 
+    // Silent startup update check: a separate task from `chk` so it never owns
+    // the UI (no dialog, no progress). On completion the result only lights the
+    // Settings-tab dot + "Update available" chip; the user still taps "Check for
+    // updates" to act. update_available latches true for the session.
+    BgTask bgchk;
+    std::atomic<bool> bgchk_ok{false};
+    bool update_available = false;
+    char bgchk_tag[64];
+    char bgchk_url[1024];
+
     // Background bulk metadata refresh (Manage data -> Refresh all metadata):
     // force-fetches every enabled repo's file list, with live (n/total)
     // progress and B to cancel between repos.
@@ -692,12 +706,20 @@ class MainApplication : public pu::ui::Application {
     // large cache shows an animated "Searching..." spinner instead of freezing.
     BgTask search;
 
+    // Background release-notes fetch (Settings -> View logs -> Release notes):
+    // pulls the GitHub release history off the main thread so it doesn't freeze
+    // during retries. The worker fills g_relnotes; the UI renders it when done.
+    BgTask notes;
+    std::atomic<bool> notes_ok{false};
+    Screen notes_origin = Screen::ViewLogs; // where B leaves the release list
+
     // LAN collection import: a tiny HTTP server the user's PC uploads
     // dl_sources.json to. No thread — it is polled once per frame and only
     // exists while the Import screen is open.
     HttpSrv imp_srv;
     bool imp_open = false;
     int imp_grace = 0; // >0: a file is in hand, still serving the redirect
+    bool imp_onboard = false; // import launched from the first-run welcome
 
   public:
     using Application::Application;
@@ -769,18 +791,30 @@ class MainApplication : public pu::ui::Application {
     static void RaThread(void *arg);
 
     // LAN collection import helpers.
-    void ImportStart();
+    void ImportStart(bool onboarding = false);
+    void ImportReturn(); // where the import flow lands when it ends
     void ImportTick(); // serve one request per frame while the screen is open
     int ImportPoll();  // serve one request, logging what it did
     void ImportApply(); // consume the uploaded file, confirm, and write it
     void ImportStop();
     void RestoreBackup(); // swap the last import's backup back in
+    void Welcome();       // first-run prompt while there are no collections
 
     // Background update-check helpers.
     void ChkStart();
     void ChkTick();   // poll progress / finish; called each frame while running
     void ChkFinish(); // handle the fetched (or failed) result on the UI thread
     static void ChkThread(void *arg);
+    void BgChkStart();               // kick off the silent startup update check
+    void BgChkPoll();                // reap it and light the Settings dot/chip
+    static void BgChkThread(void *arg);
+
+    // Release-notes viewer (Settings -> View logs -> Release notes).
+    void GotoReleaseNotes(); // kick the fetch and show a spinner
+    void NotesTick();        // poll the fetch; show the version list when done
+    void ShowReleaseList();  // the fetched releases as a version list
+    void ShowReleaseNote(int idx); // one release's notes, markdown flattened
+    static void NotesThread(void *arg);
 
     // Background metadata load helpers.
     void StartMetaLoad(const std::string &id, const std::string &base,

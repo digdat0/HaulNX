@@ -4,6 +4,24 @@ Notes for each release. `release.sh` pulls the section matching the version in
 `VERSION` and attaches it to the GitHub release. Add a `## <version>` section
 here before running a release.
 
+## 1.8.0-beta
+
+**Know when an update is waiting — without lifting a finger**
+- On launch (only when you're online, and only if you leave it enabled) TicoDL+ now
+  quietly asks GitHub whether a newer version exists. If one does, a green dot appears
+  on the **Settings** tab and the **Check for updates** entry shows an **Update
+  available** chip. It only ever advises — nothing installs itself; you still choose
+  when to update.
+- New **Advanced → Check for updates on startup** toggle (on by default) if you'd
+  rather it stayed quiet.
+
+**See what's new before you update**
+- The update prompt now has a **Release notes** button, so you can read what changed
+  in the new version before committing to the download.
+
+**Translations**
+- The new strings are translated across all 24 supported languages.
+
 ## 1.7.0-beta
 
 **Send your collection to the Switch over Wi-Fi**

@@ -557,6 +557,50 @@ static bool index_has_installed(const std::vector<std::string> &idx,
            it->compare(0, base.size(), base) == 0;
 }
 
+// The md5 we last installed for each file, read back from the download history
+// (downloads.jsonl). Keyed "target/lowercased-name". Lets the file list flag a
+// file whose repo now advertises a different md5 than the copy already on the SD
+// card — i.e. an update — without a second index or a new on-disk store.
+static std::map<std::string, std::string> g_dl_md5;
+static void load_dl_md5() {
+    g_dl_md5.clear();
+    std::ifstream jf(DLLOG_JSON);
+    if (!jf.is_open()) {
+        return;
+    }
+    std::string line;
+    while (std::getline(jf, line)) {
+        if (line.empty() || line[0] != '{') {
+            continue;
+        }
+        const char *js = line.c_str();
+        int ntok = 0;
+        jsmntok_t *tok = json_parse_alloc(js, line.size(), &ntok);
+        if (!tok || tok[0].type != JSMN_OBJECT) {
+            free(tok);
+            continue;
+        }
+        char st[16] = "", target[64] = "", name[512] = "", md5[33] = "";
+        json_copy(js, tok, json_obj_get(js, tok, 0, "st"), st, sizeof(st));
+        // Only a completed install ("done" / "saved-raw") leaves a file whose
+        // md5 is meaningful; skip cancelled/failed rows.
+        if (strncmp(st, "done", 4) == 0 || strncmp(st, "saved", 5) == 0) {
+            json_copy(js, tok, json_obj_get(js, tok, 0, "target"), target,
+                      sizeof(target));
+            json_copy(js, tok, json_obj_get(js, tok, 0, "name"), name,
+                      sizeof(name));
+            json_copy(js, tok, json_obj_get(js, tok, 0, "md5"), md5,
+                      sizeof(md5));
+            if (target[0] && name[0] && md5[0]) {
+                std::string key = std::string(target) + "/" + name;
+                ascii_lower(key);
+                g_dl_md5[key] = md5; // later lines win: the most recent install
+            }
+        }
+        free(tok);
+    }
+}
+
 static void rebuild_files(MainLayout *lay, const char *target) {
     lay->ClearMenu();
     g_files.clear();
@@ -587,12 +631,28 @@ static void rebuild_files(MainLayout *lay, const char *target) {
     // One directory scan for the whole list instead of one per file.
     std::vector<std::string> inst_idx;
     build_installed_index(target, inst_idx);
+    load_dl_md5(); // md5 of what we installed, to spot files the repo has updated
+    int updates = 0;
     for (int k = 0; k < (int)g_files.size(); k++) {
         ArchiveFile *f = &g_item.files[g_files[k]];
         bool inst = index_has_installed(inst_idx, f->name);
-        g_marks.push_back(inst ? 1 : 0);
+        // 0 = not installed, 1 = installed & current, 2 = installed but the
+        // repo now advertises a different md5 than the copy on disk.
+        int mark = inst ? 1 : 0;
+        if (inst && f->md5[0]) {
+            std::string key = std::string(target) + "/" + f->name;
+            ascii_lower(key);
+            auto it = g_dl_md5.find(key);
+            if (it != g_dl_md5.end() &&
+                strcasecmp(it->second.c_str(), f->md5) != 0) {
+                mark = 2;
+                updates++;
+            }
+        }
+        g_marks.push_back((char)mark);
         char name[540];
-        snprintf(name, sizeof(name), "%s%s", inst ? "* " : "", f->name);
+        snprintf(name, sizeof(name), "%s%s",
+                 mark == 2 ? "↑ " : mark == 1 ? "* " : "", f->name);
         lay->AddRow2(name, human_size(f->size),
                      g_theme->row_text, size_color(f->size));
     }
@@ -603,8 +663,16 @@ static void rebuild_files(MainLayout *lay, const char *target) {
     // the toast announcing them vanishes, and an active filter is otherwise
     // invisible ("where did my files go?").
     std::string info;
+    if (updates > 0) {
+        char ub[80]; // roomy: some localized forms are multi-byte
+        snprintf(ub, sizeof(ub), tr(S_UPDATES_AVAIL), updates);
+        info = ub;
+    }
     if (g_sort_mode != SORT_DEFAULT) {
-        info = tr(g_sort_keys[g_sort_mode]);
+        if (!info.empty()) {
+            info += "  ·  ";
+        }
+        info += tr(g_sort_keys[g_sort_mode]);
     }
     if (!g_filter.empty()) {
         char fb[120];
@@ -1127,6 +1195,11 @@ MainLayout::MainLayout() : Layout::Layout() {
     this->queue_dot->SetColor(pu::ui::Color(146, 214, 36, 255));
     this->Add(this->queue_dot);
 
+    // "Update available" pulse on the Settings tab (positioned in SetActiveTab).
+    this->settings_dot = PulseDotElement::New(0, 0, 6);
+    this->settings_dot->SetColor(pu::ui::Color(146, 214, 36, 255));
+    this->Add(this->settings_dot);
+
     this->SetActiveTab(0);
 }
 
@@ -1143,6 +1216,7 @@ void MainLayout::ApplyTheme() {
     this->rom_info->SetColor(g_theme->rom_info_clr);
     this->tab_pill->SetColor(g_theme->tab_under);
     this->queue_dot->SetColor(pu::ui::Color(146, 214, 36, 255));
+    this->settings_dot->SetColor(pu::ui::Color(146, 214, 36, 255));
     this->empty_text->SetColor(g_theme->rom_info_clr);
     this->empty_hint->SetColor(g_theme->rom_info_clr);
     this->spinner->SetColors(accent_green(), g_theme->rom_info_clr);
@@ -1205,9 +1279,18 @@ void MainLayout::SetActiveTab(int idx) {
                                     this->tabs[2]->GetWidth() + 10,
                                 92);
     }
+    // Park the "update available" pulse just after the Settings (index 3) label.
+    if (this->tabs.size() > 3) {
+        this->settings_dot->SetPos(this->tabs[3]->GetX() +
+                                       this->tabs[3]->GetWidth() + 10,
+                                   92);
+    }
 }
 void MainLayout::SetQueueActivity(bool active) {
     this->queue_dot->SetActive(active);
+}
+void MainLayout::SetUpdateAvailable(bool avail) {
+    this->settings_dot->SetActive(avail);
 }
 
 void MainLayout::RefreshTabs() {
@@ -1569,6 +1652,17 @@ static bool console_has_pin(const ConsoleGroup *g) {
     return false;
 }
 
+// Name the import path for the empty Home screen: the welcome dialog is
+// one-shot per launch, and Y is not a discoverable way to be told about it.
+// Built from the menu's own strings so it can't drift from what the menus say —
+// in any language.
+static std::string import_hint() {
+    char h[160];
+    snprintf(h, sizeof(h), "%s → %s → %s", tr(S_TITLE_SETTINGS),
+             tr(S_MANAGE_DATA), tr(S_IMPORT_COLLECTION));
+    return h;
+}
+
 // ---- screens --------------------------------------------------------------
 void MainApplication::GotoHome() {
     this->screen = Screen::Home;
@@ -1632,7 +1726,7 @@ void MainApplication::GotoHome() {
         }
         if (g_home_map.empty()) {
             this->layout->SetEmptyState(console_icon("default"),
-                                        tr(S_NO_COLLECTIONS));
+                                        tr(S_NO_COLLECTIONS), import_hint());
         } else if (cards) {
             this->layout->SetCardsMode(true);
         }
@@ -1684,7 +1778,7 @@ void MainApplication::GotoHome() {
         }
         if (flat_count() == 0) {
             this->layout->SetEmptyState(console_icon("default"),
-                                        tr(S_NO_REPOS));
+                                        tr(S_NO_REPOS), import_hint());
         } else if (cards) {
             this->layout->SetCardsMode(true);
         }
@@ -1750,6 +1844,8 @@ MainApplication::Tab MainApplication::CurrentTab() {
     case Screen::ViewLogs:
     case Screen::DebugLog:
     case Screen::Import:
+    case Screen::ReleaseNotes:
+    case Screen::ReleaseNote:
     case Screen::QueueState: return Tab::Settings;
     default:                return Tab::Browse; // Home/Repos/Files/RepoEdit/Picker/Search
     }
@@ -1879,15 +1975,31 @@ void MainApplication::GotoSettings() {
     };
     if (g_prefs.card_view) {
         for (const auto &e : kEntries) {
-            this->layout->AddCard(tr(e.str), "", console_icon(e.icon), false);
+            // Row 0 (Check for updates) shows an "Update available" subtitle when
+            // the silent startup check found one; the card renders it as the same
+            // darkening pill used for the download cards' size/speed chip.
+            const char *sub =
+                (e.str == S_CHECK_UPDATES && this->update_available)
+                    ? tr(S_UPDATE_AVAIL)
+                    : "";
+            this->layout->AddCard(tr(e.str), sub, console_icon(e.icon), false);
         }
         this->layout->SetCardsMode(true);
     } else {
         pu::ui::Color lbl = g_theme->row_text;
         pu::ui::Color chv = chevron_color();
         for (const auto &e : kEntries) {
-            this->layout->AddRow2(tr(e.str), CHEVRON, lbl, chv, -1.0f, nullptr,
-                                  "", false, false);
+            if (e.str == S_CHECK_UPDATES && this->update_available) {
+                // "Update available" chip far-right, in the same pill the list's
+                // size/status values use (pill = true), tinted the affirmative
+                // green so it reads as an actionable notice.
+                this->layout->AddRow2(tr(e.str), tr(S_UPDATE_AVAIL), lbl,
+                                      onoff_color(true), -1.0f, nullptr, "",
+                                      false, true);
+            } else {
+                this->layout->AddRow2(tr(e.str), CHEVRON, lbl, chv, -1.0f,
+                                      nullptr, "", false, false);
+            }
         }
     }
     char ri[600];
@@ -1914,17 +2026,20 @@ void MainApplication::GotoAdvanced() {
     b = g_prefs.net_check;
     this->layout->AddRow2(settings_label(tr(S_NET_CHECK_STARTUP)),
                           b ? tr(S_ON) : tr(S_OFF), lbl, onoff_color(b)); // 2
+    b = g_prefs.chk_updates;
+    this->layout->AddRow2(settings_label(tr(S_CHK_UPDATES_STARTUP)),
+                          b ? tr(S_ON) : tr(S_OFF), lbl, onoff_color(b)); // 3
     b = g_creds.access_key[0] != '\0';
     this->layout->AddRow2(settings_label(tr(S_ARCHIVE_CREDS)),
-                          b ? tr(S_SET) : tr(S_UNSET), lbl, onoff_color(b)); // 3
+                          b ? tr(S_SET) : tr(S_UNSET), lbl, onoff_color(b)); // 4
     b = g_prefs.use_cache;
     this->layout->AddRow2(settings_label(tr(S_META_CACHE)),
-                          b ? tr(S_ON) : tr(S_OFF), lbl, onoff_color(b)); // 4
+                          b ? tr(S_ON) : tr(S_OFF), lbl, onoff_color(b)); // 5
     {
         bool custom = g_prefs.roms_override[0] != '\0';
         this->layout->AddRow2(settings_label(tr(S_ROMS_OVERRIDE)),
                               custom ? roms_root(&g_tico) : tr(S_ROMS_AUTO), lbl,
-                              custom ? value_color() : onoff_color(false)); // 5
+                              custom ? value_color() : onoff_color(false)); // 6
     }
 }
 
@@ -2095,7 +2210,7 @@ static void xfer_log(const char *fmt, ...) {
 // The console serves a one-page upload form for as long as this screen is up;
 // the user drops dl_sources.json into it from their browser. Nothing leaves the
 // local network and no third-party service is involved.
-void MainApplication::ImportStart() {
+void MainApplication::ImportStart(bool onboarding) {
     char ip[64];
     if (!httpsrv_local_ip(ip, sizeof(ip))) {
         this->ToastErr(tr(S_IMPORT_NO_NET));
@@ -2107,6 +2222,9 @@ void MainApplication::ImportStart() {
     }
     this->imp_open = true;
     this->imp_grace = 0; // nothing pending from a previous import
+    // Only once the server is up: the early returns above leave the caller
+    // where it was, so the flag must not outlive a start that never happened.
+    this->imp_onboard = onboarding;
     this->screen = Screen::Import;
 
     char url[96];
@@ -2120,6 +2238,20 @@ void MainApplication::ImportStart() {
     // The console is the instruction sheet until the user reaches the page, so
     // it carries the address and the steps: badge, URL, then what to do.
     this->layout->SetEmptyState(g_header_logo, url, tr(S_IMPORT_STEPS));
+}
+
+// Every way out of the import flow comes through here. A first-run import is
+// launched from the welcome dialog on Home, so landing back in Manage data
+// would strand a new user in a settings submenu instead of showing them the
+// collections they just imported.
+void MainApplication::ImportReturn() {
+    bool onboard = this->imp_onboard;
+    this->imp_onboard = false; // one-shot: only the import it was set for
+    if (onboard) {
+        this->GotoHome();
+    } else {
+        this->GotoManageData();
+    }
 }
 
 void MainApplication::ImportStop() {
@@ -2170,7 +2302,7 @@ void MainApplication::ImportApply() {
     this->imp_grace = 0;
     this->ImportStop();
     if (!body) {
-        this->GotoManageData();
+        this->ImportReturn();
         return;
     }
 
@@ -2181,7 +2313,7 @@ void MainApplication::ImportApply() {
         xfer_log("rejected   upload of %zu bytes: no collections in it", len);
         free(body);
         this->ToastErr(tr(S_IMPORT_BAD_FILE));
-        this->GotoManageData();
+        this->ImportReturn();
         return;
     }
 
@@ -2191,7 +2323,7 @@ void MainApplication::ImportApply() {
         xfer_log("cancelled  upload of %d console(s), %d repo(s) not applied",
                  consoles, repos);
         free(body);
-        this->GotoManageData();
+        this->ImportReturn();
         return;
     }
     bool ok = config_import_json(&g_cfg, body, len, &consoles, &repos);
@@ -2201,7 +2333,7 @@ void MainApplication::ImportApply() {
         // card, most likely. config_import_json has put the old file back.
         xfer_log("FAILED     import could not be written to %s", SOURCES_PATH);
         this->ToastErr(tr(S_IMPORT_SAVE_FAIL));
-        this->GotoManageData();
+        this->ImportReturn();
         return;
     }
     xfer_log("import     applied %d console(s), %d repo(s); previous %d kept for "
@@ -2211,7 +2343,30 @@ void MainApplication::ImportApply() {
     char done[96];
     snprintf(done, sizeof(done), tr(S_IMPORT_DONE), consoles, repos);
     this->Toast(done);
-    this->GotoManageData();
+    this->ImportReturn();
+}
+
+// Offer the two ways to get collections onto a console that has none. The app
+// ships with an empty dl_sources.json by design, so a new user's first screen is
+// otherwise an empty list, and nothing on it mentions that the LAN import or the
+// repo editor exist.
+//
+// Gated on having no collections rather than a "seen it" pref: an empty app is
+// unusable, so the prompt can never be in the way, and it stops for good the
+// moment anything is added. A pref would also desync — wiping dl_sources.json
+// while keeping prefs.json would spend the guidance and never offer it again.
+void MainApplication::Welcome() {
+    // Last option as cancel, so it and B both come back as -1 (see the note on
+    // CreateShowDialog above) — a real index is never returned for "Not now".
+    int r = this->CreateShowDialog(
+        tr(S_WELCOME_TITLE), tr(S_WELCOME_BODY),
+        {tr(S_WELCOME_IMPORT), tr(S_WELCOME_MANUAL), tr(S_WELCOME_LATER)}, true,
+        {}, style_dialog);
+    if (r == 0) {
+        this->ImportStart(true); // come back to Home, not into Manage data
+    } else if (r == 1) {
+        this->GotoPicker(Pending::AddRepo); // same flow Y opens on Home
+    }
 }
 
 // Put one of the backups kept by past imports back. These files are unreachable
@@ -2364,10 +2519,11 @@ void MainApplication::GotoViewLogs() {
     this->layout->SetTitle(tr(S_TITLE_VIEW_LOGS));
     this->layout->SetSubtitle(tr(S_SUB_VIEW_LOGS));
     this->layout->ClearMenu();
-    this->layout->AddRow(tr(S_VIEW_LOG));    // 0: download history
-    this->layout->AddRow(tr(S_DEBUG_LOG));   // 1: debug.log
-    this->layout->AddRow(tr(S_QUEUE_STATE)); // 2: persisted queue.json
-    this->layout->AddRow(tr(S_XFER_LOG));    // 3: transfers.log
+    this->layout->AddRow(tr(S_VIEW_LOG));      // 0: download history
+    this->layout->AddRow(tr(S_DEBUG_LOG));     // 1: debug.log
+    this->layout->AddRow(tr(S_QUEUE_STATE));   // 2: persisted queue.json
+    this->layout->AddRow(tr(S_XFER_LOG));      // 3: transfers.log
+    this->layout->AddRow(tr(S_RELEASE_NOTES)); // 4: GitHub release history
 }
 
 // Rows truncate long log lines; pressing A shows the full text in a dialog.
@@ -3229,8 +3385,29 @@ void MainApplication::HandleInput(u64 down, u64 held,
                 break;                       // Continue (1) or B
             }
         }
+        // Silent update check, gated on its own advanced pref and on the
+        // network actually being up (no dialog, no blocking — result only
+        // lights the Settings-tab dot + chip; the user still acts manually).
+        if (g_prefs.chk_updates) {
+            NifmInternetConnectionType ntype = (NifmInternetConnectionType)0;
+            u32 wstr = 0;
+            NifmInternetConnectionStatus nst = (NifmInternetConnectionStatus)0;
+            if (R_SUCCEEDED(nifmGetInternetConnectionStatus(&ntype, &wstr,
+                                                            &nst)) &&
+                nst == NifmInternetConnectionStatus_Connected) {
+                this->BgChkStart();
+            }
+        }
+        // Last of the three: it offers a Wi-Fi transfer, so it must not come
+        // before the network warning has had its say.
+        if (g_cfg.console_count == 0) {
+            this->Welcome();
+        }
         return;
     }
+    // Reap the silent startup update check (if any) and light the Settings dot.
+    this->BgChkPoll();
+
     // A self-update download owns the UI while it runs: drive its progress /
     // finish and swallow all other input until it completes.
     if (this->upd.running) {
@@ -3289,12 +3466,21 @@ void MainApplication::HandleInput(u64 down, u64 held,
         return;
     }
 
+    // Release notes are fetching on a background thread: animate the spinner and
+    // swallow input until the history is ready.
+    if (this->notes.running) {
+        (void)down;
+        (void)held;
+        this->NotesTick();
+        return;
+    }
+
     // Waiting for a dl_sources.json upload: serve the LAN receiver a frame at a
     // time and swallow input except B, which gives up and closes the socket.
     if (this->imp_open) {
         if (down & HidNpadButton_B) {
             this->ImportStop();
-            this->GotoManageData();
+            this->ImportReturn();
             return;
         }
         this->ImportTick();
@@ -4120,12 +4306,21 @@ void MainApplication::HandleInput(u64 down, u64 held,
                 if (tex) {
                     logo = pu::sdl2::TextureHandle::New(tex);
                 }
-                this->CreateShowDialog(
+                // "Release notes" is a real option (index 0); OK is the cancel
+                // option, so it and B both return -1.
+                int cr = this->CreateShowDialog(
                     tr(S_CREDITS),
                     std::string("TicoDL+ v") + APP_VERSION_STR + " by digdat0\n\n"
                     "Plutonium UI library provided by XorTroll\n\n"
                     "TICO emulator - https://ticoverse.com/",
-                    {tr(S_OK)}, true, logo, style_dialog);
+                    {tr(S_RELEASE_NOTES), tr(S_OK)}, true, logo, style_dialog);
+                if (cr == 0) {
+                    // return, not break: skip the GotoSettings() below so the
+                    // release-notes fetch keeps its spinner instead of being
+                    // torn down and redrawn as Settings.
+                    this->GotoReleaseNotes();
+                    return;
+                }
                 break;
             }
             default:
@@ -4158,13 +4353,17 @@ void MainApplication::HandleInput(u64 down, u64 held,
                 prefs_save(&g_prefs);
                 break;
             case 3:
+                g_prefs.chk_updates = !g_prefs.chk_updates;
+                prefs_save(&g_prefs);
+                break;
+            case 4:
                 this->GotoCreds();
                 return;
-            case 4:
+            case 5:
                 g_prefs.use_cache = !g_prefs.use_cache;
                 prefs_save(&g_prefs);
                 break;
-            case 5: { // Custom ROM folder — browse the SD card and pick a folder
+            case 6: { // Custom ROM folder — browse the SD card and pick a folder
                 /* Start inside the current override if it still exists,
                  * otherwise at the SD-card root. */
                 std::string start = "sdmc:/";
@@ -4346,10 +4545,11 @@ void MainApplication::HandleInput(u64 down, u64 held,
             this->GotoSettings();
         } else if (down & HidNpadButton_A) {
             switch (this->layout->Sel()) {
-            case 0: this->GotoLog(); return;        // download history
-            case 1: this->GotoDebugLog(); return;   // debug.log
-            case 2: this->GotoQueueState(); return; // queue.json
-            case 3: this->GotoXferLog(); return;    // transfers.log
+            case 0: this->GotoLog(); return;          // download history
+            case 1: this->GotoDebugLog(); return;     // debug.log
+            case 2: this->GotoQueueState(); return;   // queue.json
+            case 3: this->GotoXferLog(); return;      // transfers.log
+            case 4: this->GotoReleaseNotes(); return; // release history
             default: break;
             }
         }
@@ -4373,6 +4573,36 @@ void MainApplication::HandleInput(u64 down, u64 held,
                 this->Toast(tr(S_LOG_CLEARED));
                 this->GotoTextLog(this->log_view_path, this->log_view_title,
                                   this->log_clear_msg);
+            }
+        }
+        break;
+    }
+
+    case Screen::ReleaseNotes: { // version list
+        if (down & HidNpadButton_B) {
+            // Back to wherever it was opened from (View logs, or Settings when
+            // reached via the credits dialog).
+            if (this->notes_origin == Screen::Settings) {
+                this->GotoSettings();
+            } else {
+                this->GotoViewLogs();
+            }
+        } else if (down & HidNpadButton_A) {
+            this->ShowReleaseNote(this->layout->Sel());
+        }
+        break;
+    }
+
+    case Screen::ReleaseNote: { // one release's notes
+        if (down & HidNpadButton_B) {
+            this->ShowReleaseList(); // back to the list, no re-fetch
+        } else if (down & HidNpadButton_A) {
+            // Rows truncate long lines: show the full entry in a dialog.
+            s32 i = this->layout->Sel();
+            if (i >= 0 && i < (s32)g_debug_lines.size()) {
+                this->CreateShowDialog(this->log_view_title,
+                                       wrap_for_dialog(g_debug_lines[i]),
+                                       {tr(S_OK)}, true, {}, style_dialog);
             }
         }
         break;
@@ -5026,7 +5256,7 @@ void MainApplication::Shutdown() {
     // Ask the only worker that polls a cancel flag to stop, then join them all.
     this->ra_cancel = true;
     for (BgTask *t : {&this->upd, &this->ra, &this->chk, &this->meta,
-                      &this->search}) {
+                      &this->search, &this->notes, &this->bgchk}) {
         t->Join();
     }
     queue_exit();
@@ -5045,6 +5275,46 @@ void MainApplication::ChkThread(void *arg) {
                                        sizeof(self->chk_url),
                                        &self->chk_attempt);
     self->chk.done = true;
+}
+
+// Silent startup update check. Fills bgchk_tag/url off-thread; never touches
+// Plutonium (result is applied on the main thread in BgChkPoll).
+void MainApplication::BgChkThread(void *arg) {
+    auto self = static_cast<MainApplication *>(arg);
+    self->bgchk_ok = update_fetch_latest(UPDATE_REPO, self->bgchk_tag,
+                                         sizeof(self->bgchk_tag), self->bgchk_url,
+                                         sizeof(self->bgchk_url), NULL);
+    self->bgchk.done = true;
+}
+
+void MainApplication::BgChkStart() {
+    if (this->bgchk.running || this->update_available) {
+        return; // already checking, or already found one this session
+    }
+    this->bgchk_ok = false;
+    this->bgchk_tag[0] = '\0';
+    this->bgchk_url[0] = '\0';
+    // Best-effort: if the thread can't spawn, just skip the silent check (the
+    // user can still check manually). Never fetch synchronously here — this runs
+    // on the startup path and must not block the first frame.
+    this->bgchk.Start(&MainApplication::BgChkThread, this);
+}
+
+void MainApplication::BgChkPoll() {
+    if (!this->bgchk.running || !this->bgchk.done) {
+        return;
+    }
+    this->bgchk.Join();
+    if (this->bgchk_ok && version_cmp(APP_VERSION_STR, this->bgchk_tag) < 0) {
+        this->update_available = true;
+        this->layout->SetUpdateAvailable(true);
+        // If Settings is already open, redraw so the chip appears immediately.
+        if (this->screen == Screen::Settings) {
+            s32 sel = this->layout->Sel();
+            this->GotoSettings();
+            this->layout->SetSel(sel);
+        }
+    }
 }
 
 void MainApplication::ChkStart() {
@@ -5101,7 +5371,17 @@ void MainApplication::ChkFinish() {
     {
         char umsg[128];
         snprintf(umsg, sizeof(umsg), tr(S_UPDATE_CONFIRM), this->chk_tag);
-        if (!this->Confirm(tr(S_TITLE_UPDATE), umsg)) {
+        // Cancel(0) first so it's the safe default; "Release notes" lets the user
+        // see what's in the new version before committing to the update. It opens
+        // the release list (screen is Settings here, so B returns to Settings).
+        int r = this->CreateShowDialog(tr(S_TITLE_UPDATE), umsg,
+                                       {tr(S_CANCEL), tr(S_RELEASE_NOTES), tr(S_YES)},
+                                       false, {}, style_dialog);
+        if (r == 1) {
+            this->GotoReleaseNotes();
+            return;
+        }
+        if (r != 2) {
             this->GotoSettings();
             return;
         }
@@ -5110,6 +5390,236 @@ void MainApplication::ChkFinish() {
     snprintf(dl, sizeof(dl), "%s/downloads/update.nro", CONFIG_DIR);
     fs_ensure_parent(dl);
     this->UpdStart(this->chk_url, dl, this->chk_tag);
+}
+
+// One GitHub release, as shown in the notes viewer. body is the raw markdown;
+// it is only walked line-by-line when a release is opened, so the list itself
+// stays light.
+struct RelNote {
+    std::string tag;
+    std::string date;
+    std::string body;
+};
+static std::vector<RelNote> g_relnotes;
+
+// Fetch the newest releases into g_relnotes (newest first). per_page is kept
+// small: the list endpoint returns every body inline, so asking for 100 is what
+// made the old viewer slow. Returns false if the fetch or parse failed.
+static bool fetch_release_list(const char *repo) {
+    g_relnotes.clear();
+    char api[256];
+    snprintf(api, sizeof(api),
+             "https://api.github.com/repos/%s/releases?per_page=10", repo);
+    char *body = nullptr;
+    long code = 0;
+    size_t len = 0;
+    for (int a = 0; a < 3; a++) {
+        body = http_get(api, &code, &len);
+        if (body && code == 200 && len >= 2) {
+            break;
+        }
+        free(body);
+        body = nullptr;
+        svcSleepThread(700000000ULL); // ~0.7s before retrying a transient error
+    }
+    if (!body) {
+        return false;
+    }
+    int ntok = 0;
+    jsmntok_t *tok = json_parse_alloc(body, len, &ntok);
+    if (!tok || tok[0].type != JSMN_ARRAY) {
+        free(tok);
+        free(body);
+        return false;
+    }
+    int nrel = tok[0].size, rel = 1;
+    for (int r = 0; r < nrel; r++) {
+        if (tok[rel].type != JSMN_OBJECT) {
+            rel = json_tok_skip(tok, rel);
+            continue;
+        }
+        if (json_bool(body, tok, json_obj_get(body, tok, rel, "draft"))) {
+            rel = json_tok_skip(tok, rel); // drafts aren't public; skip them
+            continue;
+        }
+        RelNote e;
+        char tag[64] = "", date[32] = "";
+        json_copy(body, tok, json_obj_get(body, tok, rel, "tag_name"), tag,
+                  sizeof(tag));
+        json_copy(body, tok, json_obj_get(body, tok, rel, "published_at"), date,
+                  sizeof(date));
+        date[10] = '\0'; // ISO 8601 timestamp -> yyyy-mm-dd
+        e.tag = tag[0] ? tag : "(untagged)";
+        e.date = date;
+        int bi = json_obj_get(body, tok, rel, "body");
+        if (bi >= 0 && tok[bi].type == JSMN_STRING) {
+            int blen = tok[bi].end - tok[bi].start;
+            if (blen > 0) {
+                // Sized to the raw token; unescaping only ever shrinks it.
+                std::vector<char> buf((size_t)blen + 1);
+                json_copy(body, tok, bi, buf.data(), buf.size());
+                e.body = buf.data();
+            }
+        }
+        g_relnotes.push_back(std::move(e));
+        rel = json_tok_skip(tok, rel);
+    }
+    free(tok);
+    free(body);
+    return !g_relnotes.empty();
+}
+
+// Flatten one line of GitHub-flavoured markdown into something legible in a
+// plain-text row: no rich rendering (the UI has no styled runs), just strip the
+// syntax that otherwise shows up as literal #, * and backticks.
+static std::string md_line(const std::string &in) {
+    std::string s = in;
+    // Trim a trailing CR left by CRLF bodies.
+    while (!s.empty() && (s.back() == '\r' || s.back() == ' ')) {
+        s.pop_back();
+    }
+    // Leading block markers: measure indent, then the marker.
+    size_t i = 0;
+    while (i < s.size() && s[i] == ' ') {
+        i++;
+    }
+    std::string indent(i, ' ');
+    std::string rest = s.substr(i);
+    std::string prefix;
+    if (!rest.empty() && rest[0] == '#') { // heading -> plain text
+        size_t h = 0;
+        while (h < rest.size() && rest[h] == '#') {
+            h++;
+        }
+        while (h < rest.size() && rest[h] == ' ') {
+            h++;
+        }
+        rest = rest.substr(h);
+        indent.clear();
+    } else if (rest.size() >= 2 && (rest[0] == '-' || rest[0] == '*' ||
+                                    rest[0] == '+') &&
+               rest[1] == ' ') {
+        prefix = "• "; // bullet list item
+        rest = rest.substr(2);
+    } else if (rest.size() >= 2 && rest[0] == '>' && rest[1] == ' ') {
+        prefix = "| "; // blockquote
+        rest = rest.substr(2);
+    }
+    // Horizontal rule -> a visible divider.
+    if (rest == "---" || rest == "***" || rest == "___") {
+        return "────────────";
+    }
+    // Inline: drop emphasis/code markers and unwrap [text](url) -> text.
+    // Only '*' and '`' — not '_', which is literal in identifiers these notes
+    // are full of (dl_sources.json, roms_override) and rarely used as emphasis.
+    std::string out;
+    for (size_t k = 0; k < rest.size(); k++) {
+        char c = rest[k];
+        if (c == '*' || c == '`') {
+            continue; // **bold**, *italic*, `code`
+        }
+        if (c == '[') {
+            size_t close = rest.find(']', k);
+            size_t lp = (close == std::string::npos) ? std::string::npos
+                                                      : rest.find('(', close);
+            if (close != std::string::npos && lp == close + 1) {
+                size_t rp = rest.find(')', lp);
+                if (rp != std::string::npos) {
+                    out += rest.substr(k + 1, close - k - 1); // link text only
+                    k = rp;
+                    continue;
+                }
+            }
+        }
+        out += c;
+    }
+    return indent + prefix + out;
+}
+
+void MainApplication::NotesThread(void *arg) {
+    auto self = static_cast<MainApplication *>(arg);
+    self->notes_ok = fetch_release_list(UPDATE_REPO);
+    self->notes.done = true;
+}
+
+void MainApplication::GotoReleaseNotes() {
+    this->notes_ok = false;
+    this->notes_origin = this->screen; // View logs, or Settings via the credits
+    this->layout->ShowSpinner(tr(S_LOADING));
+    if (this->notes.Start(&MainApplication::NotesThread, this)) {
+        return; // NotesTick shows the list once the fetch lands
+    }
+    // Couldn't spawn a thread: fetch synchronously so it still works.
+    this->notes_ok = fetch_release_list(UPDATE_REPO);
+    this->NotesTick();
+}
+
+void MainApplication::NotesTick() {
+    if (this->notes.running && !this->notes.done) {
+        return; // the spinner overlay animates itself
+    }
+    this->notes.Join(); // no-op on the synchronous fallback
+    this->layout->HideSpinner();
+    if (!this->notes_ok) {
+        this->CreateShowDialog(tr(S_RELEASE_NOTES), tr(S_UPDATE_FETCH_FAIL),
+                               {tr(S_OK)}, true, {}, style_dialog);
+        if (this->notes_origin == Screen::Settings) {
+            this->GotoSettings();
+        } else {
+            this->GotoViewLogs();
+        }
+        return;
+    }
+    this->ShowReleaseList();
+}
+
+// The version list: one row per release. Cheap to (re)build, so backing out of a
+// release's notes returns here without re-fetching.
+void MainApplication::ShowReleaseList() {
+    this->screen = Screen::ReleaseNotes;
+    this->layout->SetTitle(tr(S_RELEASE_NOTES));
+    this->layout->SetSubtitle(tr(S_SUB_VIEW_LOGS)); // "A select  B back"
+    this->layout->ClearMenu();
+    for (const auto &e : g_relnotes) {
+        this->layout->AddRow2(e.tag, e.date, g_theme->row_text,
+                              chevron_color());
+    }
+    if (g_relnotes.empty()) {
+        this->layout->AddRow(tr(S_NO_LOG));
+    }
+}
+
+// One release's notes, expanded only when opened. Markdown is flattened to
+// legible rows; A opens the full (wrapped) line, like the log viewers.
+void MainApplication::ShowReleaseNote(int idx) {
+    if (idx < 0 || idx >= (int)g_relnotes.size()) {
+        return;
+    }
+    const RelNote &e = g_relnotes[idx];
+    this->screen = Screen::ReleaseNote;
+    this->log_view_title = e.tag; // reused as the expand-dialog title
+    this->layout->SetTitle(e.tag);
+    this->layout->SetSubtitle(tr(S_SUB_VIEW_LOGS));
+    this->layout->ClearMenu();
+    g_debug_lines.clear();
+    const int max_lines = 800;
+    size_t pos = 0, n = 0;
+    while (pos <= e.body.size() && (int)n < max_lines) {
+        size_t nl = e.body.find('\n', pos);
+        std::string raw = e.body.substr(
+            pos, nl == std::string::npos ? std::string::npos : nl - pos);
+        std::string line = md_line(raw);
+        this->layout->AddRow(line.empty() ? " " : line);
+        g_debug_lines.push_back(line);
+        n++;
+        if (nl == std::string::npos) {
+            break;
+        }
+        pos = nl + 1;
+    }
+    if (n == 0) {
+        this->layout->AddRow(tr(S_NO_LOG));
+    }
 }
 
 // ---- app: in-app self-update download -------------------------------------

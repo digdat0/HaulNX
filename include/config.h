@@ -85,6 +85,9 @@ typedef struct {
                             false: flat list, one row per repo */
     int max_downloads;   /* 1–5; how many downloads run simultaneously (default 1) */
     bool net_check;      /* true: warn on startup if no network (default true) */
+    bool chk_updates;    /* true: silently check GitHub for an app update on
+                            startup (only when network is up); advise, never
+                            auto-install (default true) */
     char lang[16];       /* language code, e.g. "en", "es", "ja"; empty = English */
     char theme[16];      /* "dark" (default) or "light" */
     bool card_view;      /* true: console lists render as a card grid */

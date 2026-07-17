@@ -573,6 +573,7 @@ void prefs_load(Prefs *p) {
     p->group_consoles = true;
     p->max_downloads = 1;
     p->net_check = true;
+    p->chk_updates = true;
     p->lang[0] = '\0';
     strcpy(p->theme, "dark");
     p->card_view = false;
@@ -606,6 +607,10 @@ void prefs_load(Prefs *p) {
         idx = json_obj_get(js, tok, 0, "netCheck");
         if (idx >= 0) {
             p->net_check = json_bool(js, tok, idx);
+        }
+        idx = json_obj_get(js, tok, 0, "chkUpdates");
+        if (idx >= 0) {
+            p->chk_updates = json_bool(js, tok, idx);
         }
         idx = json_obj_get(js, tok, 0, "lang");
         if (idx >= 0 && tok[idx].type == JSMN_STRING) {
@@ -654,13 +659,14 @@ bool prefs_save(const Prefs *p) {
     fprintf(f,
             "{\n  \"useCache\": %s,\n  \"preventSleep\": %s,\n"
             "  \"groupConsoles\": %s,\n  \"maxDownloads\": %d,\n"
-            "  \"netCheck\": %s,\n"
+            "  \"netCheck\": %s,\n  \"chkUpdates\": %s,\n"
             "  \"lang\": ",
             p->use_cache ? "true" : "false",
             p->prevent_sleep ? "true" : "false",
             p->group_consoles ? "true" : "false",
             p->max_downloads,
-            p->net_check ? "true" : "false");
+            p->net_check ? "true" : "false",
+            p->chk_updates ? "true" : "false");
     json_write_escaped(f, p->lang);
     fputs(",\n  \"theme\": ", f);
     json_write_escaped(f, p->theme);

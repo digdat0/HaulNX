@@ -235,6 +235,15 @@ static const char *const g_en[S__COUNT] = {
     /* S_RESTORE_OLDER */ "Older — %d console(s), %d repo(s)",
     /* S_RESTORE_CONFIRM */ "Go back to %d console(s) and %d repo(s)?\nYour current list is kept, so you can swap back.",
     /* S_RESTORE_DONE */ "Restored %d console(s), %d repo(s)",
+    /* S_WELCOME_TITLE */ "Welcome to TicoDL+",
+    /* S_WELCOME_BODY */ "TicoDL+ starts empty — you decide what goes in it.\n\nSend a collection from a computer on your network, or add a repo by hand.",
+    /* S_WELCOME_IMPORT */ "Send from a computer",
+    /* S_WELCOME_MANUAL */ "Add a repo by hand",
+    /* S_WELCOME_LATER */ "Not now",
+    /* S_UPDATES_AVAIL */ "%d update(s) available",
+    /* S_RELEASE_NOTES */ "Release notes",
+    /* S_UPDATE_AVAIL */ "Update available",
+    /* S_CHK_UPDATES_STARTUP */ "Check for updates on startup: %s",
 };
 
 static const char *const g_key_names[S__COUNT] = {
@@ -471,4 +480,13 @@ static const char *const g_key_names[S__COUNT] = {
     [S_RESTORE_OLDER] = "restore_older",
     [S_RESTORE_CONFIRM] = "restore_confirm",
     [S_RESTORE_DONE] = "restore_done",
+    [S_WELCOME_TITLE] = "welcome_title",
+    [S_WELCOME_BODY] = "welcome_body",
+    [S_WELCOME_IMPORT] = "welcome_import",
+    [S_WELCOME_MANUAL] = "welcome_manual",
+    [S_WELCOME_LATER] = "welcome_later",
+    [S_UPDATES_AVAIL] = "updates_avail",
+    [S_RELEASE_NOTES] = "release_notes",
+    [S_UPDATE_AVAIL] = "update_avail",
+    [S_CHK_UPDATES_STARTUP] = "chk_updates_startup",
 };
