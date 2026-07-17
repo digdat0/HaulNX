@@ -4,6 +4,20 @@ Notes for each release. `release.sh` pulls the section matching the version in
 `VERSION` and attaches it to the GitHub release. Add a `## <version>` section
 here before running a release.
 
+## 1.9.1-beta
+
+**Safer imports**
+- Collections you import (including over Wi-Fi) can no longer point a console's folder
+  outside TicoDL+'s own ROM directory. A crafted `dl_sources.json` could previously use
+  a folder name like `../../switch` to steer a download to write elsewhere on the SD
+  card; folder names are now traversal-checked the same way filenames already were, and a
+  bad one is rejected instead of downloaded.
+
+**Stability**
+- Fixed a large stack allocation on the UI thread in the pre-flight space check that could
+  destabilize low-memory conditions; it now uses the same shared buffer as the rest of the
+  queue code.
+
 ## 1.9.0-beta
 
 **Won't fit? You'll know before it downloads**

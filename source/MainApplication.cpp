@@ -1616,7 +1616,7 @@ bool MainApplication::SpaceOkToQueue(uint64_t add_size) {
     // Sum what the queue still has to pull (metadata size minus any .part
     // already on disk) so the check accounts for items queued earlier.
     uint64_t need = add_size;
-    QueueView v[QUEUE_MAX];
+    static QueueView v[QUEUE_MAX]; // ~130KB; keep off the UI-thread stack
     int n = queue_snapshot(v, QUEUE_MAX);
     for (int i = 0; i < n; i++) {
         QStatus s = v[i].item.status;

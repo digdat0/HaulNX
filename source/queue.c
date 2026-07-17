@@ -427,21 +427,28 @@ static void set_fail(QueueItem *it, const char *reason) {
 }
 
 static void process_item(QueueItem *it) {
-    /* Never trust the remote filename as a filesystem path. */
+    /* Never trust the remote filename or the console folder as a filesystem
+     * path: the folder ("target") comes from the imported collection, which can
+     * arrive over the LAN, so it must be traversal-checked just like the name. */
     char safe[600];
     if (!safe_rel(it->name, safe, sizeof(safe))) {
         set_fail(it, "bad name");
+        return;
+    }
+    char safet[80];
+    if (!safe_rel(it->target, safet, sizeof(safet))) {
+        set_fail(it, "bad target");
         return;
     }
 
     /* Key the temp file by target too, so two same-named files headed to
      * different consoles can download concurrently without sharing a .part. */
     char tmp[1200];
-    snprintf(tmp, sizeof(tmp), "%s/%s_%s.part", DL_TMP_DIR, it->target, safe);
+    snprintf(tmp, sizeof(tmp), "%s/%s_%s.part", DL_TMP_DIR, safet, safe);
     fs_ensure_parent(tmp);
 
     char destdir[1200];
-    snprintf(destdir, sizeof(destdir), "%s/%s", g_roms_root, it->target);
+    snprintf(destdir, sizeof(destdir), "%s/%s", g_roms_root, safet);
 
     /* Resume from whatever's already on disk from a prior attempt/session. */
     uint64_t have = 0;
@@ -653,10 +660,15 @@ static void install_item(QueueItem *it) {
         set_fail(it, "bad name");
         return;
     }
+    char safet[80];
+    if (!safe_rel(it->target, safet, sizeof(safet))) {
+        set_fail(it, "bad target");
+        return;
+    }
     char tmp[1200];
-    snprintf(tmp, sizeof(tmp), "%s/%s_%s.part", DL_TMP_DIR, it->target, safe);
+    snprintf(tmp, sizeof(tmp), "%s/%s_%s.part", DL_TMP_DIR, safet, safe);
     char destdir[1200];
-    snprintf(destdir, sizeof(destdir), "%s/%s", g_roms_root, it->target);
+    snprintf(destdir, sizeof(destdir), "%s/%s", g_roms_root, safet);
 
     fs_mkdir_p(destdir);
     /* it->now switches meaning here: downloaded bytes -> archive bytes
