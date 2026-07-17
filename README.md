@@ -1,4 +1,4 @@
-# TicoDL+ (beta)
+# <img width="256" height="256" alt="icon" src="https://github.com/user-attachments/assets/0c0cbe7e-3e2e-4068-9518-44179f6406d3" /> TicoDL+ (beta)
 
 > **This is a beta release.** Features may change and bugs are expected.
 > Please report issues on the [GitHub Issues](https://github.com/digdat0/ticodlplus/issues) page.
