@@ -243,5 +243,6 @@
   "updates_avail": "%d opdatering(er) tilgængelig",
   "release_notes": "Udgivelsesnoter",
   "update_avail": "Opdatering tilgængelig",
+  "restart_to_update": "Genstart for at opdatere",
   "chk_updates_startup": "Tjek efter opdateringer ved opstart: %s"
 }

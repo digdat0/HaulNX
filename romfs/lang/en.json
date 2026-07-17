@@ -269,5 +269,6 @@
   "updates_avail": "%d update(s) available",
   "release_notes": "Release notes",
   "update_avail": "Update available",
+  "restart_to_update": "Restart to update",
   "chk_updates_startup": "Check for updates on startup: %s"
 }

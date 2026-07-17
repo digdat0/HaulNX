@@ -243,5 +243,6 @@
   "updates_avail": "有 %d 個更新可用",
   "release_notes": "更新說明",
   "update_avail": "有可用更新",
+  "restart_to_update": "重新啟動以更新",
   "chk_updates_startup": "啟動時檢查更新: %s"
 }

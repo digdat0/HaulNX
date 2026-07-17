@@ -332,6 +332,7 @@ enum {
     S_UPDATES_AVAIL,
     S_RELEASE_NOTES,
     S_UPDATE_AVAIL,          /* count-less "Update available" chip */
+    S_RESTART_TO_UPDATE,     /* chip after an update is staged, awaiting restart */
     S_CHK_UPDATES_STARTUP,   /* advanced toggle: check for updates on startup */
 
     S__COUNT

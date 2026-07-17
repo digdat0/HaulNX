@@ -243,5 +243,6 @@
   "updates_avail": "%d update(s) beschikbaar",
   "release_notes": "Release-opmerkingen",
   "update_avail": "Update beschikbaar",
+  "restart_to_update": "Herstart om bij te werken",
   "chk_updates_startup": "Controleren op updates bij opstarten: %s"
 }

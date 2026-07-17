@@ -243,5 +243,6 @@
   "updates_avail": "%d개 업데이트 있음",
   "release_notes": "릴리스 노트",
   "update_avail": "업데이트 있음",
+  "restart_to_update": "재시작하여 업데이트",
   "chk_updates_startup": "시작 시 업데이트 확인: %s"
 }

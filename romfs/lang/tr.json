@@ -243,5 +243,6 @@
   "updates_avail": "%d güncelleme mevcut",
   "release_notes": "Sürüm notları",
   "update_avail": "Güncelleme mevcut",
+  "restart_to_update": "Güncellemek için yeniden başlat",
   "chk_updates_startup": "Başlangıçta güncellemeleri kontrol et: %s"
 }

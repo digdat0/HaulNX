@@ -243,5 +243,6 @@
   "updates_avail": "%d frissítés érhető el",
   "release_notes": "Kiadási megjegyzések",
   "update_avail": "Frissítés érhető el",
+  "restart_to_update": "Újraindítás a frissítéshez",
   "chk_updates_startup": "Frissítések keresése indításkor: %s"
 }

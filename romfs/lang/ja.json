@@ -243,5 +243,6 @@
   "updates_avail": "%d 件のアップデートあり",
   "release_notes": "リリースノート",
   "update_avail": "アップデートあり",
+  "restart_to_update": "再起動して更新",
   "chk_updates_startup": "起動時にアップデートを確認: %s"
 }

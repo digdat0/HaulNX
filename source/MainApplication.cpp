@@ -2005,8 +2005,10 @@ void MainApplication::GotoSettings() {
             // the silent startup check found one; the card renders it as the same
             // darkening pill used for the download cards' size/speed chip.
             const char *sub =
-                (e.str == S_CHECK_UPDATES && this->update_available)
-                    ? tr(S_UPDATE_AVAIL)
+                (e.str == S_CHECK_UPDATES &&
+                 (this->update_available || this->update_installed))
+                    ? tr(this->update_installed ? S_RESTART_TO_UPDATE
+                                                : S_UPDATE_AVAIL)
                     : "";
             this->layout->AddCard(tr(e.str), sub, console_icon(e.icon), false);
         }
@@ -2015,13 +2017,16 @@ void MainApplication::GotoSettings() {
         pu::ui::Color lbl = g_theme->row_text;
         pu::ui::Color chv = chevron_color();
         for (const auto &e : kEntries) {
-            if (e.str == S_CHECK_UPDATES && this->update_available) {
-                // "Update available" chip far-right, in the same pill the list's
-                // size/status values use (pill = true), tinted the affirmative
-                // green so it reads as an actionable notice.
-                this->layout->AddRow2(tr(e.str), tr(S_UPDATE_AVAIL), lbl,
-                                      onoff_color(true), -1.0f, nullptr, "",
-                                      false, true);
+            if (e.str == S_CHECK_UPDATES &&
+                (this->update_available || this->update_installed)) {
+                // Actionable chip far-right, in the same pill the list's
+                // size/status values use (pill = true), tinted affirmative
+                // green. Once a build is staged it becomes "Restart to update".
+                this->layout->AddRow2(
+                    tr(e.str),
+                    tr(this->update_installed ? S_RESTART_TO_UPDATE
+                                              : S_UPDATE_AVAIL),
+                    lbl, onoff_color(true), -1.0f, nullptr, "", false, true);
             } else {
                 this->layout->AddRow2(tr(e.str), CHEVRON, lbl, chv, -1.0f,
                                       nullptr, "", false, false);
@@ -5790,6 +5795,11 @@ void MainApplication::UpdTick() {
         upd_log("upd: staged '%s' %s", stage, inst ? "ok" : "FAILED");
         if (inst) {
             remove(dl.c_str());
+            // The new build is staged for the next launch; flip the Settings
+            // chip from "Update available" to "Restart to update" and keep the
+            // tab dot lit until the user relaunches.
+            this->update_installed = true;
+            this->layout->SetUpdateAvailable(true);
             char umsg[512];
             snprintf(umsg, sizeof(umsg), tr(S_UPDATE_OK), tag.c_str());
             this->CreateShowDialog(tr(S_TITLE_UPDATE), umsg,

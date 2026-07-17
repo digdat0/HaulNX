@@ -243,6 +243,7 @@ static const char *const g_en[S__COUNT] = {
     /* S_UPDATES_AVAIL */ "%d update(s) available",
     /* S_RELEASE_NOTES */ "Release notes",
     /* S_UPDATE_AVAIL */ "Update available",
+    /* S_RESTART_TO_UPDATE */ "Restart to update",
     /* S_CHK_UPDATES_STARTUP */ "Check for updates on startup: %s",
 };
 
@@ -488,5 +489,6 @@ static const char *const g_key_names[S__COUNT] = {
     [S_UPDATES_AVAIL] = "updates_avail",
     [S_RELEASE_NOTES] = "release_notes",
     [S_UPDATE_AVAIL] = "update_avail",
+    [S_RESTART_TO_UPDATE] = "restart_to_update",
     [S_CHK_UPDATES_STARTUP] = "chk_updates_startup",
 };

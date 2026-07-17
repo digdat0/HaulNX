@@ -682,6 +682,7 @@ class MainApplication : public pu::ui::Application {
     BgTask bgchk;
     std::atomic<bool> bgchk_ok{false};
     bool update_available = false;
+    bool update_installed = false; // new build staged this session; awaiting restart
     char bgchk_tag[64];
     char bgchk_url[1024];
 

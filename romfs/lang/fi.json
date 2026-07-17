@@ -243,5 +243,6 @@
   "updates_avail": "%d päivitystä saatavilla",
   "release_notes": "Julkaisutiedot",
   "update_avail": "Päivitys saatavilla",
+  "restart_to_update": "Käynnistä uudelleen päivittääksesi",
   "chk_updates_startup": "Tarkista päivitykset käynnistyksessä: %s"
 }

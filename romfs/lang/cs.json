@@ -243,5 +243,6 @@
   "updates_avail": "%d aktualizací k dispozici",
   "release_notes": "Poznámky k vydání",
   "update_avail": "Aktualizace k dispozici",
+  "restart_to_update": "Restartujte pro aktualizaci",
   "chk_updates_startup": "Kontrolovat aktualizace při spuštění: %s"
 }

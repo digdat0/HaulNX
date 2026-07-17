@@ -243,5 +243,6 @@
   "updates_avail": "%d bản cập nhật có sẵn",
   "release_notes": "Ghi chú phát hành",
   "update_avail": "Có bản cập nhật",
+  "restart_to_update": "Khởi động lại để cập nhật",
   "chk_updates_startup": "Kiểm tra cập nhật khi khởi động: %s"
 }

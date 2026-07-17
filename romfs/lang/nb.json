@@ -243,5 +243,6 @@
   "updates_avail": "%d oppdatering(er) tilgjengelig",
   "release_notes": "Utgivelsesnotater",
   "update_avail": "Oppdatering tilgjengelig",
+  "restart_to_update": "Start på nytt for å oppdatere",
   "chk_updates_startup": "Se etter oppdateringer ved oppstart: %s"
 }

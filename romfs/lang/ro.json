@@ -243,5 +243,6 @@
   "updates_avail": "%d actualizări disponibile",
   "release_notes": "Note de lansare",
   "update_avail": "Actualizare disponibilă",
+  "restart_to_update": "Repornește pentru actualizare",
   "chk_updates_startup": "Verifică actualizări la pornire: %s"
 }

@@ -9,7 +9,7 @@ layout used by **TICO**, decompressing archives along the way. Built for the
 devkitPro / libnx toolchain using Claude Code. **Yes, this is 100% AI created, 
 but it works.**
 
-> TicoDL+ ships **no ROMs, no collections, and no
+> ticodl+ ships **no ROMs, no collections, and no
 > credentials** — it's an empty downloader. **You provide your own** archive.org
 > item ids (and optionally your own archive.org keys for restricted items). No
 > links to any content are bundled.
@@ -21,49 +21,70 @@ but it works.**
 
 ---
 
+## What it does
+
+At its core ticodl+ is a background download manager for archive.org game files
+that installs them into TICO's layout for you:
+
+- **Browse** archive.org collections by console and search across all of them
+- **Queue** downloads that run in the background — parallel, resumable, and saved
+  across restarts
+- **Extract & verify** archives automatically, then drop the files into
+  `sdmc:/tico/roms/<console>/`
+- **Manage** your installed library — search, sort, rename, delete
+- **Update itself** in one tap from GitHub releases
+
+Everything else below — card view, touch, languages, themes — is polish on top.
+
+---
+
 ## Features
 
-- **Browse & organize**
+### Core
+
+- **Browse & download from archive.org**
   - Consoles shown with their full names (e.g. "Super Nintendo Entertainment
     System (SNES)"), grouped by console — or a flat repo list (Advanced toggle)
-  - Multiple repos per console — add extra archive.org collections when one set is incomplete
-  - **Pin favorites** to the top (★) with **D-pad Right** — works the same on
-    consoles, repos, and installed folders
+  - Multiple repos per console — add extra archive.org collections when one set
+    is incomplete
   - **Global search** with **−** across every cached repo — results tagged with
     their console (and a `*` if already installed), downloadable straight from
     the results
   - On-screen name filter (**Y**), sort by name/size (**X**), `*` markers for
     already-installed files, ZL/ZR paging
+  - **Pin favorites** to the top (★) with **D-pad Right** — consoles, repos, and
+    installed folders alike
   - Show/hide consoles from **Settings → Advanced settings → Manage consoles**
-
 
 - **Download queue**
   - Queue files and keep browsing — downloads run in the background
   - Up to **5 simultaneous downloads** — change the limit in Advanced and it
     applies immediately: raising it starts more queued items, lowering it
-    **pauses** the excess downloads, which auto-resume (from where they
-    stopped) as slots free up
+    **pauses** the excess downloads, which auto-resume (from where they stopped)
+    as slots free up
+  - **Pre-flight space check** — before a download is queued you're warned if it,
+    plus everything already waiting, won't fit on your SD card (you can still
+    queue it anyway)
   - Transient server errors (HTTP 5xx / throttling) are retried automatically
-    with backoff, resuming the partial file
+    with backoff, resuming the partial file; stalled transfers time out instead
+    of hanging
   - Pipelined extraction — the next download starts while the previous archive unpacks
-  - Progress bar, speed, ETA, cancel, retry (resumes in place),
-  - Reorder one row (ZL/ZR) or jump to top/bottom (D-pad ◀/▶) — the active download stays put
+  - Progress bar, speed, ETA, cancel, retry (resumes in place); reorder one row
+    (ZL/ZR) or jump to top/bottom (D-pad ◀/▶) — the active download stays put
   - Queue actions menu (**Y**): retry every failed item or clear finished ones
     at once; a summary toast reports the tally when a batch finishes
-  - Queue the entire file list at once with **−** (free-space check included)
-  - Queue persists across app restarts; interrupted downloads resume automatically
-  - Network-loss aware: if the connection drops, active downloads pause
-    (keeping their partial files) and the rest stay queued — everything
-    resumes automatically, in order, when the network comes back
-  - Stalled transfers time out instead of hanging, and resume from where they
-    stopped
+  - Queue the entire file list at once with **−**
+  - **Queue persists across app restarts**; interrupted downloads resume automatically
+  - **Network-loss aware** — if the connection drops, active downloads pause
+    (keeping their partial files) and the rest stay queued; everything resumes
+    automatically, in order, when the network comes back
   - Download history with one-press **re-download from the log**
 
-- **Automatic extraction**
+- **Automatic extraction & verification**
   - `.zip` / `.7z` / `.rar` / `.tar.*` unpacked into the console folder; plain files moved as-is
   - Integrity verified by size and MD5 — corrupt files are rejected
 
-- **Installed browser**
+- **Installed library**
   - Sorted alphabetically by full console name, pinned folders first
   - Re-sort with **D-pad Left** (name A–Z / Z–A / size); folders stay grouped
     and pinned ones stay on top
@@ -71,6 +92,14 @@ but it works.**
     folders; open a result to jump straight to its folder
   - Multi-select with **Y**, then **−** to delete the marked items; rename
     with **X**
+
+- **In-app self-update**
+  - One-tap update from GitHub releases — the version check runs in the
+    background with a retry counter; **B** dismisses the check or cancels the
+    download. Installs are validated and staged so a power loss can't corrupt
+    the app
+
+### Also included
 
 - **Card view** (optional)
   - Toggle **Advanced settings → Card view** to browse consoles as a 4-wide
@@ -87,13 +116,8 @@ but it works.**
 - **25 languages & themes**
   - Full UI translation (English, Español, Français, Deutsch, 日本語, 中文, and
     20 more) from **Settings → Language** (if you speak a native language and can
-    improve, log an issue or drop a PR. Lang files here: https://github.com/digdat0/ticodlplus/tree/main/lang
+    improve, log an issue or drop a PR. Lang files here: https://github.com/digdat0/ticodlplus/tree/main/romfs/lang
   - Light and dark themes (**Settings → Theme**)
-
-- **Status header**
-  - Live network indicator (Wi-Fi signal bars, full bars when docked on wired
-    LAN, red when offline), free SD space, battery level (+ while charging)
-  - Optional no-network warning at startup (Advanced toggle)
 
 - **TICO integration**
   - Auto-detects TICO and reads its ROM folder path
@@ -103,20 +127,21 @@ but it works.**
     an on-screen SD-card browser lets you navigate to the folder and pick it
     (**X** to use the current folder, **Y** to reset to automatic detection)
 
+- **Status header**
+  - Live network indicator (Wi-Fi signal bars, full bars when docked on wired
+    LAN, red when offline), free SD space, battery level (+ while charging)
+  - Optional no-network warning at startup (Advanced toggle)
+
 - **Data management**
   - **Settings → Manage data**: clean up the temporary downloads folder and the
     metadata cache (entries tagged by console), singly or all at once
   - **Refresh all metadata** in one go (with live progress) — useful before a
     global search, which covers cached repos; per-repo hard refresh lives on
     the repo edit screen
+  - **Import a collection over Wi-Fi** — the console shows an address; open it in
+    a browser on the same network to send your `dl_sources.json` across, no SD
+    swapping required
   - Unresumable leftover `.part` files are cleaned up automatically at startup
-
-- **In-app self-update**
-  - One-tap update from GitHub releases — the version check runs in the
-    background with a retry counter; **B** dismisses the check or cancels the
-    download. Installs are validated and staged so a power loss can't corrupt
-    the app
-  
 
 ---
 
@@ -210,7 +235,7 @@ editing `dl_sources.json` on your SD card.
 
 ## Quick start
 
-TicoDL+ starts **empty** — you add your own collections before anything shows up.
+ticodl+ starts **empty** — you add your own collections before anything shows up.
 
 ### 1. Add a collection
 
@@ -238,7 +263,7 @@ for **restricted** items that require an archive.org account.
 1. On a computer, sign in at [archive.org](https://archive.org) and open your S3
    keys page: <https://archive.org/account/s3.php>. You'll get an **access key**
    and a **secret key**.
-2. In TicoDL+, switch to the **Settings** tab (**L/R**).
+2. In ticodl+, switch to the **Settings** tab (**L/R**).
 3. Open **Advanced → Archive.org credentials**.
 4. Edit the **Access key** and **Secret** — the edit field is pre-filled with the
    current value so it's easy to change.
@@ -335,7 +360,7 @@ collections download anonymously and need no keys.
 
 ## Updating (in-app)
 
-Open **Settings → Check for updates**. TicoDL+ checks the GitHub releases on a
+Open **Settings → Check for updates**. ticodl+ checks the GitHub releases on a
 background thread — the UI stays responsive and shows the attempt counter
 (`(1/3)`) while transient errors are retried; press **B** to dismiss the check
 and keep using the app. If a newer version is found, it downloads the new
@@ -349,7 +374,7 @@ returned to Settings. Close and relaunch to run the new build.
 
 ## Translations
 
-TicoDL+ ships 25 languages. All translation files live in the repo as plain
+ticodl+ ships 25 languages. All translation files live in the repo as plain
 JSON — one file per language, keyed by English, in
 [`romfs/lang/`](romfs/lang/). These are bundled into the app and loaded at
 runtime; there is a single source of truth, so edit here.
@@ -414,7 +439,7 @@ request's result is logged to `debug.log`.
 
 ## Building from source
 
-TicoDL+ 2.x is a **graphical app** built on the
+ticodl+ 2.x is a **graphical app** built on the
 [Plutonium](https://github.com/XorTroll/Plutonium) UI library (SDL2), with the
 **devkitPro** toolchain (devkitA64 + libnx). Plutonium is included as a git
 submodule and built automatically.
@@ -485,7 +510,7 @@ Released under the [MIT License](LICENSE) — free to use, modify and
 redistribute. The only condition is that the copyright notice and license stay
 included, so **please keep the credit**.
 
-TicoDL+'s own code and the [Plutonium](https://github.com/XorTroll/Plutonium) UI
+ticodl+'s own code and the [Plutonium](https://github.com/XorTroll/Plutonium) UI
 library it builds on are both MIT-licensed, so the project is cleanly permissive.
 Third-party license notices (Plutonium © XorTroll, jsmn, and the bundled Noto
 Sans font subset under the SIL Open Font License) are collected in

@@ -243,5 +243,6 @@
   "updates_avail": "%d Update(s) verfügbar",
   "release_notes": "Versionshinweise",
   "update_avail": "Update verfügbar",
+  "restart_to_update": "Zum Aktualisieren neu starten",
   "chk_updates_startup": "Beim Start nach Updates suchen: %s"
 }

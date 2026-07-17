@@ -19,6 +19,11 @@ here before running a release.
   was updated across all 24 languages.
 - The repo editor now shows the app icon beside its title.
 
+**Clearer update status**
+- Once an update is installed, the Settings chip now reads **Restart to update**
+  (instead of continuing to say "Update available") until you relaunch — so it's
+  obvious the new build is staged and just waiting on a restart.
+
 ## 1.8.0-beta
 
 **Know when an update is waiting — without lifting a finger**

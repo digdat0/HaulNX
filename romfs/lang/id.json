@@ -243,5 +243,6 @@
   "updates_avail": "%d pembaruan tersedia",
   "release_notes": "Catatan rilis",
   "update_avail": "Pembaruan tersedia",
+  "restart_to_update": "Mulai ulang untuk memperbarui",
   "chk_updates_startup": "Periksa pembaruan saat mulai: %s"
 }
