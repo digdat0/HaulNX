@@ -77,13 +77,20 @@ typedef struct {
 } Credentials;
 
 #define MAX_PINNED_DIRS 32
+#define MAX_FILTER_EXTS 40
+
+/* One entry in the Browse file-view extension filter. */
+typedef struct {
+    char ext[16];  /* extension without leading dot, lowercased, e.g. "txt" */
+    bool enabled;  /* participates in filtering while the master switch is on */
+} FilterExt;
 
 typedef struct {
     bool use_cache;      /* true: load cached metadata if present; false: always refetch */
     bool prevent_sleep;  /* true: keep console awake while downloads are active */
     bool group_consoles; /* true: main list shows consoles (open to see repos);
                             false: flat list, one row per repo */
-    int max_downloads;   /* 1–5; how many downloads run simultaneously (default 1) */
+    int max_downloads;   /* 1–10; how many downloads run simultaneously (default 1) */
     bool net_check;      /* true: warn on startup if no network (default true) */
     bool chk_updates;    /* true: silently check GitHub for an app update on
                             startup (only when network is up); advise, never
@@ -97,6 +104,12 @@ typedef struct {
     /* Top-level ROM folders pinned to the top of the Installed tab. */
     char pinned_dirs[MAX_PINNED_DIRS][64];
     int pinned_dir_count;
+    /* Browse file-view extension filter. filter_exts is the master switch; the
+     * per-entry enabled flags persist regardless of it (turning it off just
+     * stops the filtering from being applied). Seeded with defaults on first run. */
+    bool filter_exts;
+    FilterExt exclude_exts[MAX_FILTER_EXTS];
+    int exclude_ext_count;
 } Prefs;
 
 /* Load dl_sources.json; seeds from romfs:/dl_sources.json on first run if the
@@ -167,6 +180,13 @@ bool prefs_save(const Prefs *p);
 /* Pinned Installed-tab folders (by top-level folder name). */
 bool prefs_dir_pinned(const Prefs *p, const char *name);
 void prefs_dir_pin_toggle(Prefs *p, const char *name);
+
+/* Browse file-view extension filter. */
+bool prefs_ext_add(Prefs *p, const char *ext);   /* normalize + append; false if invalid/full */
+bool prefs_ext_remove(Prefs *p, int idx);
+/* True when the master switch is on and filename's extension matches an enabled
+ * entry — i.e. this file should be hidden from the Browse file view. */
+bool prefs_ext_hidden(const Prefs *p, const char *filename);
 
 /* Build an archive.org S3 auth header into out, or empty string if no key.
  * Form: "authorization: LOW <access>:<secret>". */

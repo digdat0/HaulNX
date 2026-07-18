@@ -44,6 +44,12 @@ bool ia_extract_id(const char *input, char *out, size_t out_sz);
 bool ia_fetch(const char *identifier, ArchiveItem *item, bool use_cache,
               const char *cache_dir);
 
+/* Like ia_fetch, but performs the network fetch on a caller-owned connection
+ * (net_conn_new) instead of the shared handle, so multiple can run in parallel.
+ * Cache read/write is identical. */
+bool ia_fetch_on(void *conn, const char *identifier, ArchiveItem *item,
+                 bool use_cache, const char *cache_dir);
+
 /* Build the canonical download URL for a file in the item. */
 void ia_file_url(const ArchiveItem *item, const ArchiveFile *file,
                  char *out, size_t out_sz);

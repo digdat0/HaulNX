@@ -210,8 +210,21 @@ static void log_download(const QueueItem *it, const char *status) {
  * reject path traversal, drop leading slashes, normalize separators and replace
  * FAT-illegal characters. Returns false if nothing usable remains. */
 static bool safe_rel(const char *in, char *out, size_t out_sz) {
-    if (!in || strstr(in, "..")) {
+    if (!in) {
         return false;
+    }
+    /* Reject ".." only when it is a whole path segment (real traversal), not as
+     * a substring: a substring test also drops legit names like
+     * "Zelda..Oracle.zip". Mirrors sanitize_rel() in extract.c. */
+    for (const char *p = in; *p; p++) {
+        if (p[0] != '.' || p[1] != '.') {
+            continue;
+        }
+        bool at_start = (p == in) || p[-1] == '/' || p[-1] == '\\';
+        bool at_end = (p[2] == '\0') || p[2] == '/' || p[2] == '\\';
+        if (at_start && at_end) {
+            return false;
+        }
     }
     while (*in == '/' || *in == '\\') {
         in++;

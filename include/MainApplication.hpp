@@ -480,6 +480,11 @@ class MainLayout : public pu::ui::Layout {
     IconElement::Ref empty_icon;      // big dimmed icon for empty states
     pu::ui::elm::TextBlock::Ref empty_text;
     pu::ui::elm::TextBlock::Ref empty_hint; // smaller "what to do" line
+    // Accent chip under the empty-state hint (a filled rounded pill + its text),
+    // used by the import page to call out the repo-editor alternative. Hidden
+    // unless SetEmptyState is given a note.
+    pu::ui::elm::Rectangle::Ref empty_chip;
+    pu::ui::elm::TextBlock::Ref empty_chip_text;
     SpinnerElement::Ref spinner;      // background-work indicator
 
   public:
@@ -487,8 +492,11 @@ class MainLayout : public pu::ui::Layout {
     PU_SMART_CTOR(MainLayout)
 
     // Empty state (big centred icon + message) shown when a list has nothing.
+    // spacious=true gives the roomier import "instruction sheet" layout
+    // (icon lifted, gap under the message, larger hint text).
     void SetEmptyState(pu::sdl2::Texture icon, const std::string &msg,
-                       const std::string &hint = "");
+                       const std::string &hint = "", bool spacious = false,
+                       const std::string &note = "");
     void ClearEmptyState();
     // Loading spinner overlay.
     void ShowSpinner(const std::string &msg);
@@ -571,6 +579,7 @@ class MainApplication : public pu::ui::Application {
         Creds,    // archive.org credentials editor
         Advanced, // advanced settings sub-menu
         UISettings, // user interface settings sub-menu (theme/cards/consoles/language)
+        ExtFilter, // Browse file-view extension filter editor
         Downloads, // manage downloads folder
         Language,  // language selector
         Search,    // global file search across cached repos
@@ -700,12 +709,26 @@ class MainApplication : public pu::ui::Application {
     // UI while a repo's metadata downloads. Shows an animated loading indicator.
     BgTask meta;
     std::atomic<bool> meta_ok{false};
+    // B pressed while loading: the fetch can't be aborted mid-request, so it
+    // finishes in the background and its result is discarded when reaped.
+    std::atomic<bool> meta_discard{false};
     bool meta_force = false;
     std::string meta_done_subtitle;
 
+    // Set once the user accepts a >4 GiB download despite the FAT32 size limit,
+    // so queueing several large files in a row doesn't re-prompt each time.
+    bool fat32_ack = false;
+
     // Background search scan: walks the metadata cache off the main thread so a
     // large cache shows an animated "Searching..." spinner instead of freezing.
+    // B cancels: the scan bails out early and the results screen is skipped.
     BgTask search;
+    std::atomic<bool> search_discard{false}; // B pressed: drop the scan result
+
+    // Background Installed-tab search: same threaded/cancellable model as the
+    // cache search above, so scanning a large ROM folder doesn't freeze the UI.
+    BgTask isearch;
+    std::atomic<bool> isearch_discard{false}; // B pressed: drop the scan result
 
     // Background release-notes fetch (Settings -> View logs -> Release notes):
     // pulls the GitHub release history off the main thread so it doesn't freeze
@@ -749,6 +772,9 @@ class MainApplication : public pu::ui::Application {
     void GotoSettings();
     void GotoInstalled(const std::string &path);
     void GotoInstSearch(const std::string &query);
+    void ISearchTick();
+    void FinishInstSearch();
+    static void InstSearchThread(void *arg);
     void GotoRepoEdit(int ci, int ri);
     void GotoPicker(Pending what);
     void GotoLog();
@@ -757,6 +783,7 @@ class MainApplication : public pu::ui::Application {
     void GotoAdvanced();
     void GotoRomPicker(const std::string &path);
     void GotoUISettings();
+    void GotoExtFilter();
     void GotoDownloads();
     void GotoLanguage();
     // Search cached metadata. scope_ci < 0 searches every repo; scope_ci >= 0
@@ -793,7 +820,8 @@ class MainApplication : public pu::ui::Application {
     // Bulk metadata refresh helpers.
     void RaStart();
     void RaTick(); // poll progress / finish; called each frame while running
-    static void RaThread(void *arg);
+    static void RaThread(void *arg);   // coordinator: fans out to RaWorker
+    static void RaWorker(void *arg);   // one parallel refresh worker
 
     // LAN collection import helpers.
     void ImportStart(bool onboarding = false);

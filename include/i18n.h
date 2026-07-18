@@ -47,6 +47,8 @@ enum {
     S_QUEUE_FULL,
     S_DOWNLOAD_ALL,
     S_FREE_SPACE_WARN,
+    S_FAT32_WARN,
+    S_FAT32_WARN_MSG,
     S_QUEUED_N,
     S_ALREADY_HAVE,
 
@@ -75,6 +77,13 @@ enum {
     S_CONTROLS_HELP,
     S_CREDITS,
     S_ROM_FOLDER,
+    S_FILTER_EXTS,
+    S_TITLE_EXT_FILTER,
+    S_SUB_EXT_FILTER,
+    S_ADD_EXTENSION,
+    S_ADD_EXT_PROMPT,
+    S_EXT_ADD_FAILED,
+    S_EXT_FILTER_INFO,
 
     /* ---- advanced ---- */
     S_TITLE_ADVANCED,
@@ -112,8 +121,11 @@ enum {
     /* ---- installed ---- */
     S_TITLE_INSTALLED,
     S_SUB_INSTALLED,
+    S_SUB_INSTALLED_FOLDER,
     S_DIR_PREFIX,
     S_DELETE_SELECTED,
+    S_DELETE_ONE,
+    S_SIZE_LABEL,
 
     /* ---- repo edit ---- */
     S_TITLE_EDIT_REPO,
@@ -208,7 +220,9 @@ enum {
     S_SEARCH_PROMPT,
     S_SEARCH_CONSOLE,
     S_SEARCH_REPO,
+    S_SEARCH_INSTALLED,
     S_SEARCHING,
+    S_SUB_SEARCHING,     /* footer hint while a scan runs: "B cancel" */
     S_SEARCH_NO_RESULTS,
     S_SEARCH_N_RESULTS,
 
@@ -302,6 +316,7 @@ enum {
     S_TITLE_IMPORT,
     S_SUB_IMPORT,
     S_IMPORT_STEPS,
+    S_IMPORT_REPO_NOTE,  /* accent chip: push straight from the repo editor */
     S_IMPORT_NO_NET,
     S_IMPORT_SRV_FAIL,
     S_IMPORT_BAD_FILE,
@@ -334,6 +349,12 @@ enum {
     S_UPDATE_AVAIL,          /* count-less "Update available" chip */
     S_RESTART_TO_UPDATE,     /* chip after an update is staged, awaiting restart */
     S_CHK_UPDATES_STARTUP,   /* advanced toggle: check for updates on startup */
+
+    /* ---- keyboard guide/hint text for repo fields (no %s; the label
+     *      variants above carry %s for the RepoEdit row display) ---- */
+    S_HINT_NAME,
+    S_HINT_ARCHIVE_ID,
+    S_HINT_DOWNLOAD_URL,
 
     S__COUNT
 };

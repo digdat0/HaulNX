@@ -13,6 +13,15 @@
 
 static bool g_ready = false;
 
+/* One reused easy handle for the small metadata/API GETs (http_get). curl keeps
+ * its live connections in the handle's cache, so reusing it across sequential
+ * fetches skips the TLS handshake to archive.org/github when browsing repo to
+ * repo. Guarded by a mutex because metadata and update-check run on separate
+ * worker threads and a curl handle is not safe to share concurrently. The bulk
+ * file transfers (http_download) keep their own per-call handle. */
+static CURL *g_get_handle = NULL;
+static Mutex g_get_mtx;
+
 /* Append a line to the debug log so failures are diagnosable on-device. */
 static void net_log(const char *fmt, ...) {
     fs_mkdir_p(CONFIG_DIR);
@@ -40,6 +49,7 @@ bool net_init(void) {
         socketExit();
         return false;
     }
+    mutexInit(&g_get_mtx);
     g_ready = true;
     return true;
 }
@@ -47,6 +57,10 @@ bool net_init(void) {
 void net_exit(void) {
     if (!g_ready) {
         return;
+    }
+    if (g_get_handle) {
+        curl_easy_cleanup(g_get_handle);
+        g_get_handle = NULL;
     }
     curl_global_cleanup();
     socketExit();
@@ -85,11 +99,9 @@ static size_t mem_write(void *ptr, size_t size, size_t nmemb, void *ud) {
     return add;
 }
 
-char *http_get(const char *url, long *http_code, size_t *out_len) {
-    CURL *c = curl_easy_init();
-    if (!c) {
-        return NULL;
-    }
+/* Run one GET on handle c (already reset, caller owns exclusivity). */
+static char *http_get_impl(CURL *c, const char *url, long *http_code,
+                           size_t *out_len) {
     struct mem_buf m;
     m.data = (char *)malloc(1);
     m.len = 0;
@@ -100,10 +112,18 @@ char *http_get(const char *url, long *http_code, size_t *out_len) {
     curl_easy_setopt(c, CURLOPT_URL, url);
     curl_easy_setopt(c, CURLOPT_FOLLOWLOCATION, 1L);
     curl_easy_setopt(c, CURLOPT_USERAGENT, USER_AGENT);
+    /* archive.org's /metadata/ JSON (whole file listing of an item) is large
+     * and highly compressible; ask for gzip so the transfer is ~5-10x smaller.
+     * curl is built --with-zlib and decompresses transparently. "" advertises
+     * every encoding curl supports. Only for these API/metadata GETs — the bulk
+     * file downloads are already-compressed archives. */
+    curl_easy_setopt(c, CURLOPT_ACCEPT_ENCODING, "");
     curl_easy_setopt(c, CURLOPT_WRITEFUNCTION, mem_write);
     curl_easy_setopt(c, CURLOPT_WRITEDATA, &m);
     curl_easy_setopt(c, CURLOPT_TIMEOUT, 60L);
     curl_easy_setopt(c, CURLOPT_CONNECTTIMEOUT, 20L);
+    /* Keep the connection alive between fetches so it stays in the cache. */
+    curl_easy_setopt(c, CURLOPT_TCP_KEEPALIVE, 1L);
     apply_tls(c);
 
     CURLcode rc = curl_easy_perform(c);
@@ -112,7 +132,6 @@ char *http_get(const char *url, long *http_code, size_t *out_len) {
     if (http_code) {
         *http_code = code;
     }
-    curl_easy_cleanup(c);
 
     net_log("GET %s -> curl=%d(%s) http=%ld len=%lu", url, (int)rc,
             curl_easy_strerror(rc), code, (unsigned long)m.len);
@@ -125,6 +144,48 @@ char *http_get(const char *url, long *http_code, size_t *out_len) {
         *out_len = m.len;
     }
     return m.data;
+}
+
+char *http_get(const char *url, long *http_code, size_t *out_len) {
+    /* Serialize on the shared handle: reset clears per-request options but keeps
+     * the connection cache, so a warm connection is reused across calls. */
+    mutexLock(&g_get_mtx);
+    if (!g_get_handle) {
+        g_get_handle = curl_easy_init();
+    } else {
+        curl_easy_reset(g_get_handle);
+    }
+    CURL *c = g_get_handle;
+    if (!c) {
+        mutexUnlock(&g_get_mtx);
+        return NULL;
+    }
+    /* Handle is NOT cleaned up here: it lives on for reuse (freed in net_exit). */
+    char *r = http_get_impl(c, url, http_code, out_len);
+    mutexUnlock(&g_get_mtx);
+    return r;
+}
+
+/* Private per-worker connections for parallel GETs (bulk metadata refresh).
+ * Each has its own TLS connection, so several fetches overlap instead of
+ * serializing on g_get_mtx. One worker per handle — not shared. */
+void *net_conn_new(void) {
+    return curl_easy_init();
+}
+
+void net_conn_free(void *conn) {
+    if (conn) {
+        curl_easy_cleanup((CURL *)conn);
+    }
+}
+
+char *http_get_on(void *conn, const char *url, long *http_code, size_t *out_len) {
+    CURL *c = (CURL *)conn;
+    if (!c) {
+        return NULL;
+    }
+    curl_easy_reset(c);
+    return http_get_impl(c, url, http_code, out_len);
 }
 
 struct dl_ctx {

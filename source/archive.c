@@ -141,8 +141,8 @@ static void cache_path_for(const char *cache_dir, const char *id, char *out,
     snprintf(out, out_sz, "%s/%s.json", cache_dir, safe);
 }
 
-bool ia_fetch(const char *identifier, ArchiveItem *item, bool use_cache,
-              const char *cache_dir) {
+static bool ia_fetch_impl(void *conn, const char *identifier, ArchiveItem *item,
+                          bool use_cache, const char *cache_dir) {
     if (!identifier || !item) {
         return false;
     }
@@ -173,7 +173,10 @@ bool ia_fetch(const char *identifier, ArchiveItem *item, bool use_cache,
     char url[512];
     snprintf(url, sizeof(url), "https://archive.org/metadata/%s", identifier);
     long code = 0;
-    body = http_get(url, &code, &len);
+    /* conn != NULL: fetch on a caller-owned worker connection (parallel
+     * refresh). NULL: the shared, serialized handle. */
+    body = conn ? http_get_on(conn, url, &code, &len)
+                : http_get(url, &code, &len);
     if (!body) {
         return false;
     }
@@ -195,6 +198,16 @@ bool ia_fetch(const char *identifier, ArchiveItem *item, bool use_cache,
     }
     free(body);
     return ok;
+}
+
+bool ia_fetch(const char *identifier, ArchiveItem *item, bool use_cache,
+              const char *cache_dir) {
+    return ia_fetch_impl(NULL, identifier, item, use_cache, cache_dir);
+}
+
+bool ia_fetch_on(void *conn, const char *identifier, ArchiveItem *item,
+                 bool use_cache, const char *cache_dir) {
+    return ia_fetch_impl(conn, identifier, item, use_cache, cache_dir);
 }
 
 /* Percent-encode a file path: keep unreserved chars and '/' (path separator),

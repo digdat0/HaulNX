@@ -567,6 +567,8 @@ bool creds_save(const Credentials *c) {
 
 /* ---- preferences ------------------------------------------------------ */
 
+static void prefs_ext_seed_defaults(Prefs *p); /* defined below */
+
 void prefs_load(Prefs *p) {
     p->use_cache = true;       /* defaults */
     p->prevent_sleep = true;
@@ -579,6 +581,9 @@ void prefs_load(Prefs *p) {
     p->card_view = false;
     p->roms_override[0] = '\0';
     p->pinned_dir_count = 0;
+    p->filter_exts = true;
+    p->exclude_ext_count = 0;
+    prefs_ext_seed_defaults(p);
     size_t len = 0;
     char *js = json_read_file(PREFS_PATH, &len);
     if (!js) {
@@ -602,7 +607,7 @@ void prefs_load(Prefs *p) {
         idx = json_obj_get(js, tok, 0, "maxDownloads");
         if (idx >= 0) {
             int v = (int)json_u64(js, tok, idx);
-            if (v >= 1 && v <= 5) p->max_downloads = v;
+            if (v >= 1 && v <= 10) p->max_downloads = v;
         }
         idx = json_obj_get(js, tok, 0, "netCheck");
         if (idx >= 0) {
@@ -628,6 +633,30 @@ void prefs_load(Prefs *p) {
         if (idx >= 0 && tok[idx].type == JSMN_STRING) {
             json_copy(js, tok, idx, p->roms_override,
                       sizeof(p->roms_override));
+        }
+        idx = json_obj_get(js, tok, 0, "filterExts");
+        if (idx >= 0) {
+            p->filter_exts = json_bool(js, tok, idx);
+        }
+        idx = json_obj_get(js, tok, 0, "excludeExts");
+        if (idx >= 0 && tok[idx].type == JSMN_ARRAY) {
+            /* A saved list replaces the seeded defaults wholesale (so a user who
+             * removed one keeps it gone). An absent key leaves defaults in. */
+            p->exclude_ext_count = 0;
+            int n = tok[idx].size;
+            int child = idx + 1;
+            for (int i = 0; i < n && p->exclude_ext_count < MAX_FILTER_EXTS; i++) {
+                if (tok[child].type == JSMN_OBJECT) {
+                    FilterExt *fe = &p->exclude_exts[p->exclude_ext_count];
+                    memset(fe, 0, sizeof(*fe));
+                    json_copy(js, tok, json_obj_get(js, tok, child, "ext"),
+                              fe->ext, sizeof(fe->ext));
+                    fe->enabled =
+                        json_bool(js, tok, json_obj_get(js, tok, child, "enabled"));
+                    if (fe->ext[0]) p->exclude_ext_count++;
+                }
+                child = json_tok_skip(tok, child);
+            }
         }
         idx = json_obj_get(js, tok, 0, "pinnedDirs");
         if (idx >= 0 && tok[idx].type == JSMN_ARRAY) {
@@ -680,6 +709,17 @@ bool prefs_save(const Prefs *p) {
         }
         json_write_escaped(f, p->pinned_dirs[i]);
     }
+    fprintf(f, "],\n  \"filterExts\": %s,\n  \"excludeExts\": [",
+            p->filter_exts ? "true" : "false");
+    for (int i = 0; i < p->exclude_ext_count; i++) {
+        if (i) {
+            fputs(", ", f);
+        }
+        fputs("{ \"ext\": ", f);
+        json_write_escaped(f, p->exclude_exts[i].ext);
+        fprintf(f, ", \"enabled\": %s }",
+                p->exclude_exts[i].enabled ? "true" : "false");
+    }
     fputs("]\n}\n", f);
     fclose(f);
     return true;
@@ -710,6 +750,75 @@ void prefs_dir_pin_toggle(Prefs *p, const char *name) {
         snprintf(p->pinned_dirs[p->pinned_dir_count],
                  sizeof(p->pinned_dirs[0]), "%s", name);
         p->pinned_dir_count++;
+    }
+}
+
+/* ---- browse file-view extension filter -------------------------------- */
+
+/* Normalize a user-entered extension: drop leading dots/spaces and lowercase. */
+static void ext_normalize(const char *in, char *out, size_t osz) {
+    size_t o = 0;
+    if (osz) out[0] = '\0';
+    if (!in) return;
+    while (*in == '.' || *in == ' ' || *in == '\t') in++;
+    for (; *in && o + 1 < osz; in++) {
+        char c = *in;
+        if (c >= 'A' && c <= 'Z') c = (char)(c - 'A' + 'a');
+        out[o++] = c;
+    }
+    out[o] = '\0';
+}
+
+/* True if `name` ends in ".<ext>" (case-insensitive). */
+static bool name_has_ext(const char *name, const char *ext) {
+    size_t nl = strlen(name), el = strlen(ext);
+    if (el == 0 || nl < el + 1 || name[nl - el - 1] != '.') return false;
+    return strcasecmp(name + nl - el, ext) == 0;
+}
+
+bool prefs_ext_add(Prefs *p, const char *ext) {
+    char norm[16];
+    ext_normalize(ext, norm, sizeof(norm));
+    if (!norm[0]) return false;
+    for (int i = 0; i < p->exclude_ext_count; i++) {
+        if (strcasecmp(p->exclude_exts[i].ext, norm) == 0) {
+            p->exclude_exts[i].enabled = true; /* re-enable an existing one */
+            return true;
+        }
+    }
+    if (p->exclude_ext_count >= MAX_FILTER_EXTS) return false;
+    FilterExt *fe = &p->exclude_exts[p->exclude_ext_count++];
+    sset(fe->ext, sizeof(fe->ext), norm);
+    fe->enabled = true;
+    return true;
+}
+
+bool prefs_ext_remove(Prefs *p, int idx) {
+    if (idx < 0 || idx >= p->exclude_ext_count) return false;
+    for (int i = idx; i < p->exclude_ext_count - 1; i++) {
+        p->exclude_exts[i] = p->exclude_exts[i + 1];
+    }
+    p->exclude_ext_count--;
+    return true;
+}
+
+bool prefs_ext_hidden(const Prefs *p, const char *filename) {
+    if (!p->filter_exts || !filename || !filename[0]) return false;
+    for (int i = 0; i < p->exclude_ext_count; i++) {
+        if (p->exclude_exts[i].enabled &&
+            name_has_ext(filename, p->exclude_exts[i].ext)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/* Default exclude list: metadata/sidecar files that are never wanted as ROMs. */
+static void prefs_ext_seed_defaults(Prefs *p) {
+    static const char *def[] = {"torrent", "xml", "sqlite",
+                                "out",     "txt", "jpg", "jpeg"};
+    for (size_t i = 0; i < sizeof(def) / sizeof(def[0]); i++) {
+        prefs_ext_add(p, def[i]);
     }
 }
 

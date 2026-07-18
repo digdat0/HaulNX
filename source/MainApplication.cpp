@@ -40,6 +40,12 @@ static std::vector<int> g_files; // filtered indices into g_item.files
 static std::vector<char> g_marks;
 static std::string g_filter;
 static char g_files_id[256], g_files_base[512], g_files_target[64];
+// Per-repo "installed?" context: the folder index and the installed-md5 map.
+// Both depend only on the target folder, not the filter/sort, so they're built
+// once when a repo opens and reused across filter/sort rebuilds (rebuilding them
+// per keystroke re-read the whole download log and re-scanned the SD directory
+// on the UI thread). g_dl_md5 (below) holds the md5 side.
+static std::vector<std::string> g_inst_idx;
 static bool g_files_manual = false;
 
 #define FILES_SUBTITLE tr(S_SUB_FILES)
@@ -54,6 +60,7 @@ static std::vector<DirEnt> g_dlfiles; // files in the downloads temp folder
 static std::vector<std::string> g_picker; // sorted supported consoles for the picker
 static std::vector<DirEnt> g_rompick; // subfolders in the ROM-folder picker
 static std::vector<int> g_home_map; // grouped Browse: visible row -> console index
+static std::vector<int> g_repos_map; // Repos screen: visible row -> repo array index
 static std::string g_launch_path;   // argv[0] from main(), for self-update
 static bool g_net_ok = true;        // last connectivity poll (RefreshStatus)
 
@@ -436,6 +443,13 @@ static bool flat_ref(int flat, int *ci, int *ri) {
     }
     return false;
 }
+// Repos screen: translate a visible row to its repo array index. Pinned repos
+// float to the top for display only (see GotoRepos); this reverses that map.
+// Falls back to the row itself if the map is empty/stale.
+static int repos_ref(int row) {
+    if (row >= 0 && row < (int)g_repos_map.size()) return g_repos_map[row];
+    return row;
+}
 static int flat_count() {
     int k = 0;
     for (int c = 0; c < g_cfg.console_count; c++) {
@@ -601,7 +615,12 @@ static void load_dl_md5() {
     }
 }
 
-static void rebuild_files(MainLayout *lay, const char *target) {
+// reload_ctx: rebuild the per-target install context (folder index + md5 map).
+// True when a repo opens; false for filter/sort rebuilds, which only re-slice the
+// already-loaded metadata and can reuse the cached context — no SD scan, no
+// re-parse of the download log.
+static void rebuild_files(MainLayout *lay, const char *target,
+                          bool reload_ctx = true) {
     lay->ClearMenu();
     g_files.clear();
     g_marks.clear();
@@ -610,6 +629,11 @@ static void rebuild_files(MainLayout *lay, const char *target) {
         return;
     }
     for (int i = 0; i < g_item.file_count; i++) {
+        // Hide sidecar/metadata files (.torrent, .xml, ...) per the Settings >
+        // UI extension filter, so they never show as downloadable ROMs.
+        if (prefs_ext_hidden(&g_prefs, g_item.files[i].name)) {
+            continue;
+        }
         if (g_filter.empty() ||
             ci_contains(g_item.files[i].name, g_filter.c_str())) {
             g_files.push_back(i);
@@ -628,14 +652,17 @@ static void rebuild_files(MainLayout *lay, const char *target) {
             }
         });
     }
-    // One directory scan for the whole list instead of one per file.
-    std::vector<std::string> inst_idx;
-    build_installed_index(target, inst_idx);
-    load_dl_md5(); // md5 of what we installed, to spot files the repo has updated
+    // Install context: one directory scan + one download-log parse, cached and
+    // reused across filter/sort rebuilds (see reload_ctx). Only the initial
+    // repo-open pass pays for them.
+    if (reload_ctx) {
+        build_installed_index(target, g_inst_idx);
+        load_dl_md5(); // md5 of what we installed, to spot repo-updated files
+    }
     int updates = 0;
     for (int k = 0; k < (int)g_files.size(); k++) {
         ArchiveFile *f = &g_item.files[g_files[k]];
-        bool inst = index_has_installed(inst_idx, f->name);
+        bool inst = index_has_installed(g_inst_idx, f->name);
         // 0 = not installed, 1 = installed & current, 2 = installed but the
         // repo now advertises a different md5 than the copy on disk.
         int mark = inst ? 1 : 0;
@@ -701,6 +728,15 @@ void MainApplication::StartMetaLoad(const std::string &id,
                                     const std::string &base,
                                     const std::string &target, bool force,
                                     const std::string &done_subtitle) {
+    // A previously-cancelled fetch may still be finishing on the shared worker;
+    // reap it (briefly, bounded by the network timeout) and drop its result
+    // before reusing the thread for this load.
+    if (this->meta.running) {
+        this->meta.Join();
+        ia_free(&g_item);
+        g_have_item = false;
+        this->meta_discard = false;
+    }
     snprintf(g_files_id, sizeof(g_files_id), "%s", id.c_str());
     snprintf(g_files_base, sizeof(g_files_base), "%s", base.c_str());
     snprintf(g_files_target, sizeof(g_files_target), "%s", target.c_str());
@@ -1173,6 +1209,19 @@ MainLayout::MainLayout() : Layout::Layout() {
         pu::ui::GetDefaultFont(pu::ui::DefaultFontSize::Small));
     this->empty_hint->SetColor(g_theme->rom_info_clr);
     this->Add(this->empty_hint);
+    // Accent chip (filled pill + dark text) sits under the hint; laid out and
+    // shown on demand by SetEmptyState, hidden otherwise. Added after the hint
+    // so the text draws over the pill.
+    this->empty_chip =
+        pu::ui::elm::Rectangle::New(0, 0, 0, 0, accent_green(), 14);
+    this->empty_chip->SetVisible(false);
+    this->Add(this->empty_chip);
+    this->empty_chip_text = pu::ui::elm::TextBlock::New(0, 0, "");
+    this->empty_chip_text->SetFont(
+        pu::ui::GetDefaultFont(pu::ui::DefaultFontSize::Small));
+    this->empty_chip_text->SetColor(g_theme->bg); // dark text on the green pill
+    this->empty_chip_text->SetVisible(false);
+    this->Add(this->empty_chip_text);
 
     // Background-work spinner overlay, centred in the content area.
     this->spinner = SpinnerElement::New(0, list_y, sw, avail);
@@ -1477,8 +1526,26 @@ void MainLayout::ClearMenu(bool fade) {
     this->HideSpinner();
 }
 void MainLayout::SetEmptyState(pu::sdl2::Texture icon, const std::string &msg,
-                               const std::string &hint) {
+                               const std::string &hint, bool spacious,
+                               const std::string &note) {
     this->empty_icon->SetTexture(icon); // pointer store, cheap every frame
+
+    // Two layouts share these three elements. Ordinary empty lists use a
+    // compact centred block; the LAN-import page uses a roomier "instruction
+    // sheet" — icon lifted, a gap below the address, and larger step text — so
+    // it reads like directions rather than an empty-state notice. Positions are
+    // reset on every call so switching screens restores the right layout.
+    const s32 list_y = 158, footer_h = 64;
+    const s32 cy = list_y +
+                   ((s32)pu::ui::render::ScreenHeight - list_y - footer_h) / 2;
+    this->empty_icon->SetPos(this->empty_icon->GetX(),
+                             cy - (spacious ? 210 : 150));
+    this->empty_text->SetY(cy + (spacious ? -5 : 50));
+    this->empty_hint->SetY(cy + (spacious ? 100 : 98));
+    this->empty_hint->SetFont(pu::ui::GetDefaultFont(
+        spacious ? pu::ui::DefaultFontSize::MediumLarge
+                 : pu::ui::DefaultFontSize::Small));
+
     if (this->empty_text->GetText() != msg) {
         this->empty_text->SetText(msg);
         // Centre the message under the icon.
@@ -1490,11 +1557,37 @@ void MainLayout::SetEmptyState(pu::sdl2::Texture icon, const std::string &msg,
         this->empty_hint->SetX((s32)pu::ui::render::ScreenWidth / 2 -
                                this->empty_hint->GetWidth() / 2);
     }
+
+    // Optional accent chip beneath the hint block.
+    if (note.empty()) {
+        this->empty_chip->SetVisible(false);
+        this->empty_chip_text->SetVisible(false);
+    } else {
+        if (this->empty_chip_text->GetText() != note) {
+            this->empty_chip_text->SetText(note);
+        }
+        const s32 padx = 24, pady = 11;
+        s32 cw = this->empty_chip_text->GetWidth() + padx * 2;
+        s32 ch = this->empty_chip_text->GetHeight() + pady * 2;
+        s32 cx = (s32)pu::ui::render::ScreenWidth / 2 - cw / 2;
+        // Sit below the (multi-line) hint, using its rendered height.
+        s32 cy = this->empty_hint->GetY() + this->empty_hint->GetHeight() + 26;
+        this->empty_chip->SetX(cx);
+        this->empty_chip->SetY(cy);
+        this->empty_chip->SetWidth(cw);
+        this->empty_chip->SetHeight(ch);
+        this->empty_chip_text->SetX(cx + padx);
+        this->empty_chip_text->SetY(cy + pady);
+        this->empty_chip->SetVisible(true);
+        this->empty_chip_text->SetVisible(true);
+    }
 }
 void MainLayout::ClearEmptyState() {
     this->empty_icon->SetTexture(nullptr);
     this->empty_text->SetText("");
     this->empty_hint->SetText("");
+    this->empty_chip->SetVisible(false);
+    this->empty_chip_text->SetVisible(false);
 }
 void MainLayout::ShowSpinner(const std::string &msg) {
     this->spinner->Show(msg);
@@ -1611,6 +1704,20 @@ bool MainApplication::ConfirmDanger(const std::string &title,
 
 bool MainApplication::SpaceOkToQueue(uint64_t add_size) {
     if (add_size == 0) return true; // size unknown from metadata: don't block
+
+    // FAT32 can't hold a single file >= 4 GiB. Most Switch SD cards are FAT32
+    // (exFAT needs the optional firmware update), and there is no reliable way
+    // to tell the SD's format at runtime, so warn rather than silently let the
+    // download truncate at the 4 GiB boundary. exFAT users (or anyone who
+    // accepts the risk) can proceed; the ack is remembered for the session so
+    // queueing several big files doesn't nag on every one.
+    const uint64_t FAT32_MAX_FILE = 0xFFFFFFFFULL; // 4 GiB - 1
+    if (add_size > FAT32_MAX_FILE && !this->fat32_ack) {
+        if (!this->Confirm(tr(S_FAT32_WARN), tr(S_FAT32_WARN_MSG)))
+            return false;
+        this->fat32_ack = true;
+    }
+
     uint64_t freeb = fs_free_bytes("sdmc:/");
     if (freeb == UINT64_MAX) return true; // statvfs failed: don't block
     // Sum what the queue still has to pull (metadata size minus any .part
@@ -1822,14 +1929,22 @@ void MainApplication::GotoRepos(int ci) {
     this->layout->SetTitleIcon(console_icon(g->console));
     this->layout->SetSubtitle(tr(S_SUB_REPOS));
     this->layout->ClearMenu();
-    for (int i = 0; i < g->repo_count; i++) {
+    // Float pinned repos to the top for display only, keeping the stored array
+    // order untouched so unpinning returns a repo to its original position.
+    // g_repos_map maps each visible row back to its repo array index.
+    g_repos_map.clear();
+    for (int i = 0; i < g->repo_count; i++)
+        if (g->repos[i].pinned) g_repos_map.push_back(i);
+    for (int i = 0; i < g->repo_count; i++)
+        if (!g->repos[i].pinned) g_repos_map.push_back(i);
+    for (int idx : g_repos_map) {
         // On/off state as a coloured right-hand chip, matching the flat
         // Browse rows (the console is already in the title, so no icon).
-        this->layout->AddRow2(g->repos[i].label,
-                              g->repos[i].enabled ? tr(S_ON) : tr(S_OFF),
+        this->layout->AddRow2(g->repos[idx].label,
+                              g->repos[idx].enabled ? tr(S_ON) : tr(S_OFF),
                               g_theme->row_text,
-                              onoff_color(g->repos[i].enabled), -1.0f,
-                              nullptr, "", false, true, g->repos[i].pinned);
+                              onoff_color(g->repos[idx].enabled), -1.0f,
+                              nullptr, "", false, true, g->repos[idx].pinned);
     }
     if (g->repo_count == 0) {
         this->layout->AddRow(tr(S_NO_REPOS));
@@ -1863,6 +1978,8 @@ MainApplication::Tab MainApplication::CurrentTab() {
     case Screen::Creds:
     case Screen::Advanced:
     case Screen::UISettings:
+    case Screen::ExtFilter:
+    case Screen::RomPicker:
     case Screen::Downloads:
     case Screen::Language:
     case Screen::Cache:
@@ -2124,6 +2241,33 @@ void MainApplication::GotoUISettings() {
                           b ? tr(S_ON) : tr(S_OFF), lbl, onoff_color(b)); // 3
     this->layout->AddRow2(tr(S_MANAGE_CONSOLES), CHEVRON, lbl, chevron_color(),
                           -1.0f, nullptr, "", false, false);       // 4
+    b = g_prefs.filter_exts;
+    this->layout->AddRow2(settings_label(tr(S_FILTER_EXTS)),
+                          b ? tr(S_ON) : tr(S_OFF), lbl, onoff_color(b)); // 5
+}
+
+// Browse file-view extension filter editor: a master ON/OFF switch, one
+// toggle per excluded extension, and a row to add a custom one. Reached from
+// UI settings. The per-extension states persist whether or not the master
+// switch is on (it only gates whether they are applied — see prefs_ext_hidden).
+void MainApplication::GotoExtFilter() {
+    this->screen = Screen::ExtFilter;
+    this->layout->SetTitle(tr(S_TITLE_EXT_FILTER));
+    this->layout->SetSubtitle(tr(S_SUB_EXT_FILTER));
+    this->layout->ClearMenu();
+    pu::ui::Color lbl = g_theme->row_text;
+    bool on = g_prefs.filter_exts;
+    this->layout->AddRow2(settings_label(tr(S_FILTER_EXTS)),
+                          on ? tr(S_ON) : tr(S_OFF), lbl, onoff_color(on)); // 0
+    for (int i = 0; i < g_prefs.exclude_ext_count; i++) {
+        const FilterExt *fe = &g_prefs.exclude_exts[i];
+        std::string name = std::string(".") + fe->ext;
+        this->layout->AddRow2(name, fe->enabled ? tr(S_ON) : tr(S_OFF), lbl,
+                              onoff_color(fe->enabled));           // 1..N
+    }
+    this->layout->AddRow2(tr(S_ADD_EXTENSION), CHEVRON, lbl, chevron_color(),
+                          -1.0f, nullptr, "", false, false);       // N+1
+    this->layout->SetRomInfo(tr(S_EXT_FILTER_INFO));
 }
 
 void MainApplication::GotoDownloads() {
@@ -2267,8 +2411,11 @@ void MainApplication::ImportStart(bool onboarding) {
     this->layout->SetSubtitle(tr(S_SUB_IMPORT));
     this->layout->ClearMenu();
     // The console is the instruction sheet until the user reaches the page, so
-    // it carries the address and the steps: badge, URL, then what to do.
-    this->layout->SetEmptyState(g_header_logo, url, tr(S_IMPORT_STEPS));
+    // it carries the address and the steps: badge, URL, then what to do. The
+    // accent chip points power users at the other way in — pushing straight from
+    // the repo editor on GitHub.
+    this->layout->SetEmptyState(g_header_logo, url, tr(S_IMPORT_STEPS), true,
+                                tr(S_IMPORT_REPO_NOTE));
 }
 
 // Every way out of the import flow comes through here. A first-run import is
@@ -2466,24 +2613,62 @@ void MainApplication::RestoreBackup() {
 
 // ---- bulk metadata refresh (Manage data -> Refresh all metadata) ----------
 static std::vector<std::string> g_ra_ids;
-static char g_ra_cur[256]; // repo id currently being fetched (display only)
+static std::atomic<int> g_ra_next{0}; // next id index a worker claims
 
-void MainApplication::RaThread(void *arg) {
+// One refresh worker: its own curl connection, pulls ids off g_ra_next until
+// they run out (or the user cancels). Several run at once so archive.org's slow
+// per-item latency (mostly the TLS handshake + server response) overlaps
+// instead of stacking up one repo at a time. ra_ok/ra_fail/ra_idx are atomics,
+// safe to bump from any worker; g_ra_ids is read-only for the run's duration.
+void MainApplication::RaWorker(void *arg) {
     auto self = static_cast<MainApplication *>(arg);
-    for (size_t i = 0; i < g_ra_ids.size(); i++) {
+    void *conn = net_conn_new();
+    for (;;) {
         if (self->ra_cancel) {
             break;
         }
-        snprintf(g_ra_cur, sizeof(g_ra_cur), "%s", g_ra_ids[i].c_str());
-        self->ra_idx = (int)i + 1;
+        int i = g_ra_next.fetch_add(1);
+        if (i >= (int)g_ra_ids.size()) {
+            break;
+        }
         ArchiveItem item;
         // use_cache=false forces a refetch; a successful parse replaces the
         // cache file (bad responses never overwrite a good cache).
-        if (ia_fetch(g_ra_ids[i].c_str(), &item, false, CACHE_DIR)) {
+        if (ia_fetch_on(conn, g_ra_ids[i].c_str(), &item, false, CACHE_DIR)) {
             ia_free(&item);
-            self->ra_ok = self->ra_ok + 1;
+            self->ra_ok.fetch_add(1);
         } else {
-            self->ra_fail = self->ra_fail + 1;
+            self->ra_fail.fetch_add(1);
+        }
+        // Atomic RMW: several workers bump these concurrently. `x = x + 1` on an
+        // atomic is a separate load and store, so it would drop counts here.
+        self->ra_idx.fetch_add(1); // completed count, for the readout
+    }
+    net_conn_free(conn);
+}
+
+void MainApplication::RaThread(void *arg) {
+    auto self = static_cast<MainApplication *>(arg);
+    // Coordinator: fan out to a few workers, then reap them. Runs on the `ra`
+    // task thread, so RaTick's done/Join handling stays exactly as before.
+    static const int RA_WORKERS = 3;
+    Thread th[RA_WORKERS];
+    int n = 0;
+    for (int i = 0; i < RA_WORKERS; i++) {
+        if (R_FAILED(threadCreate(&th[i], &MainApplication::RaWorker, self, NULL,
+                                  0x40000, 0x2C, -2)) ||
+            R_FAILED(threadStart(&th[i]))) {
+            break;
+        }
+        n++;
+    }
+    if (n == 0) {
+        // Couldn't spawn any worker: still run the refresh inline on this thread.
+        MainApplication::RaWorker(self);
+    } else {
+        for (int i = 0; i < n; i++) {
+            threadWaitForExit(&th[i]);
+            threadClose(&th[i]);
         }
     }
     self->ra.done = true;
@@ -2514,7 +2699,7 @@ void MainApplication::RaStart() {
     this->ra_total = (int)g_ra_ids.size();
     this->ra_ok = 0;
     this->ra_fail = 0;
-    g_ra_cur[0] = '\0';
+    g_ra_next = 0;
 
     if (!this->ra.Start(&MainApplication::RaThread, this)) {
         this->ToastErr(tr(S_META_FAILED));
@@ -2527,9 +2712,13 @@ void MainApplication::RaStart() {
 
 void MainApplication::RaTick() {
     if (!this->ra.done) {
-        char s[320];
-        snprintf(s, sizeof(s), "(%d/%d)  %s   B %s", (int)this->ra_idx,
-                 (int)this->ra_total, g_ra_cur, tr(S_CANCEL));
+        // Several repos are in flight at once now, so show completed/total
+        // rather than a single "current" id.
+        int done_n = (int)this->ra_idx;
+        if (done_n > (int)this->ra_total) done_n = (int)this->ra_total;
+        char s[160];
+        snprintf(s, sizeof(s), "(%d/%d)   B %s", done_n, (int)this->ra_total,
+                 tr(S_CANCEL));
         this->layout->SetSubtitle(s);
         return;
     }
@@ -2716,6 +2905,10 @@ struct SearchHit {
 };
 static std::vector<SearchHit> g_search_results;
 static std::string g_search_query;
+// Set by the UI thread when B is pressed during a search; polled by the scan
+// loops (cache + installed) so a long walk bails out promptly. One flag is
+// enough since only one search runs at a time.
+static std::atomic<bool> g_search_cancel{false};
 
 // Result-cap state shared between the scan and the finalize step. Capping is
 // decided during the scan (off the main thread); FinishSearch reads it.
@@ -2751,7 +2944,7 @@ static void run_search_scan(const std::string &query, int scope_ci,
     DIR *d = opendir(CACHE_DIR);
     if (d) {
         struct dirent *e;
-        while ((e = readdir(d)) != NULL && !capped) {
+        while ((e = readdir(d)) != NULL && !capped && !g_search_cancel) {
             const char *dot = strrchr(e->d_name, '.');
             if (!dot || strcmp(dot, ".json") != 0) continue;
 
@@ -2760,6 +2953,13 @@ static void run_search_scan(const std::string &query, int scope_ci,
             size_t len = 0;
             char *body = json_read_file(path, &len);
             if (!body) continue;
+
+            // Cheap reject before the costly jsmn parse: rom file names appear
+            // verbatim (ASCII) in the raw metadata, so if the query isn't
+            // anywhere in the file text it can't match any name. This skips
+            // tokenizing the many caches that hold no match — the dominant cost
+            // when walking a large cache.
+            if (!ci_contains(body, query.c_str())) { free(body); continue; }
 
             ArchiveItem item;
             memset(&item, 0, sizeof(item));
@@ -2858,6 +3058,15 @@ static void run_search_scan(const std::string &query, int scope_ci,
 
 void MainApplication::GotoSearch(const std::string &query, int scope_ci,
                                  int scope_ri) {
+    // A previous scan may still be unwinding after a B-cancel: it keeps running
+    // until it notices the cancel flag, and wasn't joined then (it was still
+    // alive). Reap it before touching the shared query/result globals, or the
+    // old worker and this one race on g_search_results (concurrent vector writes
+    // corrupt the heap) and Start() would clobber its live Thread handle.
+    if (this->search.running) {
+        g_search_cancel = true;
+        this->search.Join();
+    }
     this->screen = Screen::Search;
     this->search_ci = scope_ci;
     this->search_ri = scope_ri;
@@ -2866,11 +3075,15 @@ void MainApplication::GotoSearch(const std::string &query, int scope_ci,
     this->layout->SetTitle(tr(S_TITLE_SEARCH));
     this->layout->ClearMenu();
     this->layout->SetRomInfo("");
-    this->layout->SetSubtitle(tr(S_SEARCHING));
+    // Footer tells the user the scan is interruptible (the spinner overlay
+    // already shows "Searching…"); B cancels it (see HandleInput).
+    this->layout->SetSubtitle(tr(S_SUB_SEARCHING));
 
     // Run the cache scan on a background thread so the "Searching..." spinner
     // animates instead of the whole UI freezing while a large metadata cache
-    // is walked and parsed.
+    // is walked and parsed. B during the scan cancels it (see HandleInput).
+    g_search_cancel = false;
+    this->search_discard = false;
     this->layout->ShowSpinner(tr(S_SEARCHING));
     if (this->search.Start(&MainApplication::SearchThread, this)) {
         return;
@@ -3038,8 +3251,9 @@ void MainApplication::GotoInstalled(const std::string &path) {
     // Card view applies to the roms root only (console folders); inside a
     // folder the file table remains the right tool.
     bool cards = g_prefs.card_view && is_root && !g_inst.empty();
-    this->layout->SetSubtitle(cards ? tr(S_SUB_INSTALLED_CARDS)
-                                    : tr(S_SUB_INSTALLED));
+    this->layout->SetSubtitle(cards      ? tr(S_SUB_INSTALLED_CARDS)
+                              : is_root   ? tr(S_SUB_INSTALLED)
+                                          : tr(S_SUB_INSTALLED_FOLDER));
     this->layout->ClearMenu();
     for (int i = 0; i < (int)g_inst.size(); i++) {
         DirEnt &e = g_inst[i];
@@ -3077,12 +3291,11 @@ void MainApplication::GotoInstalled(const std::string &path) {
                                       ic, pinned);
                 continue;
             }
-            label += tr(S_DIR_PREFIX);
             if (full) {
-                label += full;
-                label += " (";
-                label += e.name;
-                label += ")";
+                // Match the Browse list: "Full Name (NES)", uppercased abbr.
+                char clbl[160];
+                console_label(e.name.c_str(), clbl, sizeof(clbl));
+                label = clbl;
             } else {
                 label += e.name;
             }
@@ -3096,7 +3309,8 @@ void MainApplication::GotoInstalled(const std::string &path) {
             this->layout->AddCard(e.name, human_size(e.size),
                                   console_icon(e.name.c_str()));
         } else {
-            // File: right column is the size, tinted by magnitude.
+            // File: right column is the plain size, tinted by magnitude. The
+            // "Size:" label lives on the open dialog, not in the dense list.
             this->layout->AddRow2(e.name, human_size(e.size),
                                   g_theme->row_text,
                                   size_color(e.size));
@@ -3129,7 +3343,8 @@ static const int INST_SEARCH_MAX = 300;
 // the result cap so a huge library can't stall the UI.
 static void inst_search_walk(const std::string &dir, const std::string &console,
                              const std::string &query, int depth) {
-    if (depth > 8 || (int)g_inst_hits.size() >= INST_SEARCH_MAX) {
+    if (depth > 8 || (int)g_inst_hits.size() >= INST_SEARCH_MAX ||
+        g_search_cancel) {
         return;
     }
     DIR *d = opendir(dir.c_str());
@@ -3137,7 +3352,7 @@ static void inst_search_walk(const std::string &dir, const std::string &console,
         return;
     }
     struct dirent *e;
-    while ((e = readdir(d)) != NULL &&
+    while ((e = readdir(d)) != NULL && !g_search_cancel &&
            (int)g_inst_hits.size() < INST_SEARCH_MAX) {
         if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..")) {
             continue;
@@ -3157,37 +3372,95 @@ static void inst_search_walk(const std::string &dir, const std::string &console,
     closedir(d);
 }
 
+// The heavy part: walk the installed ROM folders on disk, filling g_inst_hits.
+// Touches no UI, so it runs on a background thread. `base` scopes the search:
+// the ROM root spans every console, a console folder stays within that console.
+static std::string g_isearch_base; // folder the current scan is rooted at
+static void run_inst_search(const std::string &base, const std::string &query) {
+    g_inst_hits.clear();
+    std::string roots = roms_root(&g_tico);
+    if (base == roots) {
+        DIR *d = opendir(roots.c_str());
+        if (d) {
+            struct dirent *e;
+            while ((e = readdir(d)) != NULL && !g_search_cancel) {
+                if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..")) {
+                    continue;
+                }
+                std::string full = roots + "/" + e->d_name;
+                struct stat st;
+                if (stat(full.c_str(), &st) != 0) {
+                    continue;
+                }
+                if (S_ISDIR(st.st_mode)) {
+                    inst_search_walk(full, e->d_name, query, 0);
+                } else if (ci_contains(e->d_name, query.c_str())) {
+                    g_inst_hits.push_back(
+                        {e->d_name, roots, "", (uint64_t)st.st_size});
+                }
+            }
+            closedir(d);
+        }
+    } else {
+        // The first path segment below the root is the console (for the icon).
+        std::string console = base.substr(roots.size());
+        while (!console.empty() && console[0] == '/') console.erase(0, 1);
+        size_t slash = console.find('/');
+        if (slash != std::string::npos) console = console.substr(0, slash);
+        inst_search_walk(base, console, query, 0);
+    }
+}
+
+void MainApplication::InstSearchThread(void *arg) {
+    auto self = static_cast<MainApplication *>(arg);
+    run_inst_search(g_isearch_base, g_inst_query);
+    self->isearch.done = true;
+}
+
 void MainApplication::GotoInstSearch(const std::string &query) {
+    // Reap a prior scan still unwinding after a B-cancel before touching the
+    // shared globals, so the old worker can't race this one on g_inst_hits (see
+    // GotoSearch).
+    if (this->isearch.running) {
+        g_search_cancel = true;
+        this->isearch.Join();
+    }
     this->screen = Screen::InstSearch;
     g_inst_query = query;
     g_inst_hits.clear();
+    g_isearch_base = this->inst_path;
     this->layout->SetTitle(tr(S_TITLE_INST_SEARCH));
-    this->layout->SetSubtitle(tr(S_SUB_INST_SEARCH));
+    this->layout->SetSubtitle(tr(S_SUB_SEARCHING)); // "B cancel" while scanning
     this->layout->ClearMenu();
 
-    const char *root = roms_root(&g_tico);
-    DIR *d = opendir(root);
-    if (d) {
-        struct dirent *e;
-        while ((e = readdir(d)) != NULL) {
-            if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..")) {
-                continue;
-            }
-            std::string full = std::string(root) + "/" + e->d_name;
-            struct stat st;
-            if (stat(full.c_str(), &st) != 0) {
-                continue;
-            }
-            if (S_ISDIR(st.st_mode)) {
-                inst_search_walk(full, e->d_name, query, 0);
-            } else if (ci_contains(e->d_name, query.c_str())) {
-                g_inst_hits.push_back(
-                    {e->d_name, root, "", (uint64_t)st.st_size});
-            }
-        }
-        closedir(d);
+    // Scan off the main thread so a big ROM folder shows the "Searching..."
+    // spinner instead of freezing; B cancels it (see HandleInput).
+    g_search_cancel = false;
+    this->isearch_discard = false;
+    this->layout->ShowSpinner(tr(S_SEARCHING));
+    if (this->isearch.Start(&MainApplication::InstSearchThread, this)) {
+        return;
     }
+    // Couldn't spawn a thread: fall back to a synchronous scan.
+    this->layout->HideSpinner();
+    run_inst_search(g_isearch_base, query);
+    this->FinishInstSearch();
+}
 
+void MainApplication::ISearchTick() {
+    if (!this->isearch.done) {
+        return; // the spinner overlay animates itself
+    }
+    this->layout->HideSpinner();
+    this->isearch.Join();
+    this->FinishInstSearch();
+}
+
+// Build the result list on the main thread once the scan finishes (Plutonium UI
+// calls must not run off-thread).
+void MainApplication::FinishInstSearch() {
+    this->layout->SetSubtitle(tr(S_SUB_INST_SEARCH));
+    this->layout->ClearMenu();
     std::sort(g_inst_hits.begin(), g_inst_hits.end(),
               [](const InstHit &a, const InstHit &b) {
                   return strcasecmp(a.name.c_str(), b.name.c_str()) < 0;
@@ -3480,21 +3753,77 @@ void MainApplication::HandleInput(u64 down, u64 held,
     }
 
     // A repo's metadata is loading on a background thread: animate the indicator
-    // and swallow input until it's ready.
+    // and swallow input until it's ready. B cancels — the fetch can't be aborted
+    // mid-request, so it finishes in the background and its result is discarded.
     if (this->meta.running) {
-        (void)down;
         (void)held;
-        this->MetaTick();
-        return;
+        if (!this->meta_discard) {
+            if (down & HidNpadButton_B) {
+                this->meta_discard = true;
+                this->layout->HideSpinner();
+                if (g_files_manual || !g_prefs.group_consoles)
+                    this->GotoHome();
+                else
+                    this->GotoRepos(this->sel_ci);
+                return;
+            }
+            this->MetaTick();
+            return;
+        }
+        // Dismissed: reap the fetch when it finishes and drop its result; input
+        // flows to the screen we returned to in the meantime.
+        if (this->meta.done) {
+            this->meta.Join();
+            ia_free(&g_item);
+            g_have_item = false;
+            this->meta_discard = false;
+        }
     }
 
     // The search cache scan is running on a background thread: animate the
-    // spinner and swallow input until the result list is ready.
+    // spinner and swallow input until the result list is ready. B cancels the
+    // scan and returns to where the search was launched.
     if (this->search.running) {
-        (void)down;
         (void)held;
-        this->SearchTick();
-        return;
+        if (!this->search_discard) {
+            if (down & HidNpadButton_B) {
+                this->search_discard = true;
+                g_search_cancel = true;
+                this->layout->HideSpinner();
+                if (this->search_ci >= 0 && g_prefs.group_consoles)
+                    this->GotoRepos(this->search_ci);
+                else
+                    this->GotoHome();
+                return;
+            }
+            this->SearchTick();
+            return;
+        }
+        if (this->search.done) {
+            this->search.Join();
+            this->search_discard = false;
+        }
+    }
+
+    // The Installed-tab search is running on a background thread: same as above,
+    // B cancels and returns to the folder the search was launched from.
+    if (this->isearch.running) {
+        (void)held;
+        if (!this->isearch_discard) {
+            if (down & HidNpadButton_B) {
+                this->isearch_discard = true;
+                g_search_cancel = true;
+                this->layout->HideSpinner();
+                this->GotoInstalled(g_isearch_base);
+                return;
+            }
+            this->ISearchTick();
+            return;
+        }
+        if (this->isearch.done) {
+            this->isearch.Join();
+            this->isearch_discard = false;
+        }
     }
 
     // Release notes are fetching on a background thread: animate the spinner and
@@ -3513,6 +3842,23 @@ void MainApplication::HandleInput(u64 down, u64 held,
             this->ImportStop();
             this->ImportReturn();
             return;
+        }
+        // Leaving via the tab bar also cancels the import: L/R cycle tabs and a
+        // tap on the top strip jumps to one. Stop the receiver first so the
+        // listening socket closes cleanly, then navigate.
+        if (down & (HidNpadButton_L | HidNpadButton_R)) {
+            this->ImportStop();
+            this->SwitchTab((down & HidNpadButton_R) ? +1 : -1);
+            return;
+        }
+        if (!touch.IsEmpty() && touch.y >= 80 && touch.y < 150) {
+            s32 seg = (s32)pu::ui::render::ScreenWidth / 4;
+            s32 idx = touch.x / (seg > 0 ? seg : 1);
+            if (idx >= 0 && idx < 4) {
+                this->ImportStop();
+                this->GotoTab((Tab)idx);
+                return;
+            }
         }
         this->ImportTick();
         return;
@@ -4078,13 +4424,14 @@ void MainApplication::HandleInput(u64 down, u64 held,
                 this->GotoRepoEdit(ci, ri);
             } else if (down & HidNpadButton_Y) {
                 this->GotoPicker(Pending::AddRepo);
-            } else if ((down & HidNpadButton_Minus) &&
-                       flat_ref(this->layout->Sel(), &ci, &ri)) {
-                if (this->ConfirmDanger(tr(S_DELETE_REPO), tr(S_DELETE_REPO_CONFIRM))) {
-                    config_remove_repo(&g_cfg.consoles[ci], ri);
-                    config_save(&g_cfg);
-                    this->Toast(tr(S_DELETED));
-                    this->GotoHome();
+            } else if (down & HidNpadButton_Minus) {
+                // Global search, same as the grouped view. Repo delete stays
+                // available in the repo editor (X → delete).
+                char q[256] = {0};
+                if (prompt_raw(tr(S_SEARCH_PROMPT), nullptr, q, sizeof(q)) &&
+                    q[0]) {
+                    this->GotoSearch(q);
+                    return;
                 }
             } else if (!in_cards && (down & HidNpadButton_Right) &&
                        flat_ref(this->layout->Sel(), &ci, &ri)) {
@@ -4124,13 +4471,13 @@ void MainApplication::HandleInput(u64 down, u64 held,
         if (down & HidNpadButton_B) {
             this->GotoHome();
         } else if ((down & HidNpadButton_A) && g->repo_count > 0) {
-            this->GotoFiles(this->sel_ci, this->layout->Sel());
+            this->GotoFiles(this->sel_ci, repos_ref(this->layout->Sel()));
         } else if ((down & HidNpadButton_X) && g->repo_count > 0) {
-            this->GotoRepoEdit(this->sel_ci, this->layout->Sel());
+            this->GotoRepoEdit(this->sel_ci, repos_ref(this->layout->Sel()));
         } else if (down & HidNpadButton_Y) {
             char nm[64] = {0}, id[256] = {0};
-            if (prompt(tr(S_LABEL_NAME), nullptr, nm, sizeof(nm)) &&
-                prompt(tr(S_LABEL_ARCHIVE_ID), nullptr, id, sizeof(id))) {
+            if (prompt(tr(S_HINT_NAME), nullptr, nm, sizeof(nm)) &&
+                prompt(tr(S_HINT_ARCHIVE_ID), nullptr, id, sizeof(id))) {
                 if (config_add_repo(g, nm, id)) {
                     config_save(&g_cfg);
                     this->Toast(tr(S_ADDED));
@@ -4147,27 +4494,17 @@ void MainApplication::HandleInput(u64 down, u64 held,
                 return;
             }
         } else if ((down & HidNpadButton_Right) && g->repo_count > 0) {
-            s32 sel = this->layout->Sel();
-            if (sel >= 0 && sel < g->repo_count) {
-                g->repos[sel].pinned = !g->repos[sel].pinned;
-                // Stable-partition pinned repos to the top; track where the
-                // toggled repo lands so the selection can follow it.
-                Repo tmp[MAX_REPOS];
-                int n = 0, newpos = 0;
-                for (int i = 0; i < g->repo_count; i++)
-                    if (g->repos[i].pinned) {
-                        if (i == sel) newpos = n;
-                        tmp[n++] = g->repos[i];
-                    }
-                for (int i = 0; i < g->repo_count; i++)
-                    if (!g->repos[i].pinned) {
-                        if (i == sel) newpos = n;
-                        tmp[n++] = g->repos[i];
-                    }
-                memcpy(g->repos, tmp, sizeof(Repo) * g->repo_count);
+            int ri = repos_ref(this->layout->Sel());
+            if (ri >= 0 && ri < g->repo_count) {
+                // Only flip the flag; GotoRepos floats pinned repos to the top
+                // at render time, so the stored order stays put and unpinning
+                // returns the repo to its original slot.
+                g->repos[ri].pinned = !g->repos[ri].pinned;
                 config_save(&g_cfg);
                 this->GotoRepos(this->sel_ci);
-                this->layout->SetSel(newpos);
+                // Follow the toggled repo to wherever it now renders.
+                for (int p = 0; p < (int)g_repos_map.size(); p++)
+                    if (g_repos_map[p] == ri) { this->layout->SetSel(p); break; }
             }
         }
         break;
@@ -4212,15 +4549,22 @@ void MainApplication::HandleInput(u64 down, u64 held,
             if (prompt_raw(tr(S_FILTER_GUIDE), g_filter.c_str(), fb,
                            sizeof(fb))) {
                 g_filter = fb;
-                rebuild_files(this->layout.get(), g_files_target);
+                rebuild_files(this->layout.get(), g_files_target, false);
             }
         } else if (down & HidNpadButton_X) {
-            g_sort_mode = (g_sort_mode + 1) % SORT__COUNT;
-            this->Toast(tr(g_sort_keys[g_sort_mode]));
-            s32 keep = this->layout->Sel();
-            rebuild_files(this->layout.get(), g_files_target);
-            if (keep >= 0 && keep < this->layout->RowCount())
-                this->layout->SetSel(keep);
+            // Sort picker — same dialog as the Installed browser.
+            int s = this->CreateShowDialog(
+                tr(g_sort_keys[g_sort_mode]), "",
+                {tr(S_SORT_DEFAULT), tr(S_SORT_NAME_AZ), tr(S_SORT_NAME_ZA),
+                 tr(S_SORT_SIZE_DESC), tr(S_SORT_SIZE_ASC), tr(S_CANCEL)},
+                false, {}, style_dialog);
+            if (s >= 0 && s < SORT__COUNT) {
+                g_sort_mode = s;
+                s32 keep = this->layout->Sel();
+                rebuild_files(this->layout.get(), g_files_target, false);
+                if (keep >= 0 && keep < this->layout->RowCount())
+                    this->layout->SetSel(keep);
+            }
         } else if ((down & (HidNpadButton_Left | HidNpadButton_Right)) &&
                    !g_files_manual) {
             // Switch to the previous/next repo of the same console (L/R now
@@ -4372,7 +4716,7 @@ void MainApplication::HandleInput(u64 down, u64 held,
             s32 i = this->layout->Sel();
             switch (i) {
             case 0:
-                g_prefs.max_downloads = (g_prefs.max_downloads % 5) + 1;
+                g_prefs.max_downloads = (g_prefs.max_downloads % 10) + 1;
                 queue_set_max_dl(g_prefs.max_downloads);
                 prefs_save(&g_prefs);
                 break;
@@ -4418,9 +4762,9 @@ void MainApplication::HandleInput(u64 down, u64 held,
             s32 i = this->layout->Sel();
             if (i == 0) {
                 if (down & HidNpadButton_Right) {
-                    g_prefs.max_downloads = (g_prefs.max_downloads % 5) + 1;
+                    g_prefs.max_downloads = (g_prefs.max_downloads % 10) + 1;
                 } else {
-                    g_prefs.max_downloads = (g_prefs.max_downloads <= 1) ? 5 : g_prefs.max_downloads - 1;
+                    g_prefs.max_downloads = (g_prefs.max_downloads <= 1) ? 10 : g_prefs.max_downloads - 1;
                 }
                 queue_set_max_dl(g_prefs.max_downloads);
                 prefs_save(&g_prefs);
@@ -4516,6 +4860,9 @@ void MainApplication::HandleInput(u64 down, u64 held,
             case 4:
                 this->GotoManage();
                 return;
+            case 5: // Filter out file extensions (opens the editor)
+                this->GotoExtFilter();
+                return;
             default:
                 break;
             }
@@ -4523,6 +4870,47 @@ void MainApplication::HandleInput(u64 down, u64 held,
                 s32 sel = this->layout->Sel();
                 this->GotoUISettings();
                 this->layout->SetSel(sel);
+            }
+        }
+        break;
+    }
+
+    case Screen::ExtFilter: {
+        int n = g_prefs.exclude_ext_count;
+        if (down & HidNpadButton_B) {
+            this->GotoUISettings();
+        } else if (down & HidNpadButton_A) {
+            s32 i = this->layout->Sel();
+            if (i == 0) { // master switch
+                g_prefs.filter_exts = !g_prefs.filter_exts;
+                prefs_save(&g_prefs);
+            } else if (i >= 1 && i <= n) { // one extension's enabled flag
+                FilterExt *fe = &g_prefs.exclude_exts[i - 1];
+                fe->enabled = !fe->enabled;
+                prefs_save(&g_prefs);
+            } else if (i == n + 1) { // add a custom extension
+                char ext[16] = {0};
+                if (prompt_raw(tr(S_ADD_EXT_PROMPT), nullptr, ext, sizeof(ext)) &&
+                    ext[0]) {
+                    if (prefs_ext_add(&g_prefs, ext)) {
+                        prefs_save(&g_prefs);
+                    } else {
+                        this->ToastErr(tr(S_EXT_ADD_FAILED));
+                    }
+                }
+            }
+            if (this->screen == Screen::ExtFilter) {
+                s32 sel = this->layout->Sel();
+                this->GotoExtFilter();
+                this->layout->SetSel(sel);
+            }
+        } else if (down & HidNpadButton_X) { // remove the selected extension
+            s32 i = this->layout->Sel();
+            if (i >= 1 && i <= n) {
+                prefs_ext_remove(&g_prefs, i - 1);
+                prefs_save(&g_prefs);
+                this->GotoExtFilter();
+                this->layout->SetSel(i > 1 ? i - 1 : 1);
             }
         }
         break;
@@ -4824,64 +5212,97 @@ void MainApplication::HandleInput(u64 down, u64 held,
                 if (g_inst[i].is_dir) {
                     this->GotoInstalled(this->inst_path + "/" + g_inst[i].name);
                 } else {
+                    char szline[64];
+                    snprintf(szline, sizeof(szline), tr(S_SIZE_LABEL),
+                             human_size(g_inst[i].size).c_str());
                     this->CreateShowDialog(
                         tr(S_FILE),
-                        g_inst[i].name + "\n" + human_size(g_inst[i].size),
+                        "Path: " + this->inst_path + "\nName: " +
+                            g_inst[i].name + "\n" + szline,
                         {tr(S_OK)}, true, {}, style_dialog);
                 }
             }
-        } else if ((down & HidNpadButton_Y) && !in_cards) {
+        } else if ((down & HidNpadButton_Y) && !in_cards &&
+                   this->inst_path != roms_root(&g_tico)) {
+            // Y marks roms for deletion — only inside a console folder, never
+            // on the console list where selecting/deleting makes no sense.
             s32 i = this->layout->Sel();
             if (i >= 0 && i < (s32)g_inst.size()) {
                 this->layout->ToggleMark(i);
             }
         } else if ((in_cards ? (down & HidNpadButton_X) != 0
                              : (down & HidNpadButton_Right) != 0)) {
-            // Pin/unpin a top-level console folder — D-pad Right in the list,
-            // X in the card grid (where the D-pad navigates).
             s32 i = this->layout->Sel();
-            if (this->inst_path == roms_root(&g_tico) && i >= 0 &&
-                i < (s32)g_inst.size() && g_inst[i].is_dir) {
-                prefs_dir_pin_toggle(&g_prefs, g_inst[i].name.c_str());
-                prefs_save(&g_prefs);
-                std::string nm = g_inst[i].name;
-                this->GotoInstalled(this->inst_path);
-                for (s32 k = 0; k < (s32)g_inst.size(); k++) {
-                    if (g_inst[k].name == nm) {
-                        this->layout->SetSel(k);
-                        break;
+            if (this->inst_path == roms_root(&g_tico)) {
+                // Pin/unpin a top-level console folder — D-pad Right in the
+                // list, X in the card grid (where the D-pad navigates).
+                if (i >= 0 && i < (s32)g_inst.size() && g_inst[i].is_dir) {
+                    prefs_dir_pin_toggle(&g_prefs, g_inst[i].name.c_str());
+                    prefs_save(&g_prefs);
+                    std::string nm = g_inst[i].name;
+                    this->GotoInstalled(this->inst_path);
+                    for (s32 k = 0; k < (s32)g_inst.size(); k++) {
+                        if (g_inst[k].name == nm) {
+                            this->layout->SetSel(k);
+                            break;
+                        }
+                    }
+                }
+            } else {
+                // Inside a console folder: ▶ deletes roms. With items marked
+                // (Y) it deletes the whole selection; with nothing marked it
+                // deletes the one under the cursor. Either way a confirm guards
+                // it, so a stray press can't wipe anything unattended.
+                int mc = this->layout->MarkedCount();
+                if (mc > 0) {
+                    char msg[64];
+                    snprintf(msg, sizeof(msg), tr(S_DELETE_SELECTED), mc);
+                    if (this->ConfirmDanger(tr(S_DELETE), msg, true)) {
+                        // Delete in reverse order so indices stay valid.
+                        auto marks = this->layout->Marked();
+                        for (auto it = marks.rbegin(); it != marks.rend(); ++it) {
+                            s32 idx = *it;
+                            if (idx >= 0 && idx < (s32)g_inst.size())
+                                fs_rm_rf((this->inst_path + "/" +
+                                          g_inst[idx].name).c_str());
+                        }
+                        char t[32];
+                        snprintf(t, sizeof(t), tr(S_DELETED_N), mc);
+                        this->Toast(t);
+                        this->GotoInstalled(this->inst_path);
+                    }
+                } else if (i >= 0 && i < (s32)g_inst.size()) {
+                    char msg[300];
+                    snprintf(msg, sizeof(msg), tr(S_DELETE_ONE),
+                             g_inst[i].name.c_str());
+                    if (this->ConfirmDanger(tr(S_DELETE), msg, true)) {
+                        fs_rm_rf((this->inst_path + "/" +
+                                  g_inst[i].name).c_str());
+                        char t[32];
+                        snprintf(t, sizeof(t), tr(S_DELETED_N), 1);
+                        this->Toast(t);
+                        this->GotoInstalled(this->inst_path);
                     }
                 }
             }
         } else if ((down & HidNpadButton_Left) && !in_cards) {
-            // Actions menu: the less-frequent list actions (search, sort) live
-            // here so the face buttons stay simple and − can just mean delete.
-            int r = this->CreateShowDialog(
-                tr(S_TITLE_INSTALLED), "",
-                {tr(S_TITLE_INST_SEARCH), tr(g_sort_keys[g_inst_sort]),
-                 tr(S_CANCEL)}, false, {}, style_dialog);
-            if (r == 0) {
-                char q[256] = {0};
-                if (prompt_raw(tr(S_SEARCH_PROMPT), g_inst_query.c_str(), q,
-                               sizeof(q)) && q[0]) {
-                    this->GotoInstSearch(q);
-                    return;
-                }
-            } else if (r == 1) {
-                int s = this->CreateShowDialog(
-                    tr(g_sort_keys[g_inst_sort]), "",
-                    {tr(S_SORT_DEFAULT), tr(S_SORT_NAME_AZ), tr(S_SORT_NAME_ZA),
-                     tr(S_SORT_SIZE_DESC), tr(S_SORT_SIZE_ASC), tr(S_CANCEL)},
-                    false, {}, style_dialog);
-                if (s >= 0 && s < SORT__COUNT) {
-                    g_inst_sort = s;
-                    s32 keep = this->layout->Sel();
-                    this->GotoInstalled(this->inst_path);
-                    if (keep >= 0 && keep < this->layout->RowCount())
-                        this->layout->SetSel(keep);
-                }
+            // ◀ opens the sort picker (search now lives on −).
+            int s = this->CreateShowDialog(
+                tr(g_sort_keys[g_inst_sort]), "",
+                {tr(S_SORT_DEFAULT), tr(S_SORT_NAME_AZ), tr(S_SORT_NAME_ZA),
+                 tr(S_SORT_SIZE_DESC), tr(S_SORT_SIZE_ASC), tr(S_CANCEL)},
+                false, {}, style_dialog);
+            if (s >= 0 && s < SORT__COUNT) {
+                g_inst_sort = s;
+                s32 keep = this->layout->Sel();
+                this->GotoInstalled(this->inst_path);
+                if (keep >= 0 && keep < this->layout->RowCount())
+                    this->layout->SetSel(keep);
             }
-        } else if ((down & HidNpadButton_X) && !in_cards) {
+        } else if ((down & HidNpadButton_X) && !in_cards &&
+                   this->inst_path != roms_root(&g_tico)) {
+            // Rename only files inside a console folder — not the console
+            // folders themselves at the top level.
             s32 i = this->layout->Sel();
             if (i >= 0 && i < (s32)g_inst.size()) {
                 char nm[256] = {0};
@@ -4911,43 +5332,18 @@ void MainApplication::HandleInput(u64 down, u64 held,
                 }
             }
         } else if (down & HidNpadButton_Minus) {
-            int mc = this->layout->MarkedCount();
-            if (mc > 0) {
-                // Marked items: delete them (mark with Y first for a single).
-                char msg[64];
-                snprintf(msg, sizeof(msg), tr(S_DELETE_SELECTED), mc);
-                if (this->ConfirmDanger(tr(S_DELETE), msg, true)) {
-                    // Delete in reverse order so indices stay valid
-                    auto marks = this->layout->Marked();
-                    for (auto it = marks.rbegin(); it != marks.rend(); ++it) {
-                        s32 idx = *it;
-                        if (idx >= 0 && idx < (s32)g_inst.size()) {
-                            fs_rm_rf((this->inst_path + "/" + g_inst[idx].name).c_str());
-                        }
-                    }
-                    char t[32];
-                    snprintf(t, sizeof(t), tr(S_DELETED_N), mc);
-                    this->Toast(t);
-                    this->GotoInstalled(this->inst_path);
-                }
-            } else {
-                // Nothing marked: delete the selected item (− means delete
-                // everywhere; mark with Y first to delete several at once).
-                s32 i = this->layout->Sel();
-                if (i >= 0 && i < (s32)g_inst.size()) {
-                    if (this->ConfirmDanger(tr(S_DELETE),
-                                            std::string(tr(S_DELETE)) + " '" +
-                                                g_inst[i].name + "'?",
-                                            true)) {
-                        fs_rm_rf((this->inst_path + "/" + g_inst[i].name).c_str());
-                        this->Toast(tr(S_DELETED));
-                        s32 keep = i;
-                        this->GotoInstalled(this->inst_path);
-                        if (keep >= (s32)g_inst.size())
-                            keep = (s32)g_inst.size() - 1;
-                        if (keep >= 0) this->layout->SetSel(keep);
-                    }
-                }
+            // − searches the current folder (scope handled by GotoInstSearch).
+            // Prompt reflects the scope: the console list searches every
+            // installed console, a console folder searches just that one.
+            const char *sp = (this->inst_path == roms_root(&g_tico))
+                                 ? tr(S_SEARCH_INSTALLED)
+                                 : tr(S_SEARCH_CONSOLE);
+            char q[256] = {0};
+            // Fresh open: start blank. The prior query lingering here is
+            // confusing on a new search (Y re-search below keeps it to tweak).
+            if (prompt_raw(sp, nullptr, q, sizeof(q)) && q[0]) {
+                this->GotoInstSearch(q);
+                return;
             }
         }
         break;
@@ -4971,9 +5367,12 @@ void MainApplication::HandleInput(u64 down, u64 held,
                 }
             }
         } else if (down & HidNpadButton_Y) {
+            // Re-search keeps the scope of the folder the results came from.
+            const char *sp = (this->inst_path == roms_root(&g_tico))
+                                 ? tr(S_SEARCH_INSTALLED)
+                                 : tr(S_SEARCH_CONSOLE);
             char q[256] = {0};
-            if (prompt_raw(tr(S_SEARCH_PROMPT), g_inst_query.c_str(), q,
-                           sizeof(q)) && q[0]) {
+            if (prompt_raw(sp, g_inst_query.c_str(), q, sizeof(q)) && q[0]) {
                 this->GotoInstSearch(q);
             }
         }
@@ -4993,13 +5392,13 @@ void MainApplication::HandleInput(u64 down, u64 held,
             char v[600] = {0};
             switch (i) {
             case 0:
-                if (prompt(tr(S_LABEL_NAME), rp->label, v, sizeof(v))) {
+                if (prompt(tr(S_HINT_NAME), rp->label, v, sizeof(v))) {
                     snprintf(rp->label, sizeof(rp->label), "%s", v);
                     config_save(&g_cfg);
                 }
                 break;
             case 1:
-                if (prompt(tr(S_LABEL_ARCHIVE_ID), rp->id, v, sizeof(v))) {
+                if (prompt(tr(S_HINT_ARCHIVE_ID), rp->id, v, sizeof(v))) {
                     snprintf(rp->id, sizeof(rp->id), "%s", v);
                     rp->download_base[0] = '\0';
                     repo_set_url_default(rp);
@@ -5007,7 +5406,7 @@ void MainApplication::HandleInput(u64 down, u64 held,
                 }
                 break;
             case 2:
-                if (prompt(tr(S_LABEL_DOWNLOAD_URL), rp->download_base, v, sizeof(v))) {
+                if (prompt(tr(S_HINT_DOWNLOAD_URL), rp->download_base, v, sizeof(v))) {
                     snprintf(rp->download_base, sizeof(rp->download_base), "%s",
                              v);
                     config_save(&g_cfg);
@@ -5051,8 +5450,8 @@ void MainApplication::HandleInput(u64 down, u64 held,
                 const char *cname = g_picker[i].c_str();
                 if (this->pending == Pending::AddRepo) {
                     char nm[64] = {0}, id[256] = {0};
-                    if (prompt(tr(S_LABEL_NAME), nullptr, nm, sizeof(nm)) &&
-                        prompt(tr(S_LABEL_ARCHIVE_ID), nullptr, id, sizeof(id))) {
+                    if (prompt(tr(S_HINT_NAME), nullptr, nm, sizeof(nm)) &&
+                        prompt(tr(S_HINT_ARCHIVE_ID), nullptr, id, sizeof(id))) {
                         ConsoleGroup *g = config_add_console(&g_cfg, cname);
                         if (g && config_add_repo(g, nm, id)) {
                             config_sort(&g_cfg);

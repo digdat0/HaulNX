@@ -23,6 +23,16 @@ typedef int (*net_progress_cb)(void *userdata, uint64_t now, uint64_t total);
 char *http_get(const char *url, long *http_code, size_t *out_len);
 
 /*
+ * A private connection for parallel GETs (e.g. bulk metadata refresh). Each
+ * handle owns its own TLS connection, so several workers can fetch at once
+ * without serializing on http_get()'s shared handle. Not thread-shared: use one
+ * handle per worker thread. Free with net_conn_free.
+ */
+void *net_conn_new(void);
+void net_conn_free(void *conn);
+char *http_get_on(void *conn, const char *url, long *http_code, size_t *out_len);
+
+/*
  * Stream an HTTP GET to a file on disk. Returns true on a 2xx download.
  * Set extra_header (e.g. "authorization: LOW key:secret") or NULL.
  * If resume_from > 0, the file is opened for append and a Range request is made

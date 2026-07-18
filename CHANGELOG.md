@@ -4,6 +4,26 @@ Notes for each release. `release.sh` pulls the section matching the version in
 `VERSION` and attaches it to the GitHub release. Add a `## <version>` section
 here before running a release.
 
+## 2.0.0
+
+**Out of beta**
+- TicoDL+ leaves beta with its 2.0 release. Thanks to everyone who tested along the way.
+
+**Hide files you'd never download**
+- The Browse file view can now filter out file types you never want to see — `.torrent`,
+  `.xml`, `.sqlite`, `.out`, `.txt`, `.jpg`, and `.jpeg` are hidden by default. A new
+  **UI settings → Filter out file extensions** screen lets you toggle the filter as a
+  whole, enable or disable individual extensions, and add your own. Turning the filter
+  off leaves your per-extension choices intact — it just stops hiding anything.
+
+**Faster "Refresh all"**
+- Refreshing metadata for a whole collection now fetches several repos in parallel
+  instead of one at a time, so a full refresh finishes noticeably quicker.
+
+**Stability**
+- Fixed a race in the parallel refresh where the finished/failed counters could
+  undercount when several repos completed at the same moment.
+
 ## 1.9.1-beta
 
 **Safer imports**
