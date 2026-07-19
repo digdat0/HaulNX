@@ -98,12 +98,14 @@ fi
 echo "Verified: HEAD ($local_head) is on origin/main."
 
 # Pull the notes for this version out of CHANGELOG.md (everything under the
-# "## <version>" heading up to the next "## ").
+# FIRST "## <version>" heading up to the next "## "). Stopping at the first match
+# guards against a duplicate heading later in the file (e.g. the pre-rebrand
+# history block) getting stitched onto the notes.
 notes=""
 if [ -f CHANGELOG.md ]; then
   notes="$(awk -v ver="$v" '
-    $0 ~ ("^## " ver "([ \t]|$)") { grab=1; next }
-    /^## / { grab=0 }
+    $0 ~ ("^## " ver "([ \t]|$)") { if (seen) exit; seen=1; grab=1; next }
+    /^## / { if (grab) exit }
     grab { print }
   ' CHANGELOG.md)"
 fi

@@ -395,13 +395,21 @@ here before running a release.
   a different folder.
 - archive.org credentials are only ever sent over HTTPS.
 
-## 2.0.16
+---
+
+# Pre-rebrand history
+
+These entries are from TicoDL+'s predecessor and use a separate, older version
+scheme (note the overlapping 2.0.x / 0.1.x numbers). Kept for reference only —
+they are demoted to ### so release.sh never mistakes them for current sections.
+
+### 2.0.16
 - The queue's overwrite indicator is now a readable colour-coded tag instead of
   a symbol the Switch font couldn't render: orange **(repl)** when a download
   replaced an existing file (with a count, e.g. `(repl 12)`, for multi-file
   archives), green **(new)** for a brand-new file.
 
-## 2.0.15
+### 2.0.15
 - **How overwrites work (unchanged behaviour, now made visible):** when a
   download lands on a file of the **same name** in `sdmc:/tico/roms/<console>/`,
   it **overwrites that file in place** — there is no prompt and no separate
@@ -416,27 +424,27 @@ here before running a release.
   `↺12`, for multi-file archives), or green **+** for a brand-new file.
 - README now documents the overwrite behaviour.
 
-## 2.0.14
+### 2.0.14
 - Browse console list is now sorted A-Z by the displayed full name (it was
   ordered by the underlying folder key, which no longer matched the names).
 
-## 2.0.13
+### 2.0.13
 - Browse page now shows each console's full name with the folder in parentheses
   (e.g. "Nintendo Entertainment System (NES)"). Custom folders are unchanged.
   Display-only — no config/SD-card changes.
 
-## 2.0.12
+### 2.0.12
 - In-app self-update now overwrites the .nro you actually launched (via
   argv[0]), with a fallback that finds it whether it's at
   `sdmc:/switch/TicoDLplus/TicoDLplus.nro` or `sdmc:/switch/TicoDLplus.nro`.
   The update dialog shows the exact path it installed to.
 
-## 2.0.11
+### 2.0.11
 - Extractor now writes each data block at its declared offset (correct handling
   of sparse archive entries; no change for normal archives).
 - Repo housekeeping (ignore local scratch files).
 
-## 2.0.10
+### 2.0.10
 - Fixed a memory leak when a repo's metadata fetched but contained no usable
   files.
 - Hardened the download write path (return byte count, not item count) and the
@@ -445,14 +453,14 @@ here before running a release.
   a freshly failed item), and the completion-toast check no longer scans the
   queue every frame while idle.
 
-## 2.0.9
+### 2.0.9
 - New app icon. (Applies on the next launch after updating.)
 
-## 2.0.8
+### 2.0.8
 - The **left analog stick** now navigates lists (up/down), in addition to the
   D-pad.
 
-## 2.0.7
+### 2.0.7
 - Download queue now draws a **progress bar** on the active download, and shows
   size, speed and an **ETA** (e.g. `1.2 GB @ 3.4 MB/s  ~2m30s`).
 - Failed downloads now show a **real reason** (`HTTP 404`, `no space`, `bad md5`,
@@ -466,23 +474,23 @@ here before running a release.
 - Lists **remember your position** when you back out and return (file list per
   repo, console/repo lists, including across tab switches).
 
-## 2.0.6
+### 2.0.6
 - New **Settings → Manage consoles (show/hide)** screen: toggle which consoles
   appear on the Browse page. Hidden consoles (and their repos in flat mode) are
   kept out of the primary list but stay easy to re-enable here. The visibility
   is saved per console in `dl_sources.json` (`"shown"`), defaulting to shown.
 
-## 2.0.5
+### 2.0.5
 - The add-console picker is now a sorted (A-Z) table showing each console's
   repo count in its own column.
 - Credits screen now also credits the TICO emulator (https://ticoverse.com/).
 
-## 2.0.4
+### 2.0.4
 - Credits screen now also credits the Plutonium UI library by XorTroll.
 - Project is now MIT-licensed, with third-party license notices included
   (Plutonium and jsmn, both MIT).
 
-## 2.0.3
+### 2.0.3
 - Loading a repo's file list no longer freezes the screen: the metadata now
   downloads in the background with an animated **"Loading metadata..."**
   indicator.
@@ -500,7 +508,7 @@ here before running a release.
   so it's easy to tweak.
 - Footer button hints are now spread evenly across the row.
 
-## 2.0.2
+### 2.0.2
 - The in-app updater now shows live **download progress** instead of looking
   frozen while it fetches the new build.
 - New **dark theme**: near-black background with light text.
@@ -511,7 +519,7 @@ here before running a release.
   aligned size/info column, with sizes color-coded by KB / MB / GB and queue
   rows colored by status.
 
-## 2.0.1
+### 2.0.1
 - Fixed a crash when exiting with **+** ("software was closed because an error
   occurred"). The app now shuts the background download worker thread and its
   services down cleanly on exit; a download interrupted by exiting keeps its
@@ -523,7 +531,7 @@ here before running a release.
 - Build: the version string now comes from a single source (the `VERSION` file);
   the Makefile bakes it into the app and regenerates `version.h` automatically.
 
-## 2.0.0
+### 2.0.0
 - New **graphical UI** (Plutonium / SDL2) replacing the text console: full-screen
   menus with on-screen highlight, dialogs, toasts, and the Switch's shared fonts.
 - Full parity with 1.x: console groups, add/edit/delete repos & consoles, browse +
@@ -534,7 +542,7 @@ here before running a release.
 - Controls: D-pad (hold to repeat) / ZL-ZR page; L queue, R installed, R-stick
   settings, + exit, B back.
 
-## 1.0.0
+### 1.0.0
 - First stable release.
 - Ships with NO collections — only the supported console folder names are
   bundled, no archive.org item ids or links. You provide your own collections
@@ -545,7 +553,7 @@ here before running a release.
   auto-extraction; console groups with multiple repos; in-app updater; full
   text-UI polish (highlight bar, consistent controls, toasts, breadcrumbs).
 
-## 0.1.65
+### 0.1.65
 - File lists now show a breadcrumb in the header (e.g. "snes > USA Complete") so
   you can see which console/repo you're browsing.
 - List headers show your position and total, e.g. "(12/340)".
@@ -553,7 +561,7 @@ here before running a release.
 - Help screen now includes a color legend (size colors, the * installed marker,
   and queue status colors).
 
-## 0.1.64
+### 0.1.64
 - Selected list rows now show a full-width highlight bar (much easier to see
   where you are) across every screen.
 - Consistent buttons everywhere: A = open/confirm, B = back, X = edit, Y = add,
@@ -561,7 +569,7 @@ here before running a release.
 - Action confirmations: adding/deleting/saving and queue actions now show a brief
   on-screen toast so you know it worked.
 
-## 0.1.61
+### 0.1.61
 - Security: downloaded filenames are now sanitized before use as paths, so a
   malicious metadata entry can't write outside the intended folder.
 - Security: archive.org S3 credentials are only sent to archive.org hosts, never
@@ -570,14 +578,14 @@ here before running a release.
   instead of "done", so it's clear the raw file was kept un-unpacked.
 - Fixed a thread-safety issue in download-history logging (localtime_r).
 
-## 0.1.60
+### 0.1.60
 - Adding a repo now shows a picker of TICO-supported consoles instead of a
   free-text field, so repos are always grouped under a valid console folder.
 - The supported list comes from "tico_consoles" in dl_sources.json; you can no
   longer create unsupported consoles in-app (edit the JSON to change the set).
 - Manual URL downloads also pick the target folder from this list.
 
-## 0.1.59
+### 0.1.59
 - Console groups: each console can now hold multiple download repos (sources),
   so you can add several archive.org collections per system. All of a console's
   repos install into the same tico/roms/<console> folder.
@@ -589,41 +597,41 @@ here before running a release.
   repos across NES/SNES/Genesis/Saturn/Dreamcast/PSX/PSP and more. Old config
   files are auto-migrated.
 
-## 0.1.56
+### 0.1.56
 - Footer no longer runs off the edge: removed the trailing "[DL Queue: N active]"
   text (the info now lives in the download monitor line).
 - Download monitor now reads "DL 1/2:" — the current item number and the total
   number of items in the queue.
 
-## 0.1.55
+### 0.1.55
 - Fixed archive extraction silently dropping files (notably some `.rar` sets
   where only the raw archive ended up in /roms). The extractor now tolerates
   libarchive warnings during header/data reads instead of discarding the file.
 - Extraction problems are now written to `debug.log` with the exact reason.
 - Releases now publish with release notes pulled from this changelog.
 
-## 0.1.54
+### 0.1.54
 - Header shows SD space and battery % (no labels).
 - Active-download line now matches the footer style, with a spacer row above it.
 - Installed browser: L goes back a level, ZL opens the download queue.
 
-## 0.1.53
+### 0.1.53
 - Added a scrollbar / position indicator to long lists.
 - Added a Controls / Help overlay (ZR on the main menu).
 
-## 0.1.52
+### 0.1.52
 - Battery percentage shown in the header.
 
-## 0.1.50
+### 0.1.50
 - More reliable update check: uses the releases list with retries, so it no
   longer trips on GitHub's intermittent `/releases/latest` errors, and it picks
   the highest version itself.
 
-## 0.1.47
+### 0.1.47
 - "Installed" markers (`*`) on files you already have.
 - Live download status line; retry failed downloads; safer delete confirmation;
   persistent SD free-space readout.
 
-## 0.1.43
+### 0.1.43
 - Resume interrupted downloads, persistent download queue across launches, MD5
   checksum verification, and an on-screen file-name filter.
