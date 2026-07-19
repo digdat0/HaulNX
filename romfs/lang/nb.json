@@ -170,13 +170,10 @@
   "sort_name_za": "Sortering: Å → A",
   "sort_size_desc": "Sortering: størst først",
   "sort_size_asc": "Sortering: minst først",
-
   "manage_data": "Administrer data",
   "title_manage_data": "Administrer data",
   "sub_manage_data": "A velg  B tilbake",
-
   "waiting_network": "Frakoblet - nedlastinger gjenopptas når nettverket er tilbake",
-
   "search_capped": "%d+ treff - avgrens søket",
   "view_logs": "Vis logger",
   "title_view_logs": "Vis logger",
@@ -255,5 +252,23 @@
   "fat32_warn_msg": "Denne filen er 4 GB eller større og lagres ikke riktig på et FAT32-SD-kort. Den fungerer bare hvis kortet er formatert som exFAT. Last ned likevel?",
   "hint_name": "Gi denne repoen et navn",
   "hint_archive_id": "Archive.org ID",
-  "hint_download_url": "Nedlastings-URL"
+  "hint_download_url": "Nedlastings-URL",
+  "filter_exts": "Filtrer bort filendelser: %s",
+  "title_ext_filter": "Filendelsesfilter",
+  "sub_ext_filter": "A veksle  X fjern  B tilbake",
+  "add_extension": "Legg til endelse...",
+  "add_ext_prompt": "Skriv inn en filendelse som skal skjules (f.eks. nfo)",
+  "ext_add_failed": "Kunne ikke legge til endelsen",
+  "ext_filter_info": "Skjulte filtyper vises ikke i fillisten.",
+  "max_total_rate": "Maks. total nedlastingshastighet: %s",
+  "max_item_rate": "Maks. hastighet per nedlasting: %s",
+  "rate_unlimited": "Ubegrenset",
+  "move_up": "Flytt opp én mappe",
+  "move_up_multi": "Flytte disse %d elementene til den overordnede mappen?",
+  "moving": "Flytter filer",
+  "moving_n": "Flytter %d av %d",
+  "moved_n": "%d flyttet",
+  "move_partial": "%d flyttet, %d hoppet over",
+  "empty_folder_delete": "\"%s\" er nå tom. Slette denne mappen?",
+  "folder_deleted": "Mappe slettet"
 }

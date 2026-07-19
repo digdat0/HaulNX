@@ -574,6 +574,8 @@ void prefs_load(Prefs *p) {
     p->prevent_sleep = true;
     p->group_consoles = true;
     p->max_downloads = 1;
+    p->rate_all_kbps = 0;   /* unlimited */
+    p->rate_item_kbps = 0;  /* unlimited */
     p->net_check = true;
     p->chk_updates = true;
     p->lang[0] = '\0';
@@ -608,6 +610,16 @@ void prefs_load(Prefs *p) {
         if (idx >= 0) {
             int v = (int)json_u64(js, tok, idx);
             if (v >= 1 && v <= 10) p->max_downloads = v;
+        }
+        idx = json_obj_get(js, tok, 0, "rateAllKbps");
+        if (idx >= 0) {
+            int v = (int)json_u64(js, tok, idx);
+            if (v >= 0) p->rate_all_kbps = v;
+        }
+        idx = json_obj_get(js, tok, 0, "rateItemKbps");
+        if (idx >= 0) {
+            int v = (int)json_u64(js, tok, idx);
+            if (v >= 0) p->rate_item_kbps = v;
         }
         idx = json_obj_get(js, tok, 0, "netCheck");
         if (idx >= 0) {
@@ -688,12 +700,15 @@ bool prefs_save(const Prefs *p) {
     fprintf(f,
             "{\n  \"useCache\": %s,\n  \"preventSleep\": %s,\n"
             "  \"groupConsoles\": %s,\n  \"maxDownloads\": %d,\n"
+            "  \"rateAllKbps\": %d,\n  \"rateItemKbps\": %d,\n"
             "  \"netCheck\": %s,\n  \"chkUpdates\": %s,\n"
             "  \"lang\": ",
             p->use_cache ? "true" : "false",
             p->prevent_sleep ? "true" : "false",
             p->group_consoles ? "true" : "false",
             p->max_downloads,
+            p->rate_all_kbps,
+            p->rate_item_kbps,
             p->net_check ? "true" : "false",
             p->chk_updates ? "true" : "false");
     json_write_escaped(f, p->lang);

@@ -170,13 +170,10 @@
   "sort_name_za": "Sortierung: Z → A",
   "sort_size_desc": "Sortierung: größte zuerst",
   "sort_size_asc": "Sortierung: kleinste zuerst",
-
   "manage_data": "Daten verwalten",
   "title_manage_data": "Daten verwalten",
   "sub_manage_data": "A auswählen  B zurück",
-
   "waiting_network": "Offline - Downloads werden fortgesetzt, sobald das Netzwerk zurück ist",
-
   "search_capped": "%d+ Treffer - Suche verfeinern",
   "view_logs": "Protokolle anzeigen",
   "title_view_logs": "Protokolle anzeigen",
@@ -255,5 +252,23 @@
   "fat32_warn_msg": "Diese Datei ist 4 GB oder größer und wird auf einer FAT32-SD-Karte nicht korrekt gespeichert. Sie funktioniert nur, wenn die Karte als exFAT formatiert ist. Trotzdem herunterladen?",
   "hint_name": "Geben Sie diesem Repo einen Namen",
   "hint_archive_id": "Archive.org ID",
-  "hint_download_url": "Download-URL"
+  "hint_download_url": "Download-URL",
+  "filter_exts": "Dateiendungen ausblenden: %s",
+  "title_ext_filter": "Dateiendungsfilter",
+  "sub_ext_filter": "A umschalten  X entfernen  B zurück",
+  "add_extension": "Endung hinzufügen...",
+  "add_ext_prompt": "Dateiendung zum Ausblenden eingeben (z. B. nfo)",
+  "ext_add_failed": "Endung konnte nicht hinzugefügt werden",
+  "ext_filter_info": "Ausgeblendete Dateitypen erscheinen nicht in der Dateiliste.",
+  "max_total_rate": "Max. Gesamt-Downloadrate: %s",
+  "max_item_rate": "Max. Rate pro Download: %s",
+  "rate_unlimited": "Unbegrenzt",
+  "move_up": "Eine Ordnerebene nach oben verschieben",
+  "move_up_multi": "Diese %d Elemente in den übergeordneten Ordner verschieben?",
+  "moving": "Dateien werden verschoben",
+  "moving_n": "%d von %d wird verschoben",
+  "moved_n": "%d verschoben",
+  "move_partial": "%d verschoben, %d übersprungen",
+  "empty_folder_delete": "„%s“ ist jetzt leer. Diesen Ordner löschen?",
+  "folder_deleted": "Ordner gelöscht"
 }

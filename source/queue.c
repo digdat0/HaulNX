@@ -17,13 +17,28 @@
 static QueueItem g_items[QUEUE_MAX];
 static uint32_t g_seq = 1;
 static Mutex g_mtx;
-#define MAX_DL_THREADS 5
+#define MAX_DL_THREADS 10 /* matches the 1–10 range the settings UI offers */
 static Thread g_dl_threads[MAX_DL_THREADS];
 static int g_dl_count = 0;
 /* How many downloads may run at once. All MAX_DL_THREADS workers are always
  * started; idle ones just don't pick work. That way changing the setting
  * takes effect immediately instead of on the next launch. */
 static volatile int g_max_dl = 1;
+/* Download-rate limits in bytes/sec (0 = unlimited). g_rate_all_bps is the
+ * combined budget across all active downloads; g_rate_item_bps caps each one.
+ * g_active_dl tracks how many transfers are running right now, so the global
+ * budget can be split fair-share between them. All read live from the worker
+ * threads' rate callback; g_active_dl is touched from several workers at once,
+ * hence the atomic ops. */
+static volatile int64_t g_rate_all_bps = 0;
+static volatile int64_t g_rate_item_bps = 0;
+static volatile int g_active_dl = 0;
+/* Never cap a single transfer below this: curl aborts a download that averages
+ * under CURLOPT_LOW_SPEED_LIMIT (30 B/s) for 30s, so a tiny global budget split
+ * across many downloads must still leave each comfortably above that floor. The
+ * floor can let the combined rate slightly exceed a very small global cap — a
+ * deliberate trade so throttling never kills a transfer outright. */
+#define RATE_FLOOR_BPS 4096
 static Thread g_ex_thread;
 static volatile bool g_run = false;
 static const char *g_roms_root = "sdmc:/tico/roms";
@@ -138,6 +153,38 @@ typedef struct {
     uint64_t last_now;
     uint64_t last_tick;
 } DlCtx;
+
+/* Live per-transfer rate cap (bytes/sec, 0 = unlimited), passed to
+ * http_download and polled throughout the download. Fair-share: the global
+ * budget is divided across the transfers currently active, then clamped by the
+ * per-item cap and lifted to the stall floor. Reads the limits and active count
+ * without locking — each is a single word, and an occasional stale read only
+ * nudges the cap slightly for one progress tick before the next corrects it. */
+static uint64_t dl_rate_cb(void *ud) {
+    (void)ud;
+    int64_t all = g_rate_all_bps;
+    int64_t item = g_rate_item_bps;
+    if (all <= 0 && item <= 0) {
+        return 0; /* unthrottled */
+    }
+    int64_t eff;
+    if (all > 0) {
+        int n = __atomic_load_n(&g_active_dl, __ATOMIC_RELAXED);
+        if (n < 1) {
+            n = 1;
+        }
+        eff = all / n;
+        if (item > 0 && item < eff) {
+            eff = item; /* per-item cap is tighter than this transfer's share */
+        }
+    } else {
+        eff = item; /* only a per-item cap is set */
+    }
+    if (eff > 0 && eff < RATE_FLOOR_BPS) {
+        eff = RATE_FLOOR_BPS;
+    }
+    return (uint64_t)eff;
+}
 
 static int dl_progress(void *ud, uint64_t now, uint64_t total) {
     DlCtx *ctx = (DlCtx *)ud;
@@ -503,11 +550,16 @@ static void process_item(QueueItem *it) {
     bool tried_auth = false;
     long code = 0;
     bool ok = false;
+    /* Count this transfer among the active downloads so the fair-share rate
+     * split (dl_rate_cb) divides the global budget by the true in-flight count.
+     * Balanced by the decrement after the retry loop. */
+    __atomic_add_fetch(&g_active_dl, 1, __ATOMIC_RELAXED);
     /* Transient server errors (5xx/429, e.g. archive.org throttling a burst of
      * new connections) and transport drops get a couple of automatic retries
      * with a short backoff, resuming from the .part instead of failing. */
     for (int attempt = 0;; attempt++) {
-        ok = http_download(it->url, tmp, auth, dl_progress, &ctx, have, &code);
+        ok = http_download(it->url, tmp, auth, dl_progress, &ctx,
+                           dl_rate_cb, NULL, have, &code);
         it->http_code = code;
         if (ok || it->cancel || it->pause || !g_run) {
             break;
@@ -552,6 +604,7 @@ static void process_item(QueueItem *it) {
         ctx.last_now = have;
         ctx.last_tick = armGetSystemTick();
     }
+    __atomic_sub_fetch(&g_active_dl, 1, __ATOMIC_RELAXED);
 
     if (!g_run) {
         /* Shutting down: keep the .part and leave the item pending (status
@@ -817,7 +870,7 @@ void queue_set_max_dl(int n) {
             order[cnt++] = i;
         }
     }
-    /* insertion sort by seq (cnt <= 5) */
+    /* insertion sort by seq (cnt <= MAX_DL_THREADS) */
     for (int a = 1; a < cnt; a++) {
         int key = order[a];
         uint32_t ks = g_items[key].seq;
@@ -832,6 +885,15 @@ void queue_set_max_dl(int n) {
         g_items[order[a]].pause = (a >= n);
     }
     mutexUnlock(&g_mtx);
+}
+
+void queue_set_rate_limits(int all_bps, int item_bps) {
+    if (all_bps < 0) all_bps = 0;
+    if (item_bps < 0) item_bps = 0;
+    /* In-flight downloads pick the new caps up on their next progress tick via
+     * dl_rate_cb — no restart, no lost .part. */
+    g_rate_all_bps = all_bps;
+    g_rate_item_bps = item_bps;
 }
 
 void queue_init(const char *roms_root, int max_dl) {

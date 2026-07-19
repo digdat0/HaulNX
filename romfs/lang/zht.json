@@ -170,13 +170,10 @@
   "sort_name_za": "排序: Z → A",
   "sort_size_desc": "排序: 最大優先",
   "sort_size_asc": "排序: 最小優先",
-
   "manage_data": "資料管理",
   "title_manage_data": "資料管理",
   "sub_manage_data": "A 選擇  B 返回",
-
   "waiting_network": "離線 - 網路恢復後下載將自動繼續",
-
   "search_capped": "超過 %d 條結果 - 請細化搜尋",
   "view_logs": "檢視日誌",
   "title_view_logs": "檢視日誌",
@@ -255,5 +252,23 @@
   "fat32_warn_msg": "此檔案大小為 4 GB 或更大，在 FAT32 SD 卡上無法正確儲存。僅當 SD 卡格式化為 exFAT 時才可用。仍要下載嗎？",
   "hint_name": "為此儲存庫命名",
   "hint_archive_id": "Archive.org ID",
-  "hint_download_url": "下載 URL"
+  "hint_download_url": "下載 URL",
+  "filter_exts": "過濾檔案副檔名：%s",
+  "title_ext_filter": "檔案副檔名過濾",
+  "sub_ext_filter": "A 切換  X 移除  B 返回",
+  "add_extension": "新增副檔名...",
+  "add_ext_prompt": "輸入要隱藏的檔案副檔名（例如 nfo）",
+  "ext_add_failed": "無法新增副檔名",
+  "ext_filter_info": "隱藏的檔案類型不會出現在檔案清單中。",
+  "max_total_rate": "總下載速度上限：%s",
+  "max_item_rate": "每個下載速度上限：%s",
+  "rate_unlimited": "無限制",
+  "move_up": "上移一個資料夾",
+  "move_up_multi": "將這 %d 個項目移動到上層資料夾？",
+  "moving": "正在移動檔案",
+  "moving_n": "正在移動 %d / %d",
+  "moved_n": "已移動 %d 個",
+  "move_partial": "已移動 %d 個，略過 %d 個",
+  "empty_folder_delete": "「%s」現在是空的。刪除此資料夾？",
+  "folder_deleted": "已刪除資料夾"
 }

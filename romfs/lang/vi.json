@@ -170,13 +170,10 @@
   "sort_name_za": "Sắp xếp: Z → A",
   "sort_size_desc": "Sắp xếp: lớn nhất",
   "sort_size_asc": "Sắp xếp: nhỏ nhất",
-
   "manage_data": "Quản lý dữ liệu",
   "title_manage_data": "Quản lý dữ liệu",
   "sub_manage_data": "A chọn  B quay lại",
-
   "waiting_network": "Ngoại tuyến - tải xuống sẽ tiếp tục khi có mạng trở lại",
-
   "search_capped": "Hơn %d kết quả - hãy thu hẹp tìm kiếm",
   "view_logs": "Xem nhật ký",
   "title_view_logs": "Xem nhật ký",
@@ -255,5 +252,23 @@
   "fat32_warn_msg": "Tệp này có dung lượng từ 4 GB trở lên và sẽ không lưu đúng trên thẻ SD FAT32. Nó chỉ hoạt động nếu thẻ được định dạng exFAT. Vẫn tải xuống?",
   "hint_name": "Đặt tên cho kho này",
   "hint_archive_id": "Archive.org ID",
-  "hint_download_url": "URL tải xuống"
+  "hint_download_url": "URL tải xuống",
+  "filter_exts": "Lọc phần mở rộng tệp: %s",
+  "title_ext_filter": "Bộ lọc phần mở rộng tệp",
+  "sub_ext_filter": "A bật tắt  X xóa  B quay lại",
+  "add_extension": "Thêm phần mở rộng...",
+  "add_ext_prompt": "Nhập phần mở rộng tệp cần ẩn (ví dụ: nfo)",
+  "ext_add_failed": "Không thể thêm phần mở rộng",
+  "ext_filter_info": "Các loại tệp bị ẩn sẽ không xuất hiện trong danh sách tệp.",
+  "max_total_rate": "Tốc độ tải tổng tối đa: %s",
+  "max_item_rate": "Tốc độ tối đa mỗi lượt tải: %s",
+  "rate_unlimited": "Không giới hạn",
+  "move_up": "Chuyển lên một thư mục",
+  "move_up_multi": "Chuyển %d mục này lên thư mục cha?",
+  "moving": "Đang chuyển tệp",
+  "moving_n": "Đang chuyển %d/%d",
+  "moved_n": "Đã chuyển %d",
+  "move_partial": "Đã chuyển %d, bỏ qua %d",
+  "empty_folder_delete": "\"%s\" hiện đang trống. Xóa thư mục này?",
+  "folder_deleted": "Đã xóa thư mục"
 }

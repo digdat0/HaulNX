@@ -170,13 +170,10 @@
   "sort_name_za": "並び替え: Z → A",
   "sort_size_desc": "並び替え: 大きい順",
   "sort_size_asc": "並び替え: 小さい順",
-
   "manage_data": "データ管理",
   "title_manage_data": "データ管理",
   "sub_manage_data": "A 選択  B 戻る",
-
   "waiting_network": "オフライン - ネットワーク復帰後にダウンロードを再開します",
-
   "search_capped": "%d件以上 - 検索条件を絞ってください",
   "view_logs": "ログを表示",
   "title_view_logs": "ログを表示",
@@ -255,5 +252,23 @@
   "fat32_warn_msg": "このファイルは 4 GB 以上あり、FAT32 の SD カードには正しく保存できません。カードが exFAT でフォーマットされている場合のみ動作します。それでもダウンロードしますか？",
   "hint_name": "このリポに名前を付ける",
   "hint_archive_id": "Archive.org ID",
-  "hint_download_url": "ダウンロードURL"
+  "hint_download_url": "ダウンロードURL",
+  "filter_exts": "ファイル拡張子を除外: %s",
+  "title_ext_filter": "ファイル拡張子フィルター",
+  "sub_ext_filter": "A 切替  X 削除  B 戻る",
+  "add_extension": "拡張子を追加...",
+  "add_ext_prompt": "非表示にするファイル拡張子を入力（例: nfo）",
+  "ext_add_failed": "拡張子を追加できませんでした",
+  "ext_filter_info": "非表示のファイル形式はファイル一覧に表示されません。",
+  "max_total_rate": "合計ダウンロード速度上限: %s",
+  "max_item_rate": "ダウンロードごとの速度上限: %s",
+  "rate_unlimited": "無制限",
+  "move_up": "1つ上のフォルダへ移動",
+  "move_up_multi": "これら%d件を親フォルダへ移動しますか？",
+  "moving": "ファイルを移動中",
+  "moving_n": "%d / %d を移動中",
+  "moved_n": "%d件を移動しました",
+  "move_partial": "%d件移動、%d件スキップ",
+  "empty_folder_delete": "「%s」は空になりました。このフォルダを削除しますか？",
+  "folder_deleted": "フォルダを削除しました"
 }

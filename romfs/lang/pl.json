@@ -170,13 +170,10 @@
   "sort_name_za": "Sortowanie: Z → A",
   "sort_size_desc": "Sortowanie: największe",
   "sort_size_asc": "Sortowanie: najmniejsze",
-
   "manage_data": "Zarządzaj danymi",
   "title_manage_data": "Zarządzaj danymi",
   "sub_manage_data": "A wybierz  B wstecz",
-
   "waiting_network": "Offline - pobieranie wznowi się po powrocie sieci",
-
   "search_capped": "%d+ wyników - doprecyzuj wyszukiwanie",
   "view_logs": "Pokaż dzienniki",
   "title_view_logs": "Pokaż dzienniki",
@@ -255,5 +252,23 @@
   "fat32_warn_msg": "Ten plik ma 4 GB lub więcej i nie zapisze się poprawnie na karcie SD FAT32. Zadziała tylko, jeśli karta jest sformatowana jako exFAT. Pobrać mimo to?",
   "hint_name": "Nadaj nazwę temu repo",
   "hint_archive_id": "Archive.org ID",
-  "hint_download_url": "URL pobierania"
+  "hint_download_url": "URL pobierania",
+  "filter_exts": "Filtruj rozszerzenia plików: %s",
+  "title_ext_filter": "Filtr rozszerzeń plików",
+  "sub_ext_filter": "A przełącz  X usuń  B wstecz",
+  "add_extension": "Dodaj rozszerzenie...",
+  "add_ext_prompt": "Wpisz rozszerzenie pliku do ukrycia (np. nfo)",
+  "ext_add_failed": "Nie udało się dodać rozszerzenia",
+  "ext_filter_info": "Ukryte typy plików nie pojawią się na liście plików.",
+  "max_total_rate": "Maks. łączna prędkość pobierania: %s",
+  "max_item_rate": "Maks. prędkość na pobieranie: %s",
+  "rate_unlimited": "Bez limitu",
+  "move_up": "Przenieś o folder wyżej",
+  "move_up_multi": "Przenieść te %d elementów do folderu nadrzędnego?",
+  "moving": "Przenoszenie plików",
+  "moving_n": "Przenoszenie %d z %d",
+  "moved_n": "Przeniesiono %d",
+  "move_partial": "Przeniesiono %d, pominięto %d",
+  "empty_folder_delete": "„%s” jest teraz pusty. Usunąć ten folder?",
+  "folder_deleted": "Usunięto folder"
 }

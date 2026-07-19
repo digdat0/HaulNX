@@ -170,13 +170,10 @@
   "sort_name_za": "Sortering: Ö → A",
   "sort_size_desc": "Sortering: störst först",
   "sort_size_asc": "Sortering: minst först",
-
   "manage_data": "Hantera data",
   "title_manage_data": "Hantera data",
   "sub_manage_data": "A välj  B tillbaka",
-
   "waiting_network": "Offline - nedladdningar återupptas när nätverket är tillbaka",
-
   "search_capped": "%d+ träffar - förfina sökningen",
   "view_logs": "Visa loggar",
   "title_view_logs": "Visa loggar",
@@ -255,5 +252,23 @@
   "fat32_warn_msg": "Den här filen är 4 GB eller större och sparas inte korrekt på ett FAT32-SD-kort. Den fungerar bara om kortet är formaterat som exFAT. Ladda ner ändå?",
   "hint_name": "Ge detta repo ett namn",
   "hint_archive_id": "Archive.org ID",
-  "hint_download_url": "Nedladdnings-URL"
+  "hint_download_url": "Nedladdnings-URL",
+  "filter_exts": "Filtrera bort filändelser: %s",
+  "title_ext_filter": "Filändelsefilter",
+  "sub_ext_filter": "A växla  X ta bort  B tillbaka",
+  "add_extension": "Lägg till ändelse...",
+  "add_ext_prompt": "Ange en filändelse att dölja (t.ex. nfo)",
+  "ext_add_failed": "Det gick inte att lägga till ändelsen",
+  "ext_filter_info": "Dolda filtyper visas inte i fillistan.",
+  "max_total_rate": "Max total nedladdningshastighet: %s",
+  "max_item_rate": "Max hastighet per nedladdning: %s",
+  "rate_unlimited": "Obegränsad",
+  "move_up": "Flytta upp en mapp",
+  "move_up_multi": "Flytta dessa %d objekt till den överordnade mappen?",
+  "moving": "Flyttar filer",
+  "moving_n": "Flyttar %d av %d",
+  "moved_n": "%d flyttade",
+  "move_partial": "%d flyttade, %d hoppades över",
+  "empty_folder_delete": "\"%s\" är nu tom. Ta bort den här mappen?",
+  "folder_deleted": "Mappen togs bort"
 }

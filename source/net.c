@@ -193,6 +193,10 @@ struct dl_ctx {
     net_progress_cb cb;
     void *ud;
     uint64_t base; /* resume offset, added to curl's session-relative counts */
+    CURL *handle;         /* the transfer's own handle, for live re-limiting */
+    net_rate_cb rate_cb;  /* live rate-cap provider (bytes/sec, 0 = unlimited) */
+    void *rate_ud;
+    uint64_t last_cap;    /* last cap applied, so we only setopt on a change */
 };
 
 static size_t file_write(void *ptr, size_t size, size_t nmemb, void *ud) {
@@ -206,6 +210,18 @@ static int xfer_info(void *ud, curl_off_t dltotal, curl_off_t dlnow,
     (void)ultotal;
     (void)ulnow;
     struct dl_ctx *d = (struct dl_ctx *)ud;
+    /* Track a live download-rate cap. curl reads MAX_RECV_SPEED_LARGE on the fly,
+     * and setopt on a handle from inside its own progress callback is allowed, so
+     * re-applying here lets the cap follow a settings change or a change in how
+     * many transfers share a global budget — without restarting the download. */
+    if (d->rate_cb) {
+        uint64_t cap = d->rate_cb(d->rate_ud);
+        if (cap != d->last_cap) {
+            curl_easy_setopt(d->handle, CURLOPT_MAX_RECV_SPEED_LARGE,
+                             (curl_off_t)cap);
+            d->last_cap = cap;
+        }
+    }
     if (d->cb) {
         uint64_t now = d->base + (uint64_t)dlnow;
         uint64_t total = dltotal > 0 ? d->base + (uint64_t)dltotal : 0;
@@ -217,6 +233,7 @@ static int xfer_info(void *ud, curl_off_t dltotal, curl_off_t dlnow,
 bool http_download(const char *url, const char *dest_path,
                    const char *extra_header,
                    net_progress_cb cb, void *userdata,
+                   net_rate_cb rate_cb, void *rate_ud,
                    uint64_t resume_from,
                    long *http_code) {
     /* Append when resuming so the existing partial file is preserved. */
@@ -244,6 +261,10 @@ bool http_download(const char *url, const char *dest_path,
     d.cb = cb;
     d.ud = userdata;
     d.base = resume_from;
+    d.handle = c;
+    d.rate_cb = rate_cb;
+    d.rate_ud = rate_ud;
+    d.last_cap = 0;
 
     struct curl_slist *hdrs = NULL;
     if (extra_header && extra_header[0]) {
@@ -264,6 +285,13 @@ bool http_download(const char *url, const char *dest_path,
     curl_easy_setopt(c, CURLOPT_LOW_SPEED_LIMIT, 30L);
     curl_easy_setopt(c, CURLOPT_LOW_SPEED_TIME, 30L);
     curl_easy_setopt(c, CURLOPT_FAILONERROR, 1L); /* treat 4xx/5xx as errors */
+    /* Seed the rate cap before the first byte so a limit is honoured from the
+     * start; xfer_info keeps it current as the setting / active count change. */
+    if (rate_cb) {
+        d.last_cap = rate_cb(rate_ud);
+        curl_easy_setopt(c, CURLOPT_MAX_RECV_SPEED_LARGE,
+                         (curl_off_t)d.last_cap);
+    }
     if (resume_from > 0) {
         curl_easy_setopt(c, CURLOPT_RESUME_FROM_LARGE,
                          (curl_off_t)resume_from);

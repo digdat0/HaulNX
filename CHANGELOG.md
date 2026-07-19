@@ -4,6 +4,36 @@ Notes for each release. `release.sh` pulls the section matching the version in
 `VERSION` and attaches it to the GitHub release. Add a `## <version>` section
 here before running a release.
 
+## 2.0.1
+
+**Download speed limits**
+- Advanced settings gains two new caps: a **total download rate** shared across every
+  active download, and a **per-download rate**. Pick from a range of presets or leave
+  either at Unlimited. The total budget is split fairly across whatever is downloading at
+  the moment and adjusts live as transfers start and finish.
+
+**Move installed files up a folder**
+- In an installed console's file view you can now mark one or more files and move them up
+  into the parent folder. Each move is an atomic same-volume rename, so interrupting it
+  (app close, power-off) never leaves a file half-moved. When the folder you emptied is
+  left with nothing in it, TicoDL+ offers to delete it.
+
+**Settings tidy-up**
+- The **Metadata cache** toggle and the **ROM folder** setting have moved out of Advanced
+  and into **Manage data**, alongside the other data and collection tools. Manage data is
+  reordered to group importing, the ROM folder, and the download/metadata folders together.
+- **Import collection** is now labelled **Import collection from computer**, to make it
+  clearer where the collection comes from.
+
+**Fixes**
+- Setting **Max downloads** above 5 now actually runs that many at once. The queue was
+  capped at 5 worker threads regardless of the setting (which allows up to 10), so a value
+  of 6–10 silently behaved as 5.
+
+**Translations**
+- Completed translations across all 24 languages for strings that were still English-only:
+  the file-extension filter, the new download speed limits, and the move-to-folder actions.
+
 ## 2.0.0
 
 **Out of beta**

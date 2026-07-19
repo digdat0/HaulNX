@@ -170,13 +170,10 @@
   "sort_name_za": "Sortare: Z → A",
   "sort_size_desc": "Sortare: cel mai mare",
   "sort_size_asc": "Sortare: cel mai mic",
-
   "manage_data": "Gestionare date",
   "title_manage_data": "Gestionare date",
   "sub_manage_data": "A selectează  B înapoi",
-
   "waiting_network": "Offline - descărcările se reiau când revine rețeaua",
-
   "search_capped": "%d+ rezultate - rafinează căutarea",
   "view_logs": "Vezi jurnalele",
   "title_view_logs": "Vezi jurnalele",
@@ -255,5 +252,23 @@
   "fat32_warn_msg": "Acest fișier are 4 GB sau mai mult și nu se va salva corect pe un card SD FAT32. Va funcționa doar dacă cardul este formatat exFAT. Descărcați oricum?",
   "hint_name": "Denumește acest repo",
   "hint_archive_id": "Archive.org ID",
-  "hint_download_url": "URL de descărcare"
+  "hint_download_url": "URL de descărcare",
+  "filter_exts": "Filtrează extensiile de fișiere: %s",
+  "title_ext_filter": "Filtru extensii de fișiere",
+  "sub_ext_filter": "A comută  X elimină  B înapoi",
+  "add_extension": "Adaugă extensie...",
+  "add_ext_prompt": "Introdu o extensie de fișier de ascuns (ex. nfo)",
+  "ext_add_failed": "Nu s-a putut adăuga extensia",
+  "ext_filter_info": "Tipurile de fișiere ascunse nu vor apărea în lista de fișiere.",
+  "max_total_rate": "Viteză totală max. de descărcare: %s",
+  "max_item_rate": "Viteză max. per descărcare: %s",
+  "rate_unlimited": "Nelimitat",
+  "move_up": "Mută cu un folder mai sus",
+  "move_up_multi": "Muți aceste %d elemente în folderul părinte?",
+  "moving": "Se mută fișierele",
+  "moving_n": "Se mută %d din %d",
+  "moved_n": "%d mutate",
+  "move_partial": "%d mutate, %d omise",
+  "empty_folder_delete": "„%s” este acum gol. Ștergi acest folder?",
+  "folder_deleted": "Folder șters"
 }

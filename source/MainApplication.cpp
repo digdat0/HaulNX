@@ -2083,6 +2083,44 @@ static std::string settings_label(const char *fmt) {
     }
     return s;
 }
+// Download-rate presets (KiB/s; 0 = unlimited), shared by both throttle rows in
+// Advanced settings. A press cycles to the next; Left/Right step by one.
+static const int kRatePresets[] = {0, 64, 128, 256, 512, 1024, 2048, 5120, 10240};
+static const int kRatePresetCount =
+    (int)(sizeof(kRatePresets) / sizeof(kRatePresets[0]));
+
+static int rate_preset_index(int kbps) {
+    // Exact preset, else the highest one not exceeding kbps (0 as the fallback).
+    int idx = 0;
+    for (int i = 0; i < kRatePresetCount; i++) {
+        if (kRatePresets[i] == kbps) return i;
+        if (kRatePresets[i] < kbps) idx = i;
+    }
+    return idx;
+}
+
+static int rate_step(int kbps, int dir) {
+    int i = rate_preset_index(kbps) + dir;
+    i = ((i % kRatePresetCount) + kRatePresetCount) % kRatePresetCount; // wrap
+    return kRatePresets[i];
+}
+
+static std::string rate_display(int kbps) {
+    if (kbps <= 0) return tr(S_RATE_UNLIMITED);
+    char v[32];
+    if (kbps >= 1024 && (kbps % 1024) == 0)
+        snprintf(v, sizeof(v), "%d MB/s", kbps / 1024);
+    else
+        snprintf(v, sizeof(v), "%d KB/s", kbps);
+    return v;
+}
+
+// Push the current throttle prefs (KiB/s) to the queue as bytes/sec.
+static void apply_rate_limits(void) {
+    queue_set_rate_limits(g_prefs.rate_all_kbps * 1024,
+                          g_prefs.rate_item_kbps * 1024);
+}
+
 // Value column colours (theme-aware).
 static pu::ui::Color onoff_color(bool on) {
     bool light = is_light_theme();
@@ -2168,27 +2206,31 @@ void MainApplication::GotoAdvanced() {
         this->layout->AddRow2(settings_label(tr(S_MAX_DOWNLOADS)), v, lbl,
                               value_color());                      // 0
     }
+    {
+        bool lim = g_prefs.rate_all_kbps > 0;
+        this->layout->AddRow2(settings_label(tr(S_MAX_TOTAL_RATE)),
+                              rate_display(g_prefs.rate_all_kbps), lbl,
+                              lim ? value_color() : onoff_color(false)); // 1
+    }
+    {
+        bool lim = g_prefs.rate_item_kbps > 0;
+        this->layout->AddRow2(settings_label(tr(S_MAX_ITEM_RATE)),
+                              rate_display(g_prefs.rate_item_kbps), lbl,
+                              lim ? value_color() : onoff_color(false)); // 2
+    }
     b = g_prefs.prevent_sleep;
     this->layout->AddRow2(settings_label(tr(S_STAY_AWAKE)),
-                          b ? tr(S_ON) : tr(S_OFF), lbl, onoff_color(b)); // 1
+                          b ? tr(S_ON) : tr(S_OFF), lbl, onoff_color(b)); // 3
     b = g_prefs.net_check;
     this->layout->AddRow2(settings_label(tr(S_NET_CHECK_STARTUP)),
-                          b ? tr(S_ON) : tr(S_OFF), lbl, onoff_color(b)); // 2
+                          b ? tr(S_ON) : tr(S_OFF), lbl, onoff_color(b)); // 4
     b = g_prefs.chk_updates;
     this->layout->AddRow2(settings_label(tr(S_CHK_UPDATES_STARTUP)),
-                          b ? tr(S_ON) : tr(S_OFF), lbl, onoff_color(b)); // 3
+                          b ? tr(S_ON) : tr(S_OFF), lbl, onoff_color(b)); // 5
     b = g_creds.access_key[0] != '\0';
     this->layout->AddRow2(settings_label(tr(S_ARCHIVE_CREDS)),
-                          b ? tr(S_SET) : tr(S_UNSET), lbl, onoff_color(b)); // 4
-    b = g_prefs.use_cache;
-    this->layout->AddRow2(settings_label(tr(S_META_CACHE)),
-                          b ? tr(S_ON) : tr(S_OFF), lbl, onoff_color(b)); // 5
-    {
-        bool custom = g_prefs.roms_override[0] != '\0';
-        this->layout->AddRow2(settings_label(tr(S_ROMS_OVERRIDE)),
-                              custom ? roms_root(&g_tico) : tr(S_ROMS_AUTO), lbl,
-                              custom ? value_color() : onoff_color(false)); // 6
-    }
+                          b ? tr(S_SET) : tr(S_UNSET), lbl, onoff_color(b)); // 6
+    /* Metadata cache toggle and ROM folder moved to Manage data. */
 }
 
 /* Browse the SD card and choose a folder to use as the ROM root. Shows only
@@ -2349,11 +2391,23 @@ void MainApplication::GotoManageData() {
     this->layout->SetTitle(tr(S_TITLE_MANAGE_DATA));
     this->layout->SetSubtitle(tr(S_SUB_MANAGE_DATA));
     this->layout->ClearMenu();
-    this->layout->AddRow(tr(S_MANAGE_DOWNLOADS)); // 0
-    this->layout->AddRow(tr(S_MANAGE_CACHE));     // 1
-    this->layout->AddRow(tr(S_REFRESH_ALL));      // 2
-    this->layout->AddRow(tr(S_IMPORT_COLLECTION)); // 3
-    this->layout->AddRow(tr(S_RESTORE_COLLECTION)); // 4
+    pu::ui::Color lbl = g_theme->row_text;
+    this->layout->AddRow(tr(S_IMPORT_COLLECTION));  // 0 receive dl_sources.json from a PC
+    this->layout->AddRow(tr(S_RESTORE_COLLECTION)); // 1 restore previous collection
+    {                                               // 2 ROM folder (moved from Advanced)
+        bool custom = g_prefs.roms_override[0] != '\0';
+        this->layout->AddRow2(settings_label(tr(S_ROMS_OVERRIDE)),
+                              custom ? roms_root(&g_tico) : tr(S_ROMS_AUTO), lbl,
+                              custom ? value_color() : onoff_color(false));
+    }
+    this->layout->AddRow(tr(S_MANAGE_DOWNLOADS));   // 3 manage downloads folder
+    this->layout->AddRow(tr(S_MANAGE_CACHE));       // 4 manage metadata cache
+    {                                               // 5 metadata cache on/off (moved from Advanced)
+        bool b = g_prefs.use_cache;
+        this->layout->AddRow2(settings_label(tr(S_META_CACHE)),
+                              b ? tr(S_ON) : tr(S_OFF), lbl, onoff_color(b));
+    }
+    this->layout->AddRow(tr(S_REFRESH_ALL));        // 6 refresh all metadata
 }
 
 // Append a timestamped line to the collection-transfer log. An import replaces
@@ -3488,6 +3542,105 @@ void MainApplication::FinishInstSearch() {
     }
 }
 
+// ---- move installed file(s) up into the parent folder ---------------------
+
+// Worker body: rename each queued file from mv_from into mv_to. Touches no UI,
+// so it runs on a background thread. A destination that already exists is left
+// alone (the parent's "proper" copy is never clobbered) and counted as skipped.
+void MainApplication::MvThread(void *arg) {
+    auto self = static_cast<MainApplication *>(arg);
+    for (const auto &name : self->mv_names) {
+        std::string from = self->mv_from + "/" + name;
+        std::string to = self->mv_to + "/" + name;
+        if (fs_exists(to.c_str())) {
+            self->mv_fail.fetch_add(1); // don't overwrite an existing file
+        } else if (fs_move(from.c_str(), to.c_str())) {
+            self->mv_ok.fetch_add(1);
+        } else {
+            self->mv_fail.fetch_add(1);
+        }
+        self->mv_idx.fetch_add(1);
+    }
+    self->mv.done = true;
+}
+
+void MainApplication::MvStart(const std::vector<std::string> &names) {
+    if (names.empty()) {
+        return;
+    }
+    this->mv_from = this->inst_path;
+    auto p = this->inst_path.find_last_of('/');
+    this->mv_to = (p == std::string::npos) ? this->inst_path
+                                           : this->inst_path.substr(0, p);
+    this->mv_names = names;
+    this->mv_idx = 0;
+    this->mv_total = (int)names.size();
+    this->mv_ok = 0;
+    this->mv_fail = 0;
+    this->layout->ShowSpinner(tr(S_MOVING));
+    if (this->mv.Start(&MainApplication::MvThread, this)) {
+        return; // MvTick drives the progress readout and the finish
+    }
+    // No worker thread available: move inline so the operation still happens,
+    // then finish immediately.
+    MvThread(this);
+    this->layout->HideSpinner();
+    this->MvFinish();
+}
+
+void MainApplication::MvTick() {
+    if (!this->mv.done) {
+        int n = (int)this->mv_idx;
+        if (n > (int)this->mv_total) {
+            n = (int)this->mv_total;
+        }
+        char s[96];
+        snprintf(s, sizeof(s), tr(S_MOVING_N), n, (int)this->mv_total);
+        this->layout->SetSubtitle(s);
+        return;
+    }
+    this->mv.Join();
+    this->layout->HideSpinner();
+    this->MvFinish();
+}
+
+void MainApplication::MvFinish() {
+    int ok = (int)this->mv_ok, fail = (int)this->mv_fail;
+    if (fail > 0) {
+        char t[96];
+        snprintf(t, sizeof(t), tr(S_MOVE_PARTIAL), ok, fail);
+        this->ToastErr(t);
+    } else {
+        char t[64];
+        snprintf(t, sizeof(t), tr(S_MOVED_N), ok);
+        this->Toast(t);
+    }
+    std::string folder = this->mv_from;
+    // Empty-folder cleanup: if the wrapper folder now holds nothing at all (the
+    // common unzip-leftover case), offer to remove it. Deletion is gated on the
+    // folder being genuinely empty — list_dir() returning nothing, re-checked
+    // right before the delete — so this can never sweep away remaining files.
+    if (ok > 0 && folder != roms_root(&g_tico) && list_dir(folder).empty()) {
+        // Land in the parent regardless of the delete choice: every file has
+        // left this folder, so re-listing the empty folder would strand the
+        // user on the "(empty)" view. The confirm dialog then sits over the
+        // parent listing they moved the files into.
+        this->GotoInstalled(this->mv_to);
+        std::string base = folder.substr(folder.find_last_of('/') + 1);
+        char msg[300];
+        snprintf(msg, sizeof(msg), tr(S_EMPTY_FOLDER_DELETE), base.c_str());
+        if (this->Confirm(tr(S_DELETE), msg) && list_dir(folder).empty() &&
+            fs_rm_rf(folder.c_str())) {
+            this->Toast(tr(S_FOLDER_DELETED));
+            this->GotoInstalled(this->mv_to); // re-list so the folder drops off
+        }
+    } else {
+        // Partial move (some files remained): re-list the folder we moved out
+        // of so the moved files drop off it.
+        this->GotoInstalled(folder);
+    }
+}
+
 void MainApplication::GotoRepoEdit(int ci, int ri) {
     this->screen = Screen::RepoEdit;
     this->sel_ci = ci;
@@ -3824,6 +3977,17 @@ void MainApplication::HandleInput(u64 down, u64 held,
             this->isearch.Join();
             this->isearch_discard = false;
         }
+    }
+
+    // A "move to parent" batch owns the UI while it runs: show (n/total)
+    // progress and swallow all input. There is intentionally no cancel — each
+    // file move is atomic, so letting the batch finish is always safe, whereas
+    // stopping halfway would just leave the folder half-moved.
+    if (this->mv.running) {
+        (void)down;
+        (void)held;
+        this->MvTick();
+        return;
     }
 
     // Release notes are fetching on a background thread: animate the spinner and
@@ -4720,36 +4884,31 @@ void MainApplication::HandleInput(u64 down, u64 held,
                 queue_set_max_dl(g_prefs.max_downloads);
                 prefs_save(&g_prefs);
                 break;
-            case 1:
-                g_prefs.prevent_sleep = !g_prefs.prevent_sleep;
+            case 1: // Max total download rate — cycle through the presets
+                g_prefs.rate_all_kbps = rate_step(g_prefs.rate_all_kbps, +1);
+                apply_rate_limits();
                 prefs_save(&g_prefs);
                 break;
-            case 2:
-                g_prefs.net_check = !g_prefs.net_check;
+            case 2: // Max rate per download — cycle through the presets
+                g_prefs.rate_item_kbps = rate_step(g_prefs.rate_item_kbps, +1);
+                apply_rate_limits();
                 prefs_save(&g_prefs);
                 break;
             case 3:
-                g_prefs.chk_updates = !g_prefs.chk_updates;
+                g_prefs.prevent_sleep = !g_prefs.prevent_sleep;
                 prefs_save(&g_prefs);
                 break;
             case 4:
-                this->GotoCreds();
-                return;
-            case 5:
-                g_prefs.use_cache = !g_prefs.use_cache;
+                g_prefs.net_check = !g_prefs.net_check;
                 prefs_save(&g_prefs);
                 break;
-            case 6: { // Custom ROM folder — browse the SD card and pick a folder
-                /* Start inside the current override if it still exists,
-                 * otherwise at the SD-card root. */
-                std::string start = "sdmc:/";
-                if (g_prefs.roms_override[0] &&
-                    fs_exists(g_prefs.roms_override)) {
-                    start = g_prefs.roms_override;
-                }
-                this->GotoRomPicker(start);
+            case 5:
+                g_prefs.chk_updates = !g_prefs.chk_updates;
+                prefs_save(&g_prefs);
+                break;
+            case 6:
+                this->GotoCreds();
                 return;
-            }
             default:
                 break;
             }
@@ -4760,13 +4919,25 @@ void MainApplication::HandleInput(u64 down, u64 held,
             }
         } else if (down & (HidNpadButton_Left | HidNpadButton_Right)) {
             s32 i = this->layout->Sel();
+            int dir = (down & HidNpadButton_Right) ? +1 : -1;
+            bool changed = true;
             if (i == 0) {
-                if (down & HidNpadButton_Right) {
+                if (dir > 0) {
                     g_prefs.max_downloads = (g_prefs.max_downloads % 10) + 1;
                 } else {
                     g_prefs.max_downloads = (g_prefs.max_downloads <= 1) ? 10 : g_prefs.max_downloads - 1;
                 }
                 queue_set_max_dl(g_prefs.max_downloads);
+            } else if (i == 1) {
+                g_prefs.rate_all_kbps = rate_step(g_prefs.rate_all_kbps, dir);
+                apply_rate_limits();
+            } else if (i == 2) {
+                g_prefs.rate_item_kbps = rate_step(g_prefs.rate_item_kbps, dir);
+                apply_rate_limits();
+            } else {
+                changed = false;
+            }
+            if (changed) {
                 prefs_save(&g_prefs);
                 s32 sel = this->layout->Sel();
                 this->GotoAdvanced();
@@ -4778,7 +4949,7 @@ void MainApplication::HandleInput(u64 down, u64 held,
 
     case Screen::RomPicker: {
         // Apply a chosen ROM root (empty string = reset to auto), then return
-        // to Advanced. queue.c holds a pointer into g_tico.roms_path, so
+        // to Manage data. queue.c holds a pointer into g_tico.roms_path, so
         // rewriting that buffer takes effect without restarting the queue.
         auto apply_roms = [&](const char *chosen) {
             char norm[512];
@@ -4791,12 +4962,12 @@ void MainApplication::HandleInput(u64 down, u64 held,
             this->inst_path = roms_root(&g_tico);
             this->Toast(norm[0] ? tr(S_ROMS_OVERRIDE_SET)
                                 : tr(S_ROMS_OVERRIDE_CLEARED));
-            this->GotoAdvanced();
+            this->GotoManageData();
         };
         bool at_root = (this->picker_path == "sdmc:/");
         if (down & HidNpadButton_B) {
             if (at_root) {
-                this->GotoAdvanced();
+                this->GotoManageData();
             } else {
                 // Up one level (never above the SD root).
                 std::string up = this->picker_path;
@@ -4949,12 +5120,40 @@ void MainApplication::HandleInput(u64 down, u64 held,
             this->GotoSettings();
         } else if (down & HidNpadButton_A) {
             switch (this->layout->Sel()) {
-            case 0: this->GotoDownloads(); return;
-            case 1: this->GotoCache(); return;
-            case 2: this->RaStart(); return;      // refresh all metadata
-            case 3: this->ImportStart(); return;  // receive dl_sources.json
-            case 4: this->RestoreBackup(); return;
+            case 0: this->ImportStart(); return;  // receive dl_sources.json
+            case 1: this->RestoreBackup(); return;
+            case 2: { // ROM folder — browse the SD card and pick a folder
+                /* Start inside the current override if it still exists,
+                 * otherwise at the SD-card root. */
+                std::string start = "sdmc:/";
+                if (g_prefs.roms_override[0] &&
+                    fs_exists(g_prefs.roms_override)) {
+                    start = g_prefs.roms_override;
+                }
+                this->GotoRomPicker(start);
+                return;
+            }
+            case 3: this->GotoDownloads(); return;
+            case 4: this->GotoCache(); return;
+            case 5: // Metadata cache on/off
+                g_prefs.use_cache = !g_prefs.use_cache;
+                prefs_save(&g_prefs);
+                break;
+            case 6: this->RaStart(); return;      // refresh all metadata
             default: break;
+            }
+            if (this->screen == Screen::ManageData) {
+                s32 sel = this->layout->Sel();
+                this->GotoManageData();
+                this->layout->SetSel(sel);
+            }
+        } else if (down & (HidNpadButton_Left | HidNpadButton_Right)) {
+            if (this->layout->Sel() == 5) { // Metadata cache on/off
+                g_prefs.use_cache = !g_prefs.use_cache;
+                prefs_save(&g_prefs);
+                s32 sel = this->layout->Sel();
+                this->GotoManageData();
+                this->layout->SetSel(sel);
             }
         }
         break;
@@ -5211,15 +5410,62 @@ void MainApplication::HandleInput(u64 down, u64 held,
             if (i >= 0 && i < (s32)g_inst.size()) {
                 if (g_inst[i].is_dir) {
                     this->GotoInstalled(this->inst_path + "/" + g_inst[i].name);
+                    break;
+                }
+                // "Move up one folder" is offered only from a *sub*folder
+                // (roms/<console>/<sub>/…), never from a console folder itself:
+                // files belong in the console folder, so we don't let them
+                // escape upward into the roms root.
+                std::string root = roms_root(&g_tico);
+                auto pp = this->inst_path.find_last_of('/');
+                std::string parent = (pp == std::string::npos)
+                                         ? this->inst_path
+                                         : this->inst_path.substr(0, pp);
+                bool can_move = this->inst_path != root && parent != root;
+                // With files marked (Y) in a movable subfolder, the dialog lists
+                // the whole selection and moves it as a batch; otherwise it acts
+                // on the single file under the cursor.
+                bool multi = can_move && this->layout->MarkedCount() > 0;
+
+                std::string content;
+                std::vector<std::string> targets;
+                if (multi) {
+                    char hdr[96];
+                    snprintf(hdr, sizeof(hdr), tr(S_MOVE_UP_MULTI),
+                             this->layout->MarkedCount());
+                    content = hdr;
+                    int shown = 0;
+                    for (s32 idx : this->layout->Marked()) {
+                        if (idx < 0 || idx >= (s32)g_inst.size()) continue;
+                        targets.push_back(g_inst[idx].name);
+                        if (shown < 12)
+                            content += "\n• " + g_inst[idx].name;
+                        else if (shown == 12)
+                            content += "\n…";
+                        shown++;
+                    }
                 } else {
                     char szline[64];
                     snprintf(szline, sizeof(szline), tr(S_SIZE_LABEL),
                              human_size(g_inst[i].size).c_str());
-                    this->CreateShowDialog(
-                        tr(S_FILE),
-                        "Path: " + this->inst_path + "\nName: " +
-                            g_inst[i].name + "\n" + szline,
-                        {tr(S_OK)}, true, {}, style_dialog);
+                    content = "Path: " + this->inst_path + "\nName: " +
+                              g_inst[i].name + "\n" + szline;
+                    targets.push_back(g_inst[i].name);
+                }
+                // OK stays the highlighted default (index 0); "Move up one
+                // folder" is the deliberate right-hand action (index 1) the user
+                // must select to execute. B cancels either way.
+                int r;
+                if (can_move) {
+                    r = this->CreateShowDialog(tr(S_FILE), content,
+                                               {tr(S_OK), tr(S_MOVE_UP)}, false,
+                                               {}, style_dialog);
+                } else {
+                    r = this->CreateShowDialog(tr(S_FILE), content, {tr(S_OK)},
+                                               true, {}, style_dialog);
+                }
+                if (can_move && r == 1 && !targets.empty()) {
+                    this->MvStart(targets);
                 }
             }
         } else if ((down & HidNpadButton_Y) && !in_cards &&
@@ -5649,6 +5895,7 @@ void MainApplication::OnLoad() {
         i18n_load(lpath);
     }
     queue_init(roms_root(&g_tico), g_prefs.max_downloads);
+    apply_rate_limits(); /* seed the throttle from saved prefs */
     cleanup_stale_parts(); // drop unresumable old-format .part leftovers
     load_console_icons();  // romfs:/icons/<key>.png, shared into list rows
 
@@ -6067,7 +6314,8 @@ void MainApplication::UpdThread(void *arg) {
     auto self = static_cast<MainApplication *>(arg);
     long code = 0;
     bool ok = http_download(self->upd_url.c_str(), self->upd_dl.c_str(), NULL,
-                            &MainApplication::UpdProgress, self, 0, &code);
+                            &MainApplication::UpdProgress, self, NULL, NULL, 0,
+                            &code);
     self->upd_ok = ok;
     self->upd.done = true;
 }

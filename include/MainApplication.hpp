@@ -730,6 +730,23 @@ class MainApplication : public pu::ui::Application {
     BgTask isearch;
     std::atomic<bool> isearch_discard{false}; // B pressed: drop the scan result
 
+    // Background "move to parent folder" for one or more Installed files. Runs on
+    // a worker so the progress overlay renders. Deliberately has no cancel: a
+    // half-cancelled batch is worse than one that finishes. Each file is an
+    // atomic same-volume rename() (fs_move), so an app close or power-off
+    // mid-batch leaves every file wholly in its old or new folder — never
+    // partial, never corrupt — and the next launch simply re-lists what is on
+    // disk. mv_names/mv_from/mv_to are fixed before the worker starts
+    // (read-only on the worker thread); the counters are atomics.
+    BgTask mv;
+    std::atomic<int> mv_idx{0};
+    std::atomic<int> mv_total{0};
+    std::atomic<int> mv_ok{0};
+    std::atomic<int> mv_fail{0};
+    std::string mv_from; // folder the files live in now (the subfolder)
+    std::string mv_to;   // parent folder they move into
+    std::vector<std::string> mv_names; // entries to move
+
     // Background release-notes fetch (Settings -> View logs -> Release notes):
     // pulls the GitHub release history off the main thread so it doesn't freeze
     // during retries. The worker fills g_relnotes; the UI renders it when done.
@@ -775,6 +792,12 @@ class MainApplication : public pu::ui::Application {
     void ISearchTick();
     void FinishInstSearch();
     static void InstSearchThread(void *arg);
+
+    // Move selected Installed file(s) up into the parent folder.
+    void MvStart(const std::vector<std::string> &names);
+    void MvTick();   // poll progress / finish; called each frame while running
+    void MvFinish(); // on the UI thread: toast, refresh, offer empty-folder delete
+    static void MvThread(void *arg);
     void GotoRepoEdit(int ci, int ri);
     void GotoPicker(Pending what);
     void GotoLog();

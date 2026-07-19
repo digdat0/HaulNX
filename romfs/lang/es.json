@@ -170,13 +170,10 @@
   "sort_name_za": "Orden: Z → A",
   "sort_size_desc": "Orden: mayor primero",
   "sort_size_asc": "Orden: menor primero",
-
   "manage_data": "Gestionar datos",
   "title_manage_data": "Gestionar datos",
   "sub_manage_data": "A seleccionar  B volver",
-
   "waiting_network": "Sin conexión - las descargas se reanudarán cuando vuelva la red",
-
   "search_capped": "%d+ resultados - afina tu búsqueda",
   "view_logs": "Ver registros",
   "title_view_logs": "Ver registros",
@@ -255,5 +252,23 @@
   "fat32_warn_msg": "Este archivo es de 4 GB o más y no se guardará correctamente en una tarjeta SD FAT32. Solo funcionará si la tarjeta está formateada como exFAT. ¿Descargar de todos modos?",
   "hint_name": "Dale un nombre a este repo",
   "hint_archive_id": "Archive.org ID",
-  "hint_download_url": "URL de descarga"
+  "hint_download_url": "URL de descarga",
+  "filter_exts": "Filtrar extensiones de archivo: %s",
+  "title_ext_filter": "Filtro de extensiones de archivo",
+  "sub_ext_filter": "A alternar  X quitar  B volver",
+  "add_extension": "Añadir extensión...",
+  "add_ext_prompt": "Introduce una extensión de archivo a ocultar (p. ej. nfo)",
+  "ext_add_failed": "No se pudo añadir la extensión",
+  "ext_filter_info": "Los tipos de archivo ocultos no aparecerán en la lista de archivos.",
+  "max_total_rate": "Velocidad total máx.: %s",
+  "max_item_rate": "Velocidad máx. por descarga: %s",
+  "rate_unlimited": "Sin límite",
+  "move_up": "Subir una carpeta",
+  "move_up_multi": "¿Mover estos %d elementos a la carpeta principal?",
+  "moving": "Moviendo archivos",
+  "moving_n": "Moviendo %d de %d",
+  "moved_n": "%d movidos",
+  "move_partial": "%d movidos, %d omitidos",
+  "empty_folder_delete": "«%s» ahora está vacía. ¿Eliminar esta carpeta?",
+  "folder_deleted": "Carpeta eliminada"
 }

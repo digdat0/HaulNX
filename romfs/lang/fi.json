@@ -170,13 +170,10 @@
   "sort_name_za": "Lajittelu: Ö → A",
   "sort_size_desc": "Lajittelu: suurin ensin",
   "sort_size_asc": "Lajittelu: pienin ensin",
-
   "manage_data": "Hallitse tietoja",
   "title_manage_data": "Hallitse tietoja",
   "sub_manage_data": "A valitse  B takaisin",
-
   "waiting_network": "Offline - lataukset jatkuvat, kun verkko palaa",
-
   "search_capped": "%d+ tulosta - tarkenna hakua",
   "view_logs": "Näytä lokit",
   "title_view_logs": "Näytä lokit",
@@ -255,5 +252,23 @@
   "fat32_warn_msg": "Tämä tiedosto on vähintään 4 Gt eikä tallennu oikein FAT32-SD-kortille. Se toimii vain, jos kortti on alustettu exFAT-muotoon. Ladataanko silti?",
   "hint_name": "Anna tälle repolle nimi",
   "hint_archive_id": "Archive.org ID",
-  "hint_download_url": "Latauksen URL"
+  "hint_download_url": "Latauksen URL",
+  "filter_exts": "Suodata tiedostopäätteet: %s",
+  "title_ext_filter": "Tiedostopäätteiden suodatin",
+  "sub_ext_filter": "A vaihda  X poista  B takaisin",
+  "add_extension": "Lisää pääte...",
+  "add_ext_prompt": "Anna piilotettava tiedostopääte (esim. nfo)",
+  "ext_add_failed": "Päätettä ei voitu lisätä",
+  "ext_filter_info": "Piilotetut tiedostotyypit eivät näy tiedostoluettelossa.",
+  "max_total_rate": "Latauksen kokonaisnopeus enint.: %s",
+  "max_item_rate": "Latauskohtainen nopeus enint.: %s",
+  "rate_unlimited": "Rajoittamaton",
+  "move_up": "Siirrä yksi kansio ylös",
+  "move_up_multi": "Siirretäänkö nämä %d kohdetta yläkansioon?",
+  "moving": "Siirretään tiedostoja",
+  "moving_n": "Siirretään %d/%d",
+  "moved_n": "Siirretty %d",
+  "move_partial": "Siirretty %d, ohitettu %d",
+  "empty_folder_delete": "”%s” on nyt tyhjä. Poistetaanko tämä kansio?",
+  "folder_deleted": "Kansio poistettu"
 }

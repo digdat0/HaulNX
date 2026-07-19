@@ -170,13 +170,10 @@
   "sort_name_za": "Sortering: Z → A",
   "sort_size_desc": "Sortering: grootste eerst",
   "sort_size_asc": "Sortering: kleinste eerst",
-
   "manage_data": "Gegevens beheren",
   "title_manage_data": "Gegevens beheren",
   "sub_manage_data": "A selecteren  B terug",
-
   "waiting_network": "Offline - downloads hervatten zodra het netwerk terug is",
-
   "search_capped": "%d+ resultaten - verfijn je zoekopdracht",
   "view_logs": "Logboeken bekijken",
   "title_view_logs": "Logboeken bekijken",
@@ -255,5 +252,23 @@
   "fat32_warn_msg": "Dit bestand is 4 GB of groter en wordt niet correct opgeslagen op een FAT32-SD-kaart. Het werkt alleen als de kaart als exFAT is geformatteerd. Toch downloaden?",
   "hint_name": "Geef deze repo een naam",
   "hint_archive_id": "Archive.org ID",
-  "hint_download_url": "Download-URL"
+  "hint_download_url": "Download-URL",
+  "filter_exts": "Bestandsextensies filteren: %s",
+  "title_ext_filter": "Bestandsextensiefilter",
+  "sub_ext_filter": "A schakelen  X verwijderen  B terug",
+  "add_extension": "Extensie toevoegen...",
+  "add_ext_prompt": "Voer een bestandsextensie in om te verbergen (bijv. nfo)",
+  "ext_add_failed": "Kon extensie niet toevoegen",
+  "ext_filter_info": "Verborgen bestandstypen verschijnen niet in de bestandslijst.",
+  "max_total_rate": "Max. totale downloadsnelheid: %s",
+  "max_item_rate": "Max. snelheid per download: %s",
+  "rate_unlimited": "Onbeperkt",
+  "move_up": "Eén map omhoog verplaatsen",
+  "move_up_multi": "Deze %d items naar de bovenliggende map verplaatsen?",
+  "moving": "Bestanden verplaatsen",
+  "moving_n": "%d van %d verplaatsen",
+  "moved_n": "%d verplaatst",
+  "move_partial": "%d verplaatst, %d overgeslagen",
+  "empty_folder_delete": "\"%s\" is nu leeg. Deze map verwijderen?",
+  "folder_deleted": "Map verwijderd"
 }

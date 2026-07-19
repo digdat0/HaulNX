@@ -170,13 +170,10 @@
   "sort_name_za": "排序: Z → A",
   "sort_size_desc": "排序: 最大优先",
   "sort_size_asc": "排序: 最小优先",
-
   "manage_data": "数据管理",
   "title_manage_data": "数据管理",
   "sub_manage_data": "A 选择  B 返回",
-
   "waiting_network": "离线 - 网络恢复后下载将自动继续",
-
   "search_capped": "超过 %d 条结果 - 请细化搜索",
   "view_logs": "查看日志",
   "title_view_logs": "查看日志",
@@ -255,5 +252,23 @@
   "fat32_warn_msg": "此文件大小为 4 GB 或更大，在 FAT32 SD 卡上无法正确保存。仅当 SD 卡格式化为 exFAT 时才可用。仍要下载吗？",
   "hint_name": "为此仓库命名",
   "hint_archive_id": "Archive.org ID",
-  "hint_download_url": "下载 URL"
+  "hint_download_url": "下载 URL",
+  "filter_exts": "过滤文件扩展名：%s",
+  "title_ext_filter": "文件扩展名过滤",
+  "sub_ext_filter": "A 切换  X 移除  B 返回",
+  "add_extension": "添加扩展名...",
+  "add_ext_prompt": "输入要隐藏的文件扩展名（例如 nfo）",
+  "ext_add_failed": "无法添加扩展名",
+  "ext_filter_info": "隐藏的文件类型不会出现在文件列表中。",
+  "max_total_rate": "总下载速度上限：%s",
+  "max_item_rate": "每个下载速度上限：%s",
+  "rate_unlimited": "无限制",
+  "move_up": "上移一个文件夹",
+  "move_up_multi": "将这 %d 个项目移动到上级文件夹？",
+  "moving": "正在移动文件",
+  "moving_n": "正在移动 %d / %d",
+  "moved_n": "已移动 %d 个",
+  "move_partial": "已移动 %d 个，跳过 %d 个",
+  "empty_folder_delete": "“%s”现在为空。删除此文件夹？",
+  "folder_deleted": "已删除文件夹"
 }

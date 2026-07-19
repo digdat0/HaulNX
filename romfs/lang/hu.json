@@ -170,13 +170,10 @@
   "sort_name_za": "Rendezés: Z → A",
   "sort_size_desc": "Rendezés: legnagyobb először",
   "sort_size_asc": "Rendezés: legkisebb először",
-
   "manage_data": "Adatok kezelése",
   "title_manage_data": "Adatok kezelése",
   "sub_manage_data": "A kiválaszt  B vissza",
-
   "waiting_network": "Offline - a letöltések folytatódnak, ha a hálózat visszatér",
-
   "search_capped": "%d+ találat - pontosítsd a keresést",
   "view_logs": "Naplók megtekintése",
   "title_view_logs": "Naplók megtekintése",
@@ -255,5 +252,23 @@
   "fat32_warn_msg": "Ez a fájl legalább 4 GB, és FAT32 SD-kártyán nem menthető megfelelően. Csak akkor működik, ha a kártya exFAT formátumú. Mégis letölti?",
   "hint_name": "Adjon nevet ennek a tárolónak",
   "hint_archive_id": "Archive.org ID",
-  "hint_download_url": "Letöltési URL"
+  "hint_download_url": "Letöltési URL",
+  "filter_exts": "Fájlkiterjesztések szűrése: %s",
+  "title_ext_filter": "Fájlkiterjesztés-szűrő",
+  "sub_ext_filter": "A váltás  X eltávolítás  B vissza",
+  "add_extension": "Kiterjesztés hozzáadása...",
+  "add_ext_prompt": "Adj meg egy elrejtendő fájlkiterjesztést (pl. nfo)",
+  "ext_add_failed": "Nem sikerült hozzáadni a kiterjesztést",
+  "ext_filter_info": "A rejtett fájltípusok nem jelennek meg a fájllistában.",
+  "max_total_rate": "Max. teljes letöltési sebesség: %s",
+  "max_item_rate": "Max. sebesség letöltésenként: %s",
+  "rate_unlimited": "Korlátlan",
+  "move_up": "Mozgatás egy mappával feljebb",
+  "move_up_multi": "Áthelyezi ezt a(z) %d elemet a szülőmappába?",
+  "moving": "Fájlok mozgatása",
+  "moving_n": "%d / %d mozgatása",
+  "moved_n": "%d áthelyezve",
+  "move_partial": "%d áthelyezve, %d kihagyva",
+  "empty_folder_delete": "A(z) „%s” most üres. Törli ezt a mappát?",
+  "folder_deleted": "Mappa törölve"
 }

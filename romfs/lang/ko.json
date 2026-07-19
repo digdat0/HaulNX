@@ -170,13 +170,10 @@
   "sort_name_za": "정렬: Z → A",
   "sort_size_desc": "정렬: 큰 순서",
   "sort_size_asc": "정렬: 작은 순서",
-
   "manage_data": "데이터 관리",
   "title_manage_data": "데이터 관리",
   "sub_manage_data": "A 선택  B 뒤로",
-
   "waiting_network": "오프라인 - 네트워크가 복구되면 다운로드가 재개됩니다",
-
   "search_capped": "%d개 이상 - 검색어를 구체화하세요",
   "view_logs": "로그 보기",
   "title_view_logs": "로그 보기",
@@ -255,5 +252,23 @@
   "fat32_warn_msg": "이 파일은 4GB 이상이며 FAT32 SD 카드에 올바르게 저장되지 않습니다. 카드가 exFAT로 포맷된 경우에만 작동합니다. 그래도 다운로드할까요?",
   "hint_name": "이 저장소의 이름 지정",
   "hint_archive_id": "Archive.org ID",
-  "hint_download_url": "다운로드 URL"
+  "hint_download_url": "다운로드 URL",
+  "filter_exts": "파일 확장자 필터링: %s",
+  "title_ext_filter": "파일 확장자 필터",
+  "sub_ext_filter": "A 전환  X 제거  B 뒤로",
+  "add_extension": "확장자 추가...",
+  "add_ext_prompt": "숨길 파일 확장자를 입력하세요 (예: nfo)",
+  "ext_add_failed": "확장자를 추가할 수 없습니다",
+  "ext_filter_info": "숨긴 파일 형식은 파일 목록에 표시되지 않습니다.",
+  "max_total_rate": "전체 다운로드 속도 제한: %s",
+  "max_item_rate": "다운로드당 속도 제한: %s",
+  "rate_unlimited": "무제한",
+  "move_up": "한 폴더 위로 이동",
+  "move_up_multi": "이 %d개 항목을 상위 폴더로 이동할까요?",
+  "moving": "파일 이동 중",
+  "moving_n": "%d/%d 이동 중",
+  "moved_n": "%d개 이동됨",
+  "move_partial": "%d개 이동, %d개 건너뜀",
+  "empty_folder_delete": "\"%s\"이(가) 비었습니다. 이 폴더를 삭제할까요?",
+  "folder_deleted": "폴더가 삭제됨"
 }

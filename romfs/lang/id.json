@@ -170,13 +170,10 @@
   "sort_name_za": "Urutan: Z → A",
   "sort_size_desc": "Urutan: terbesar",
   "sort_size_asc": "Urutan: terkecil",
-
   "manage_data": "Kelola data",
   "title_manage_data": "Kelola data",
   "sub_manage_data": "A pilih  B kembali",
-
   "waiting_network": "Offline - unduhan dilanjutkan saat jaringan kembali",
-
   "search_capped": "%d+ hasil - persempit pencarian",
   "view_logs": "Lihat log",
   "title_view_logs": "Lihat log",
@@ -255,5 +252,23 @@
   "fat32_warn_msg": "File ini berukuran 4 GB atau lebih dan tidak akan tersimpan dengan benar di kartu SD FAT32. Hanya berfungsi jika kartu diformat exFAT. Tetap unduh?",
   "hint_name": "Beri nama repo ini",
   "hint_archive_id": "Archive.org ID",
-  "hint_download_url": "URL unduhan"
+  "hint_download_url": "URL unduhan",
+  "filter_exts": "Saring ekstensi file: %s",
+  "title_ext_filter": "Filter ekstensi file",
+  "sub_ext_filter": "A alihkan  X hapus  B kembali",
+  "add_extension": "Tambah ekstensi...",
+  "add_ext_prompt": "Masukkan ekstensi file untuk disembunyikan (mis. nfo)",
+  "ext_add_failed": "Tidak dapat menambah ekstensi",
+  "ext_filter_info": "Tipe file yang disembunyikan tidak akan muncul di daftar file.",
+  "max_total_rate": "Kecepatan unduh total maks.: %s",
+  "max_item_rate": "Kecepatan maks. per unduhan: %s",
+  "rate_unlimited": "Tanpa batas",
+  "move_up": "Pindah naik satu folder",
+  "move_up_multi": "Pindahkan %d item ini ke folder induk?",
+  "moving": "Memindahkan file",
+  "moving_n": "Memindahkan %d dari %d",
+  "moved_n": "%d dipindahkan",
+  "move_partial": "%d dipindahkan, %d dilewati",
+  "empty_folder_delete": "\"%s\" sekarang kosong. Hapus folder ini?",
+  "folder_deleted": "Folder dihapus"
 }

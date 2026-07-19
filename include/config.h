@@ -91,6 +91,9 @@ typedef struct {
     bool group_consoles; /* true: main list shows consoles (open to see repos);
                             false: flat list, one row per repo */
     int max_downloads;   /* 1–10; how many downloads run simultaneously (default 1) */
+    int rate_all_kbps;   /* global download cap across ALL active downloads, in
+                            KiB/s (0 = unlimited, the default) */
+    int rate_item_kbps;  /* per-download cap, in KiB/s (0 = unlimited, default) */
     bool net_check;      /* true: warn on startup if no network (default true) */
     bool chk_updates;    /* true: silently check GitHub for an app update on
                             startup (only when network is up); advise, never

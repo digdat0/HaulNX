@@ -57,15 +57,23 @@ typedef struct {
 /* Start/stop the background worker threads. Call after net_init / before net_exit.
  * roms_root is the base ROM directory (e.g. "sdmc:/tico/roms"); the pointer must
  * remain valid for the lifetime of the queue. max_dl is the number of concurrent
- * download threads (1–5, clamped). */
+ * download threads (1–10, clamped). */
 void queue_init(const char *roms_root, int max_dl);
 void queue_exit(void);
 
-/* Change the concurrent-download limit (1–5, clamped) at runtime. Takes effect
+/* Change the concurrent-download limit (1–10, clamped) at runtime. Takes effect
  * immediately in both directions: raising it starts more queued items; lowering
  * it pauses the newest in-flight downloads (keeping their .part), which resume
  * automatically, in order, as slots free up. */
 void queue_set_max_dl(int n);
+
+/* Set the download-rate limits (both in bytes/sec, 0 = unlimited) at runtime.
+ * all_bps caps the combined rate of every active download; item_bps caps each
+ * one individually. Takes effect on in-flight transfers within a fraction of a
+ * second. The global budget is shared fair-share: each active download is capped
+ * at min(item_bps, all_bps / active_downloads), recomputed as transfers start
+ * and finish, with a small floor so a tiny budget can't stall a transfer. */
+void queue_set_rate_limits(int all_bps, int item_bps);
 
 /* Enqueue a download. Returns false if the queue is full. md5 may be "" or NULL
  * when no checksum is known. */
