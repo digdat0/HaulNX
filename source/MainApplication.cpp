@@ -70,7 +70,7 @@ struct AppTheme {
     pu::ui::Color header_bg;    // header rectangle
     pu::ui::Color tab_bar_bg;   // tab strip
     pu::ui::Color footer_bg;    // footer rectangle
-    pu::ui::Color title_clr;    // "TicoDL+" title text
+    pu::ui::Color title_clr;    // "HaulNX" title text
     pu::ui::Color status_clr;   // status text top-right
     pu::ui::Color tab_clr;      // inactive tab text
     pu::ui::Color tab_active;   // active tab text
@@ -139,6 +139,14 @@ static void load_console_icons() {
         "nes", "snes", "n64", "gb", "gbc", "gba", "3ds", "nds", "gc", "wii",
         "genesis", "master-system", "game-gear", "sega-cd", "saturn", "dc",
         "atomiswave", "naomi", "psx", "ps2", "psp", "default",
+        // consoles added with the 52-console expansion
+        "fds", "virtual-boy", "pokemon-mini", "game-and-watch", "sg-1000",
+        "sega-32x", "pc-engine", "pc-engine-cd", "supergrafx", "pc-fx",
+        "neo-geo", "neo-geo-cd", "neo-geo-pocket", "neo-geo-pocket-color",
+        "atari-2600", "atari-5200", "atari-7800", "atari-lynx", "atari-jaguar",
+        "wonderswan", "wonderswan-color", "colecovision", "intellivision",
+        "odyssey2", "vectrex", "3do", "cd-i", "supervision",
+        "channel-f", "arcade", "fbneo",
         // settings-screen card icons (same cache, "set-" prefixed keys)
         "set-updates", "set-ui", "set-advanced", "set-logs", "set-data",
         "set-credits"};
@@ -220,27 +228,67 @@ static const char *console_full_name(const char *abbr) {
         const char *key;
         const char *name;
     } map[] = {
+        // Nintendo
         {"nes", "Nintendo Entertainment System"},
+        {"fds", "Famicom Disk System"},
         {"snes", "Super Nintendo Entertainment System"},
         {"n64", "Nintendo 64"},
         {"gb", "Game Boy"},
         {"gbc", "Game Boy Color"},
         {"gba", "Game Boy Advance"},
-        {"3ds", "Nintendo 3DS"},
         {"nds", "Nintendo DS"},
+        {"3ds", "Nintendo 3DS"},
         {"gc", "Nintendo GameCube"},
         {"wii", "Nintendo Wii"},
-        {"genesis", "Sega Genesis"},
+        {"virtual-boy", "Nintendo Virtual Boy"},
+        {"pokemon-mini", "Pokemon Mini"},
+        {"game-and-watch", "Nintendo Game & Watch"},
+        // Sega
+        {"sg-1000", "Sega SG-1000"},
         {"master-system", "Sega Master System"},
         {"game-gear", "Sega Game Gear"},
+        {"genesis", "Sega Genesis"},
         {"sega-cd", "Sega CD"},
+        {"sega-32x", "Sega 32X"},
         {"saturn", "Sega Saturn"},
         {"dc", "Sega Dreamcast"},
-        {"atomiswave", "Sammy Atomiswave"},
-        {"naomi", "Sega NAOMI"},
+        // Sony
         {"psx", "Sony PlayStation"},
         {"ps2", "Sony PlayStation 2"},
         {"psp", "Sony PlayStation Portable"},
+        // NEC
+        {"pc-engine", "NEC PC Engine"},
+        {"pc-engine-cd", "NEC PC Engine CD"},
+        {"supergrafx", "NEC SuperGrafx"},
+        {"pc-fx", "NEC PC-FX"},
+        // SNK
+        {"neo-geo", "SNK Neo Geo"},
+        {"neo-geo-cd", "SNK Neo Geo CD"},
+        {"neo-geo-pocket", "SNK Neo Geo Pocket"},
+        {"neo-geo-pocket-color", "SNK Neo Geo Pocket Color"},
+        // Atari
+        {"atari-2600", "Atari 2600"},
+        {"atari-5200", "Atari 5200"},
+        {"atari-7800", "Atari 7800"},
+        {"atari-lynx", "Atari Lynx"},
+        {"atari-jaguar", "Atari Jaguar"},
+        // Bandai
+        {"wonderswan", "Bandai WonderSwan"},
+        {"wonderswan-color", "Bandai WonderSwan Color"},
+        // Other home consoles
+        {"colecovision", "ColecoVision"},
+        {"intellivision", "Mattel Intellivision"},
+        {"odyssey2", "Magnavox Odyssey 2"},
+        {"vectrex", "GCE Vectrex"},
+        {"channel-f", "Fairchild Channel F"},
+        {"3do", "3DO Interactive Multiplayer"},
+        {"cd-i", "Philips CD-i"},
+        {"supervision", "Watara Supervision"},
+        // Arcade
+        {"atomiswave", "Sammy Atomiswave"},
+        {"naomi", "Sega NAOMI"},
+        {"arcade", "Arcade"},
+        {"fbneo", "FinalBurn Neo"},
     };
     for (size_t i = 0; i < sizeof(map) / sizeof(map[0]); i++) {
         if (strcasecmp(abbr, map[i].key) == 0) {
@@ -876,8 +924,8 @@ void MainApplication::SetLaunchPath(const std::string &p) { g_launch_path = p; }
 
 // Resolve which .nro the self-update should overwrite. Prefer the actual launch
 // path (argv[0]); otherwise probe the documented install locations; finally
-// fall back to the default. This handles both sdmc:/switch/TicoDLplus/...nro
-// and sdmc:/switch/TicoDLplus.nro.
+// fall back to the default. This handles both sdmc:/switch/HaulNX/...nro
+// and sdmc:/switch/HaulNX.nro.
 static std::string resolve_self_path() {
     if (g_launch_path.size() >= 4 &&
         strcasecmp(g_launch_path.c_str() + g_launch_path.size() - 4, ".nro") ==
@@ -885,8 +933,8 @@ static std::string resolve_self_path() {
         fs_exists(g_launch_path.c_str())) {
         return g_launch_path;
     }
-    const char *candidates[] = {"sdmc:/switch/TicoDLplus/TicoDLplus.nro",
-                                "sdmc:/switch/TicoDLplus.nro"};
+    const char *candidates[] = {"sdmc:/switch/HaulNX/HaulNX.nro",
+                                "sdmc:/switch/HaulNX.nro"};
     for (const char *c : candidates) {
         if (fs_exists(c)) {
             return std::string(c);
@@ -1100,21 +1148,22 @@ MainLayout::MainLayout() : Layout::Layout() {
     this->Add(this->header_logo);
 
     const s32 title_x = g_header_logo ? logo_x + logo_sz + 16 : 45;
-    // Tri-colour wordmark echoing the icon lockup; constant colours since the
-    // header shell stays charcoal in both themes.
+    // Two-tone "HaulNX" wordmark echoing the icon lockup; constant colours
+    // since the header shell stays charcoal in both themes.
     s32 wx = title_x;
-    // Lowercase wordmark matching the repo editor's "ticodl+": tico green,
-    // dl off-white, + accent-blue — using the editor's exact CSS colours
-    // (--green #8fd329, --text #e7eaf0, --accent-lite #5aa0f5).
-    this->wm_tico = pu::ui::elm::TextBlock::New(wx, 24, "tico");
+    // "Haul" in green, "NX" in accent-blue — the icon's palette
+    // (--green #8fd329, --accent-lite #5aa0f5). wm_tico/wm_dl/wm_plus are
+    // legacy member names carried over from the old three-part lockup; the
+    // third block is now unused (empty).
+    this->wm_tico = pu::ui::elm::TextBlock::New(wx, 24, "Haul");
     this->wm_tico->SetColor(pu::ui::Color(143, 211, 41, 255));
     this->Add(this->wm_tico);
     wx += this->wm_tico->GetWidth();
-    this->wm_dl = pu::ui::elm::TextBlock::New(wx, 24, "dl");
-    this->wm_dl->SetColor(pu::ui::Color(231, 234, 240, 255));
+    this->wm_dl = pu::ui::elm::TextBlock::New(wx, 24, "NX");
+    this->wm_dl->SetColor(pu::ui::Color(90, 160, 245, 255));
     this->Add(this->wm_dl);
     wx += this->wm_dl->GetWidth();
-    this->wm_plus = pu::ui::elm::TextBlock::New(wx, 24, "+");
+    this->wm_plus = pu::ui::elm::TextBlock::New(wx, 24, "");
     this->wm_plus->SetColor(pu::ui::Color(90, 160, 245, 255));
     this->Add(this->wm_plus);
     wx += this->wm_plus->GetWidth();
@@ -1624,6 +1673,10 @@ void MainLayout::AddRow2(const std::string &left, const std::string &right,
                          bool accent, bool pill, bool pin, s32 bar) {
     this->list->AddRow2(left, right, lclr, rclr, progress, icon, prefix, accent,
                         pill, pin, bar);
+}
+void MainLayout::SetRowRight(s32 i, const std::string &right,
+                             pu::ui::Color rclr) {
+    this->list->SetRowRight(i, right, rclr);
 }
 s32 MainLayout::Sel() {
     return this->cards_mode ? this->grid->GetSelected()
@@ -2452,8 +2505,10 @@ void MainApplication::ImportStart(bool onboarding) {
     this->imp_open = true;
     this->imp_grace = 0; // nothing pending from a previous import
     // Only once the server is up: the early returns above leave the caller
-    // where it was, so the flag must not outlive a start that never happened.
+    // where it was, so the flags must not outlive a start that never happened.
     this->imp_onboard = onboarding;
+    this->imp_nro = false;
+    this->imp_prog = false;
     this->screen = Screen::Import;
 
     char url[96];
@@ -2467,9 +2522,44 @@ void MainApplication::ImportStart(bool onboarding) {
     // The console is the instruction sheet until the user reaches the page, so
     // it carries the address and the steps: badge, URL, then what to do. The
     // accent chip points power users at the other way in — pushing straight from
-    // the repo editor on GitHub.
+    // the app utility on GitHub.
     this->layout->SetEmptyState(g_header_logo, url, tr(S_IMPORT_STEPS), true,
                                 tr(S_IMPORT_REPO_NOTE));
+}
+
+// The Wi-Fi half of Settings > Check for updates: the exact Import receiver,
+// dressed for an app build — the served page and the on-screen steps talk
+// about the .nro, and the flow returns to Settings instead of Manage data.
+// The receiver itself still routes by content, so either screen forgives a
+// file meant for the other.
+void MainApplication::UpdateWifiStart() {
+    char ip[64];
+    if (!httpsrv_local_ip(ip, sizeof(ip))) {
+        this->ToastErr(tr(S_IMPORT_NO_NET));
+        return;
+    }
+    if (!httpsrv_open(&this->imp_srv)) {
+        this->ToastErr(tr(S_IMPORT_SRV_FAIL));
+        return;
+    }
+    this->imp_srv.nro_page = true; // browser gets the update page, not import
+    this->imp_open = true;
+    this->imp_grace = 0;
+    this->imp_onboard = false;
+    this->imp_nro = true;
+    this->imp_prog = false;
+    this->screen = Screen::Import;
+
+    char url[96];
+    snprintf(url, sizeof(url), "http://%s:%d", ip, HTTPSRV_PORT);
+
+    xfer_log("listening  %s (app update)", url);
+
+    this->layout->SetTitle(tr(S_UPDATE_WIFI_TITLE));
+    this->layout->SetSubtitle(tr(S_SUB_IMPORT));
+    this->layout->ClearMenu();
+    this->layout->SetEmptyState(g_header_logo, url, tr(S_UPDATE_WIFI_STEPS),
+                                true, tr(S_IMPORT_REPO_NOTE));
 }
 
 // Every way out of the import flow comes through here. A first-run import is
@@ -2478,9 +2568,13 @@ void MainApplication::ImportStart(bool onboarding) {
 // collections they just imported.
 void MainApplication::ImportReturn() {
     bool onboard = this->imp_onboard;
+    bool nro = this->imp_nro;
     this->imp_onboard = false; // one-shot: only the import it was set for
+    this->imp_nro = false;
     if (onboard) {
         this->GotoHome();
+    } else if (nro) {
+        this->GotoSettings(); // update-over-Wi-Fi came from Settings
     } else {
         this->GotoManageData();
     }
@@ -2522,6 +2616,22 @@ void MainApplication::ImportTick() {
     }
     if (this->ImportPoll() == 1) {
         this->imp_grace = IMPORT_GRACE_FRAMES;
+        return;
+    }
+    // Live progress while an upload is arriving (the receiver reads a slice
+    // per frame). Put the waiting text back once the transfer ends however it
+    // ends — completion is handled above, but an aborted client just vanishes.
+    size_t now = 0, total = 0;
+    if (httpsrv_receiving(&this->imp_srv, &now, &total)) {
+        char sub[128];
+        snprintf(sub, sizeof(sub), tr(S_RECV_PROGRESS),
+                 (int)((now * 100) / total), human_size(now).c_str(),
+                 human_size(total).c_str());
+        this->layout->SetSubtitle(sub);
+        this->imp_prog = true;
+    } else if (this->imp_prog) {
+        this->layout->SetSubtitle(tr(S_SUB_IMPORT));
+        this->imp_prog = false;
     }
 }
 
@@ -2535,6 +2645,13 @@ void MainApplication::ImportApply() {
     this->ImportStop();
     if (!body) {
         this->ImportReturn();
+        return;
+    }
+
+    // An .nro build pushed instead of a collection: same receiver, different
+    // ending — it goes through the self-update staging, not the config import.
+    if (len > 0x18 && memcmp(body + 0x10, "NRO0", 4) == 0) {
+        this->NroApply(body, len); // takes ownership of body
         return;
     }
 
@@ -2578,10 +2695,127 @@ void MainApplication::ImportApply() {
     this->ImportReturn();
 }
 
+// ---- an .nro build pushed over the same receiver --------------------------
+// For testing new builds without plugging the console in over USB: the repo
+// editor (or the upload page) sends an .nro, and it goes through the exact
+// staging the GitHub self-update uses — written to "<self>.new", swapped in by
+// main() on the next launch. Same version as the installed one is fine; that
+// is the point when iterating on a build.
+
+// Read the display version out of an NRO's embedded NACP, straight from the
+// upload buffer. Best-effort: homebrew NROs carry an "ASET" section after the
+// image (icon/nacp/romfs); the NACP's display_version lives at 0x3060.
+static bool nro_buf_version(const char *b, size_t n, char *out, size_t out_sz) {
+    out[0] = '\0';
+    if (n < 0x40 || memcmp(b + 0x10, "NRO0", 4) != 0) {
+        return false;
+    }
+    u32 img = 0;
+    memcpy(&img, b + 0x18, 4); // total image size; the ASET header follows it
+    if (img == 0 || (size_t)img + 0x38 > n || memcmp(b + img, "ASET", 4) != 0) {
+        return false;
+    }
+    u64 noff = 0, nsz = 0;
+    memcpy(&noff, b + img + 0x18, 8); // NACP offset within the asset section
+    memcpy(&nsz, b + img + 0x20, 8);
+    size_t avail = n - img; // bytes on hand after the image
+    if (nsz < 0x3070 || noff > avail || nsz > avail - noff) {
+        return false;
+    }
+    const char *dv = b + img + noff + 0x3060; // NacpStruct.display_version
+    size_t m = out_sz - 1 < 0x10 ? out_sz - 1 : 0x10; // 0x10 bytes, NUL-padded
+    memcpy(out, dv, m);
+    out[m] = '\0';
+    return out[0] != '\0';
+}
+
+void MainApplication::NroApply(char *body, size_t len) {
+    char ver[24];
+    if (!nro_buf_version(body, len, ver, sizeof(ver))) {
+        snprintf(ver, sizeof(ver), "?");
+    }
+    xfer_log("received   app build v%s (%zu bytes)", ver, len);
+
+    char msg[512];
+    snprintf(msg, sizeof(msg), tr(S_NRO_CONFIRM), ver, human_size(len).c_str(),
+             APP_VERSION_STR);
+    if (!this->ConfirmDanger(tr(S_TITLE_UPDATE), msg)) {
+        xfer_log("cancelled  app build v%s not installed", ver);
+        free(body);
+        this->ImportReturn();
+        return;
+    }
+
+    // Stage next to the running NRO. It can't be replaced while it runs (the
+    // loader keeps it open), so main() finishes the swap on the next launch —
+    // keeping the old build as "<self>.previous", like the GitHub update.
+    std::string selfp = resolve_self_path();
+    std::string stage = selfp + ".new";
+    remove(stage.c_str()); // clear a stale stage so the write can land
+    bool ok = false;
+    FILE *f = fopen(stage.c_str(), "wb");
+    if (f) {
+        ok = fwrite(body, 1, len, f) == len;
+        if (fclose(f) != 0) {
+            ok = false;
+        }
+    }
+    free(body);
+    if (ok) {
+        ok = looks_like_nro(stage.c_str());
+    }
+    if (!ok) {
+        remove(stage.c_str()); // don't leave a half-written stage behind
+        xfer_log("FAILED     app build could not be staged at %s",
+                 stage.c_str());
+        this->ToastErr(tr(S_NRO_STAGE_FAIL));
+        this->ImportReturn();
+        return;
+    }
+    xfer_log("staged     app build v%s -> %s", ver, stage.c_str());
+
+    char done[256];
+    snprintf(done, sizeof(done), tr(S_NRO_STAGED), ver);
+    if (this->StagedRestartPrompt(done)) {
+        return; // closing to restart
+    }
+    this->ImportReturn();
+}
+
+bool MainApplication::StagedRestartPrompt(const std::string &msg) {
+    // Same state the GitHub updater leaves behind: the Settings chip flips to
+    // "Restart to update" and the tab dot stays lit until the relaunch.
+    this->update_installed = true;
+    this->layout->SetUpdateAvailable(true);
+
+    // "Restart now" only where a chainload can happen (hbloader); without it
+    // the dialog still says the swap lands on the next start.
+    bool can_restart = envHasNextLoad();
+    std::vector<std::string> opts;
+    if (can_restart) {
+        opts.push_back(tr(S_NRO_RESTART_NOW));
+    }
+    opts.push_back(tr(S_NRO_LATER)); // last option = cancel, returns -1
+    int r = this->CreateShowDialog(tr(S_TITLE_UPDATE), msg, opts, true, {},
+                                   style_dialog);
+    if (can_restart && r == 0) {
+        // Relaunch ourselves: the next boot of this NRO runs main()'s
+        // apply_staged_update, which swaps the files and chainloads the new
+        // build — the same route a manual exit-and-reopen takes.
+        std::string selfp = resolve_self_path();
+        char qargv[1104];
+        snprintf(qargv, sizeof(qargv), "\"%s\"", selfp.c_str());
+        envSetNextLoad(selfp.c_str(), qargv);
+        this->Close();
+        return true;
+    }
+    return false;
+}
+
 // Offer the two ways to get collections onto a console that has none. The app
 // ships with an empty dl_sources.json by design, so a new user's first screen is
 // otherwise an empty list, and nothing on it mentions that the LAN import or the
-// repo editor exist.
+// app utility exist.
 //
 // Gated on having no collections rather than a "seen it" pref: an empty app is
 // unusable, so the prompt can never be in the way, and it stops for good the
@@ -3210,6 +3444,16 @@ void MainApplication::GotoLanguage() {
     }
 }
 
+// Colour of the Shown/Hidden state label on the Manage consoles rows. Shared
+// by the initial build and the in-place toggle so the two never drift.
+static pu::ui::Color manage_state_color(bool shown) {
+    if (shown) {
+        return accent_green();
+    }
+    return is_light_theme() ? pu::ui::Color(95, 95, 105, 255)
+                            : pu::ui::Color(150, 150, 162, 255);
+}
+
 void MainApplication::GotoManage() {
     this->screen = Screen::Manage;
     this->layout->SetTitle(tr(S_TITLE_MANAGE));
@@ -3217,15 +3461,11 @@ void MainApplication::GotoManage() {
     this->layout->ClearMenu();
     for (int i = 0; i < g_cfg.console_count; i++) {
         bool sh = g_cfg.consoles[i].shown;
-        bool lt = is_light_theme();
-        pu::ui::Color shown_c = accent_green();
-        pu::ui::Color hidden_c = lt ? pu::ui::Color(95, 95, 105, 255)
-                                    : pu::ui::Color(150, 150, 162, 255);
         char clabel[160];
         console_label(g_cfg.consoles[i].console, clabel, sizeof(clabel));
         this->layout->AddRow2(
             clabel, sh ? tr(S_SHOWN) : tr(S_HIDDEN),
-            g_theme->row_text, sh ? shown_c : hidden_c,
+            g_theme->row_text, manage_state_color(sh),
             -1.0f, console_icon(g_cfg.consoles[i].console));
     }
     if (g_cfg.console_count == 0) {
@@ -3805,21 +4045,8 @@ void MainApplication::HandleInput(u64 down, u64 held,
         // Bake the rounded tiles now (renderer is live) so the first list/card
         // screen doesn't pay the one-time bake as a visible load hitch.
         this->layout->PrewarmTiles();
-        if (!g_tico.installed) {
-            char tmsg[512];
-            snprintf(tmsg, sizeof(tmsg), tr(S_TICO_NOT_FOUND_MSG),
-                     roms_root(&g_tico));
-            // No cancel option: "Exit" must be a real option (a cancel option
-            // makes CreateShowDialog return -1, not its index). B (= -1)
-            // dismisses the warning and continues.
-            int opt = this->CreateShowDialog(
-                tr(S_TICO_NOT_FOUND), tmsg,
-                {tr(S_CONTINUE), tr(S_EXIT)}, false, {}, style_dialog);
-            if (opt == 1) {
-                this->Close();
-                return;
-            }
-        }
+        // (Removed the "TICO not detected" prompt: the app owns its ROM library
+        // at sdmc:/roms and no longer depends on the TICO emulator being present.)
         if (g_prefs.net_check) {
             for (;;) {
                 NifmInternetConnectionType ntype = (NifmInternetConnectionType)0;
@@ -4590,7 +4817,7 @@ void MainApplication::HandleInput(u64 down, u64 held,
                 this->GotoPicker(Pending::AddRepo);
             } else if (down & HidNpadButton_Minus) {
                 // Global search, same as the grouped view. Repo delete stays
-                // available in the repo editor (X → delete).
+                // available in the app utility (X → delete).
                 char q[256] = {0};
                 if (prompt_raw(tr(S_SEARCH_PROMPT), nullptr, q, sizeof(q)) &&
                     q[0]) {
@@ -4820,10 +5047,23 @@ void MainApplication::HandleInput(u64 down, u64 held,
         } else if (down & HidNpadButton_A) {
             s32 i = this->layout->Sel();
             switch (i) {
-            case 0: // Check for updates (on a background thread: the release
-                    // fetch retries transient errors and would freeze the UI)
-                this->ChkStart();
+            case 0: { // Check for updates: pick the source first. GitHub is the
+                      // normal release path; Wi-Fi receives a pushed .nro build
+                      // (for testing, so the same version is fine).
+                int r = this->CreateShowDialog(
+                    tr(S_TITLE_UPDATE), tr(S_UPDATE_HOW),
+                    {tr(S_UPDATE_SRC_GITHUB), tr(S_UPDATE_SRC_WIFI),
+                     tr(S_CANCEL)},
+                    true, {}, style_dialog); // last option = cancel (-1)
+                if (r == 0) {
+                    // On a background thread: the release fetch retries
+                    // transient errors and would freeze the UI.
+                    this->ChkStart();
+                } else if (r == 1) {
+                    this->UpdateWifiStart();
+                }
                 return;
+            }
             case 1: // User interface settings (theme/cards/consoles/language)
                 this->GotoUISettings();
                 return;
@@ -4850,9 +5090,8 @@ void MainApplication::HandleInput(u64 down, u64 held,
                 // option, so it and B both return -1.
                 int cr = this->CreateShowDialog(
                     tr(S_CREDITS),
-                    std::string("ticodl+ v") + APP_VERSION_STR + " by digdat0\n\n"
-                    "Plutonium UI library provided by XorTroll\n\n"
-                    "TICO emulator - https://ticoverse.com/",
+                    std::string("HaulNX v") + APP_VERSION_STR + " by digdat0\n\n"
+                    "Plutonium UI library provided by XorTroll",
                     {tr(S_RELEASE_NOTES), tr(S_OK)}, true, logo, style_dialog);
                 if (cr == 0) {
                     // return, not break: skip the GotoSettings() below so the
@@ -4995,7 +5234,7 @@ void MainApplication::HandleInput(u64 down, u64 held,
                 apply_roms(this->picker_path.c_str());
             }
         } else if (down & HidNpadButton_Y) {
-            // Reset to automatic TICO detection.
+            // Reset to the default ROM folder (sd:/roms).
             apply_roms("");
         }
         break;
@@ -5781,10 +6020,14 @@ void MainApplication::HandleInput(u64 down, u64 held,
         } else if (down & HidNpadButton_A) {
             s32 i = this->layout->Sel();
             if (i >= 0 && i < g_cfg.console_count) {
-                g_cfg.consoles[i].shown = !g_cfg.consoles[i].shown;
+                bool sh = !g_cfg.consoles[i].shown;
+                g_cfg.consoles[i].shown = sh;
                 config_save(&g_cfg);
-                this->GotoManage(); // refresh the shown/hidden labels
-                this->layout->SetSel(i);
+                // Update just this row's state label in place — a full
+                // GotoManage() rebuild resets scroll_top, which then re-scrolls
+                // the selected row to the bottom of the viewport.
+                this->layout->SetRowRight(i, sh ? tr(S_SHOWN) : tr(S_HIDDEN),
+                                          manage_state_color(sh));
             }
         }
         break;
@@ -5880,7 +6123,7 @@ void MainApplication::OnLoad() {
     config_sort(&g_cfg);
     creds_load(&g_creds);
     prefs_load(&g_prefs);
-    /* Advanced: a user-set ROM folder overrides TICO auto-detection. */
+    /* A user-set ROM folder overrides the default ROM root. */
     tico_set_roms_override(&g_tico, g_prefs.roms_override);
     /* Pre-create a folder for every supported console so they appear in the
      * Installed tab before their first download (downloads mkdir on their own,
@@ -5910,7 +6153,7 @@ void MainApplication::OnLoad() {
     this->layout->ApplyTheme();
     this->LoadLayout(this->layout);
 
-    // Startup dialogs (TICO missing / no network) must NOT run here: OnLoad
+    // Startup dialogs (e.g. no network) must NOT run here: OnLoad
     // executes before Show() starts the render loop, so a dialog would wait
     // for input on a screen that is still black. Defer them to the first
     // frame of the input callback instead.
@@ -6335,7 +6578,7 @@ static void upd_log(const char *fmt, ...) {
     fclose(f);
 }
 
-// App badge for the update-download card, loaded once (200px master, crisp
+// App badge for the update-download card, loaded once (280px master, crisp
 // at the enlarged card's icon size). Falls back to the header logo.
 static pu::sdl2::Texture upd_card_icon() {
     static pu::sdl2::Texture t = nullptr;
@@ -6364,10 +6607,10 @@ void MainApplication::UpdStart(const std::string &url, const std::string &dl,
         this->layout->SetCardsMode(true);
         this->layout->SetSingleCard(true);
         this->layout->SetQueueCount(1);
-        this->layout->SetQueueCard(0, "ticodl+", upd_card_icon(),
+        this->layout->SetQueueCard(0, "HaulNX", upd_card_icon(),
                                    qstatus(Q_DOWNLOADING),
                                    qstatus_color(Q_DOWNLOADING), tag, "", "",
-                                   "TicoDLplus.nro", 0.0f, true);
+                                   "HaulNX.nro", 0.0f, true);
     } else {
         this->layout->AddRow(tr(S_UPDATE_DL_CANCEL));
     }
@@ -6398,10 +6641,10 @@ void MainApplication::UpdTick() {
             char c1[64];
             snprintf(c1, sizeof(c1), "%s / %s", human_size(now).c_str(),
                      total ? human_size(total).c_str() : "?");
-            this->layout->SetQueueCard(0, "ticodl+", upd_card_icon(), st,
+            this->layout->SetQueueCard(0, "HaulNX", upd_card_icon(), st,
                                        qstatus_color(Q_DOWNLOADING),
                                        this->upd_tag, c1, "",
-                                       "TicoDLplus.nro",
+                                       "HaulNX.nro",
                                        total ? (float)now / (float)total
                                              : 0.0f,
                                        true);
@@ -6442,15 +6685,13 @@ void MainApplication::UpdTick() {
         upd_log("upd: staged '%s' %s", stage, inst ? "ok" : "FAILED");
         if (inst) {
             remove(dl.c_str());
-            // The new build is staged for the next launch; flip the Settings
-            // chip from "Update available" to "Restart to update" and keep the
-            // tab dot lit until the user relaunches.
-            this->update_installed = true;
-            this->layout->SetUpdateAvailable(true);
+            // The new build is staged for the next launch; flip the chips and
+            // offer to relaunch in place (same epilogue as a LAN-pushed .nro).
             char umsg[512];
             snprintf(umsg, sizeof(umsg), tr(S_UPDATE_OK), tag.c_str());
-            this->CreateShowDialog(tr(S_TITLE_UPDATE), umsg,
-                                   {tr(S_OK)}, true, {}, style_dialog);
+            if (this->StagedRestartPrompt(umsg)) {
+                return; // closing to restart
+            }
         } else {
             remove(stage); // don't leave a half-written stage behind
             this->CreateShowDialog(

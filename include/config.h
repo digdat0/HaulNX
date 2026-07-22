@@ -8,40 +8,41 @@
 extern "C" {
 #endif
 
-#define MAX_CONSOLES 64
+#define MAX_CONSOLES 128 /* ~50 pre-seeded consoles + room for custom ones */
 #define MAX_REPOS    16 /* download repos per console */
 
 /* GitHub repo (owner/name) the in-app updater pulls releases from.
  * >>> EDIT THIS to your repo before building a release you intend to ship. <<< */
-#define UPDATE_REPO   "digdat0/ticodlplus"
+#define UPDATE_REPO   "digdat0/HaulNX"
 
 /* Where the app lives if it can't determine its own path from argv[0]. */
-#define DEFAULT_SELF_PATH "sdmc:/switch/TicoDLplus/TicoDLplus.nro"
+#define DEFAULT_SELF_PATH "sdmc:/switch/HaulNX/HaulNX.nro"
 
-#define CONFIG_DIR    "sdmc:/switch/ticodlplus"
-#define SOURCES_PATH  "sdmc:/switch/ticodlplus/dl_sources.json"
+#define CONFIG_DIR    "sdmc:/switch/HaulNX"
+#define SOURCES_PATH  "sdmc:/switch/HaulNX/dl_sources.json"
 /* The two previous dl_sources.json files, rotated on every import so that two
  * bad imports in a row can still be walked back. Slot 0 is the most recent. */
-#define SOURCES_BAK_PATH  "sdmc:/switch/ticodlplus/dl_sources.bak.json"
-#define SOURCES_BAK2_PATH "sdmc:/switch/ticodlplus/dl_sources.bak2.json"
+#define SOURCES_BAK_PATH  "sdmc:/switch/HaulNX/dl_sources.bak.json"
+#define SOURCES_BAK2_PATH "sdmc:/switch/HaulNX/dl_sources.bak2.json"
 #define SOURCES_BAK_SLOTS 2
 /* Staging file for config_save; never read back. */
-#define SOURCES_TMP_PATH "sdmc:/switch/ticodlplus/dl_sources.tmp.json"
-#define CREDS_PATH    "sdmc:/switch/ticodlplus/credentials.json"
-#define PREFS_PATH    "sdmc:/switch/ticodlplus/prefs.json"
-#define LANG_DIR      "sdmc:/switch/ticodlplus/lang"
-#define CACHE_DIR     "sdmc:/switch/ticodlplus/cache"
-#define LOG_PATH      "sdmc:/switch/ticodlplus/debug.log"
+#define SOURCES_TMP_PATH "sdmc:/switch/HaulNX/dl_sources.tmp.json"
+#define CREDS_PATH    "sdmc:/switch/HaulNX/credentials.json"
+#define PREFS_PATH    "sdmc:/switch/HaulNX/prefs.json"
+#define LANG_DIR      "sdmc:/switch/HaulNX/lang"
+#define CACHE_DIR     "sdmc:/switch/HaulNX/cache"
+#define LOG_PATH      "sdmc:/switch/HaulNX/debug.log"
 /* Collection imports/exports. Kept apart from debug.log: an import rewrites
  * dl_sources.json wholesale, and that record must not scroll away under the
  * churn of routine HTTP logging. */
-#define XFERLOG_PATH  "sdmc:/switch/ticodlplus/transfers.log"
-#define DLLOG_PATH    "sdmc:/switch/ticodlplus/downloads.log"
-#define DLLOG_JSON    "sdmc:/switch/ticodlplus/downloads.jsonl"
-#define DL_TMP_DIR    "sdmc:/switch/ticodlplus/downloads"
-#define QUEUE_STATE_PATH "sdmc:/switch/ticodlplus/queue.json"
-#define TICO_DEFAULT_ROMS  "sdmc:/tico/roms"
-#define TICO_CONFIG_PATH   "sdmc:/tico/config/general.jsonc"
+#define XFERLOG_PATH  "sdmc:/switch/HaulNX/transfers.log"
+#define DLLOG_PATH    "sdmc:/switch/HaulNX/downloads.log"
+#define DLLOG_JSON    "sdmc:/switch/HaulNX/downloads.jsonl"
+#define DL_TMP_DIR    "sdmc:/switch/HaulNX/downloads"
+#define QUEUE_STATE_PATH "sdmc:/switch/HaulNX/queue.json"
+/* The app's own ROM library. Games install to <root>/<console>/. Users point
+ * their emulators here (see the wiki); we no longer read any emulator's config. */
+#define DEFAULT_ROMS_ROOT  "sdmc:/roms"
 
 /* One download source (an archive.org item) within a console group. */
 typedef struct {
@@ -53,10 +54,10 @@ typedef struct {
 } Repo;
 
 /* A console (e.g. "snes") that groups one or more download repos. All of a
- * console's repos install into the same tico/roms/<target> folder. */
+ * console's repos install into the same <roms_root>/<target> folder. */
 typedef struct {
     char console[64]; /* display name */
-    char target[64];  /* folder under tico/roms */
+    char target[64];  /* folder under the ROM root */
     Repo repos[MAX_REPOS];
     int repo_count;
     bool shown; /* show on the primary Browse page (default true) */
@@ -90,7 +91,7 @@ typedef struct {
     bool prevent_sleep;  /* true: keep console awake while downloads are active */
     bool group_consoles; /* true: main list shows consoles (open to see repos);
                             false: flat list, one row per repo */
-    int max_downloads;   /* 1–10; how many downloads run simultaneously (default 1) */
+    int max_downloads;   /* 1–10; how many downloads run simultaneously (default 3) */
     int rate_all_kbps;   /* global download cap across ALL active downloads, in
                             KiB/s (0 = unlimited, the default) */
     int rate_item_kbps;  /* per-download cap, in KiB/s (0 = unlimited, default) */
@@ -101,8 +102,8 @@ typedef struct {
     char lang[16];       /* language code, e.g. "en", "es", "ja"; empty = English */
     char theme[16];      /* "dark" (default) or "light" */
     bool card_view;      /* true: console lists render as a card grid */
-    /* Advanced override for the ROM install root. Empty = auto (detect from
-     * TICO). When set, this exact path is used instead of tico/roms. */
+    /* Advanced override for the ROM install root. Empty = use the default
+     * ROM root (DEFAULT_ROMS_ROOT). When set, this exact path is used instead. */
     char roms_override[512];
     /* Top-level ROM folders pinned to the top of the Installed tab. */
     char pinned_dirs[MAX_PINNED_DIRS][64];
@@ -148,7 +149,7 @@ bool config_probe_json(const char *js, size_t len, int *out_consoles,
  * document in js/len, after moving the current file to SOURCES_BAK_PATH.
  * Returns false and changes nothing if the document holds no consoles.
  * On success *out_consoles / *out_repos report what was imported (may be NULL).
- * The master tico_consoles list is preserved even if the import omits it. */
+ * The master consoles list is preserved even if the import omits it. */
 bool config_import_json(SourcesConfig *cfg, const char *js, size_t len,
                         int *out_consoles, int *out_repos);
 
@@ -195,22 +196,22 @@ bool prefs_ext_hidden(const Prefs *p, const char *filename);
  * Form: "authorization: LOW <access>:<secret>". */
 void creds_auth_header(const Credentials *c, char *out, size_t out_sz);
 
-/* Tico emulator detection + ROM path resolution.
- * tico_detect() checks for the emulator in known locations.
- * tico_load_roms_path() reads general.jsonc for a custom roms_path.
- * roms_root() returns the resolved path (valid after tico_init). */
+/* ROM path state. Holds the resolved ROM root the app installs into and
+ * browses. roms_root() returns the resolved path (valid after tico_init).
+ * `installed` is a legacy TICO-present flag, retained but no longer used to
+ * drive any behavior. */
 typedef struct {
-    bool installed;         /* true if tico.nro or sdmc:/tico/ was found */
+    bool installed;         /* legacy: true if sdmc:/tico/ was found (unused) */
     char roms_path[512];    /* resolved ROM folder path */
 } TicoState;
 
-/* Run once at startup: detects Tico + reads its config. */
+/* Run once at startup: seeds roms_path with the default ROM root. */
 void tico_init(TicoState *ts);
 
 /* Returns the current roms root (pointer into ts->roms_path). */
 const char *roms_root(const TicoState *ts);
 
-/* Force the roms root to a user-supplied path (overriding TICO detection).
+/* Force the roms root to a user-supplied path (overriding the default).
  * No-op if path is NULL/empty. The path is normalised (see
  * roms_normalize_path) and its trailing slash trimmed. Call after tico_init. */
 void tico_set_roms_override(TicoState *ts, const char *path);

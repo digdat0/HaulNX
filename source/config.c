@@ -56,6 +56,71 @@ static void seed_from_romfs(void) {
     free(def);
 }
 
+/* Merge the romfs master console list into an already-loaded config. The saved
+ * dl_sources.json on the SD card may have been written by an OLDER app version
+ * that only knew a subset of consoles; this adds any consoles the current build
+ * ships (in romfs) that the saved file is missing, so app updates introduce new
+ * supported consoles without disturbing the user's repos or groups. Purely
+ * additive: add_supported() skips duplicates and never removes anything. */
+static void merge_supported_from_romfs(SourcesConfig *cfg) {
+    size_t len = 0;
+    char *js = json_read_file("romfs:/dl_sources.json", &len);
+    if (!js) {
+        return;
+    }
+    int ntok = 0;
+    jsmntok_t *tok = json_parse_alloc(js, len, &ntok);
+    if (tok && tok[0].type == JSMN_OBJECT) {
+        /* "consoles" is the current key; "tico_consoles" is the legacy name
+         * still accepted so older SD-card files keep loading. */
+        int ti = json_obj_get(js, tok, 0, "consoles");
+        if (ti < 0) {
+            ti = json_obj_get(js, tok, 0, "tico_consoles");
+        }
+        if (ti >= 0 && tok[ti].type == JSMN_ARRAY) {
+            int n = tok[ti].size, c = ti + 1;
+            for (int i = 0; i < n; i++) {
+                if (tok[c].type == JSMN_STRING) {
+                    char name[64];
+                    json_copy(js, tok, c, name, sizeof(name));
+                    add_supported(cfg, name);
+                }
+                c = json_tok_skip(tok, c);
+            }
+        }
+    }
+    free(tok);
+    free(js);
+}
+
+static bool console_hidden_by_default(const char *name); /* defined below */
+
+/* Ensure every supported console has a (possibly empty) group so the Browse tab
+ * lists all known consoles up front, not just those with repos — giving users a
+ * folder to add repos into. Idempotent: consoles that already have a group are
+ * left untouched, so existing repos, order, and shown/hidden state are never
+ * disturbed. Freshly seeded groups honor console_hidden_by_default(), so niche
+ * systems ship hidden and the user re-enables them in Settings -> Manage
+ * consoles. Because existing groups are skipped, this only sets the default for
+ * a console the first time it appears (fresh install, or an app update that adds
+ * it) — it never re-hides one the user has already chosen to show. */
+static void seed_console_groups(SourcesConfig *cfg) {
+    for (int i = 0; i < cfg->supported_count; i++) {
+        const char *name = cfg->supported[i];
+        if (!name[0] || config_find_console(cfg, name)) {
+            continue;
+        }
+        if (cfg->console_count >= MAX_CONSOLES) {
+            break;
+        }
+        ConsoleGroup *g = &cfg->consoles[cfg->console_count++];
+        memset(g, 0, sizeof(*g));
+        sset(g->console, sizeof(g->console), name);
+        sset(g->target, sizeof(g->target), name);
+        g->shown = !console_hidden_by_default(name);
+    }
+}
+
 void repo_set_url_default(Repo *r) {
     if (!r->download_base[0] && r->id[0]) {
         char tmp[512];
@@ -75,11 +140,23 @@ ConsoleGroup *config_find_console(SourcesConfig *cfg, const char *name) {
 }
 
 /* Consoles that ship hidden on a fresh install: niche arcade / dual-screen
- * systems most users won't want cluttering the Browse list. They still exist
- * and can be re-shown via Settings -> Manage consoles. Only affects newly
- * seeded consoles; an existing saved config keeps whatever the user set. */
+ * systems, plus the wider set of retro platforms added after the initial
+ * release — most users won't want them all cluttering the Browse list. They
+ * still exist and can be re-shown via Settings -> Manage consoles. Only affects
+ * newly seeded consoles; an existing saved config keeps whatever the user set,
+ * so an app update that adds these leaves already-shown consoles alone. */
 static bool console_hidden_by_default(const char *name) {
-    static const char *hidden[] = {"atomiswave", "naomi", "ps2", "nds"};
+    static const char *hidden[] = {
+        /* original hidden set */
+        "atomiswave", "naomi",
+        /* added post-launch — off by default, user opts in */
+        "fds", "virtual-boy", "pokemon-mini", "game-and-watch", "sg-1000",
+        "sega-32x", "pc-engine", "pc-engine-cd", "supergrafx", "pc-fx",
+        "neo-geo", "neo-geo-cd", "neo-geo-pocket", "neo-geo-pocket-color",
+        "atari-2600", "atari-5200", "atari-7800", "atari-lynx", "atari-jaguar",
+        "wonderswan", "wonderswan-color", "colecovision", "intellivision",
+        "odyssey2", "vectrex", "channel-f", "3do", "cd-i", "supervision",
+        "arcade", "fbneo"};
     for (size_t i = 0; i < sizeof(hidden) / sizeof(hidden[0]); i++) {
         if (strcasecmp(name, hidden[i]) == 0) {
             return true;
@@ -133,7 +210,7 @@ void config_seed_rom_folders(const SourcesConfig *cfg, const char *roms_root) {
         return;
     }
     /* fs_mkdir_p is a no-op when the folder already exists, so this only ever
-     * creates the missing ones. Uses the master supported list (tico_consoles),
+     * creates the missing ones. Uses the master supported list (consoles),
      * which covers every console the app knows about, not just those with
      * repos configured. */
     for (int i = 0; i < cfg->supported_count; i++) {
@@ -297,8 +374,12 @@ static void parse_sources_buf(const char *js, size_t len, SourcesConfig *cfg) {
         return;
     }
 
-    /* Master supported-console list (TICO folders). */
-    int ti = json_obj_get(js, tok, 0, "tico_consoles");
+    /* Master supported-console list. "consoles" is current; "tico_consoles"
+     * is the legacy key kept for backward compatibility. */
+    int ti = json_obj_get(js, tok, 0, "consoles");
+    if (ti < 0) {
+        ti = json_obj_get(js, tok, 0, "tico_consoles");
+    }
     if (ti >= 0 && tok[ti].type == JSMN_ARRAY) {
         int n = tok[ti].size, c = ti + 1;
         for (int i = 0; i < n; i++) {
@@ -329,11 +410,16 @@ void config_load(SourcesConfig *cfg) {
 
     size_t len = 0;
     char *js = json_read_file(SOURCES_PATH, &len);
-    if (!js) {
-        return;
+    if (js) {
+        parse_sources_buf(js, len, cfg);
+        free(js);
     }
-    parse_sources_buf(js, len, cfg);
-    free(js);
+    /* Backfill the master supported-console list from romfs so an app update
+     * that adds consoles reaches users whose saved config predates them. */
+    merge_supported_from_romfs(cfg);
+    /* Materialize a group for every supported console so Browse shows the full
+     * pre-seeded list, even consoles that have no repos yet. */
+    seed_console_groups(cfg);
 }
 
 static int count_repos(const SourcesConfig *cfg) {
@@ -394,11 +480,17 @@ bool config_backup_info(int slot, int *out_consoles, int *out_repos) {
  * it with a copy of what just went live. */
 static bool commit_config(SourcesConfig *cfg, SourcesConfig *in, bool rotate,
                           const char *park, int *out_consoles, int *out_repos) {
-    /* The incoming file may leave out tico_consoles; the master folder list must
+    /* The incoming file may leave out the consoles list; the master folder list must
      * never shrink because of what someone chose to export. */
     for (int i = 0; i < cfg->supported_count; i++) {
         add_supported(in, cfg->supported[i]);
     }
+    /* Report the count of consoles the document actually carried (matching the
+     * pre-import probe), captured before seeding pads the list with empties. */
+    int in_consoles = in->console_count;
+    /* Keep Browse showing every supported console after an import/restore too,
+     * not just the consoles the incoming document happened to carry repos for. */
+    seed_console_groups(in);
     int repos = count_repos(in);
     config_sort(in);
 
@@ -421,7 +513,7 @@ static bool commit_config(SourcesConfig *cfg, SourcesConfig *in, bool rotate,
     *cfg = *in;
     free(in);
     if (out_consoles) {
-        *out_consoles = cfg->console_count;
+        *out_consoles = in_consoles;
     }
     if (out_repos) {
         *out_repos = repos;
@@ -508,7 +600,7 @@ bool config_save(const SourcesConfig *cfg) {
         fputs("      ]\n    }", f);
         fputs(i + 1 < cfg->console_count ? ",\n" : "\n", f);
     }
-    fputs("  ],\n  \"tico_consoles\": [", f);
+    fputs("  ],\n  \"consoles\": [", f);
     for (int i = 0; i < cfg->supported_count; i++) {
         json_write_escaped(f, cfg->supported[i]);
         if (i + 1 < cfg->supported_count) {
@@ -573,14 +665,14 @@ void prefs_load(Prefs *p) {
     p->use_cache = true;       /* defaults */
     p->prevent_sleep = true;
     p->group_consoles = true;
-    p->max_downloads = 1;
+    p->max_downloads = 3;
     p->rate_all_kbps = 0;   /* unlimited */
     p->rate_item_kbps = 0;  /* unlimited */
     p->net_check = true;
     p->chk_updates = true;
     p->lang[0] = '\0';
     strcpy(p->theme, "dark");
-    p->card_view = false;
+    p->card_view = true;
     p->roms_override[0] = '\0';
     p->pinned_dir_count = 0;
     p->filter_exts = true;
@@ -846,40 +938,7 @@ void creds_auth_header(const Credentials *c, char *out, size_t out_sz) {
     }
 }
 
-/* ---- tico detection --------------------------------------------------- */
-
-/* Strip // line comments and block comments from JSONC so jsmn can parse it. */
-static char *strip_jsonc_comments(const char *src, size_t len) {
-    char *out = (char *)malloc(len + 1);
-    if (!out) return NULL;
-    size_t j = 0;
-    bool in_string = false;
-    for (size_t i = 0; i < len; i++) {
-        if (in_string) {
-            out[j++] = src[i];
-            if (src[i] == '\\' && i + 1 < len) {
-                out[j++] = src[++i];
-            } else if (src[i] == '"') {
-                in_string = false;
-            }
-            continue;
-        }
-        if (src[i] == '"') {
-            in_string = true;
-            out[j++] = src[i];
-        } else if (src[i] == '/' && i + 1 < len && src[i + 1] == '/') {
-            while (i < len && src[i] != '\n') i++;
-        } else if (src[i] == '/' && i + 1 < len && src[i + 1] == '*') {
-            i += 2;
-            while (i + 1 < len && !(src[i] == '*' && src[i + 1] == '/')) i++;
-            if (i + 1 < len) i++;
-        } else {
-            out[j++] = src[i];
-        }
-    }
-    out[j] = '\0';
-    return out;
-}
+/* ---- tico detection (legacy; result no longer drives behavior) -------- */
 
 static bool tico_is_installed(void) {
     if (fs_exists("sdmc:/switch/tico.nro")) return true;
@@ -899,33 +958,10 @@ static void trim_trailing_slash(char *p) {
 void tico_init(TicoState *ts) {
     memset(ts, 0, sizeof(*ts));
     ts->installed = tico_is_installed();
-    sset(ts->roms_path, sizeof(ts->roms_path), TICO_DEFAULT_ROMS);
-
-    /* Try to read Tico's config for a custom roms_path. */
-    size_t len = 0;
-    char *raw = json_read_file(TICO_CONFIG_PATH, &len);
-    if (!raw) return;
-
-    char *js = strip_jsonc_comments(raw, len);
-    free(raw);
-    if (!js) return;
-
-    int ntok = 0;
-    jsmntok_t *tok = json_parse_alloc(js, strlen(js), &ntok);
-    if (tok && tok[0].type == JSMN_OBJECT) {
-        int ri = json_obj_get(js, tok, 0, "roms_path");
-        if (ri >= 0 && tok[ri].type == JSMN_STRING &&
-            tok[ri].end > tok[ri].start) {
-            char tmp[512];
-            json_copy(js, tok, ri, tmp, sizeof(tmp));
-            if (tmp[0]) {
-                sset(ts->roms_path, sizeof(ts->roms_path), tmp);
-                trim_trailing_slash(ts->roms_path);
-            }
-        }
-    }
-    free(tok);
-    free(js);
+    /* The app owns its ROM library at DEFAULT_ROMS_ROOT. A user override
+     * (Manage data -> ROM Download Folder) is applied afterward via
+     * tico_set_roms_override(); we no longer read any emulator's config. */
+    sset(ts->roms_path, sizeof(ts->roms_path), DEFAULT_ROMS_ROOT);
 }
 
 const char *roms_root(const TicoState *ts) {

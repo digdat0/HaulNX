@@ -1,6 +1,6 @@
 #!/bin/sh
 # Publish the current build as a GitHub release whose tag == the version baked
-# into TicoDLplus.nro. Run AFTER `make` (do not run `make` in between, or the
+# into HaulNX.nro. Run AFTER `make` (do not run `make` in between, or the
 # VERSION will have advanced past the built .nro).
 #
 # This uploads the .nro as a release asset (via the GitHub API) and tags the
@@ -19,20 +19,20 @@
 set -e
 cd "$(dirname "$0")"
 
-nro="TicoDLplus.nro"
+nro="HaulNX.nro"
 [ -f "$nro" ] || { echo "No $nro found - run 'make' first."; exit 1; }
 
-# The repo editor ships with every release: a single self-contained HTML file
-# users open in a browser to build/edit dl_sources.json. Newest version wins if
-# several are lying around.
-editor="$(ls -1 tools/repo-editor/repoEditor-*.html 2>/dev/null | sort -V | tail -n 1)"
-[ -n "$editor" ] || { echo "No tools/repo-editor/repoEditor-*.html found."; exit 1; }
+# The app utility ships with every release: a single self-contained HTML file
+# users open in a browser to build/edit dl_sources.json and push files to the
+# console. Newest version wins if several are lying around.
+editor="$(ls -1 tools/app-utility/appUtility-*.html 2>/dev/null | sort -V | tail -n 1)"
+[ -n "$editor" ] || { echo "No tools/app-utility/appUtility-*.html found."; exit 1; }
 
 v="$(cat VERSION)"
 repo="$(grep -oE '#define[[:space:]]+UPDATE_REPO[[:space:]]+"[^"]+"' include/config.h \
         | sed -E 's/.*"([^"]+)".*/\1/')"
 
-if [ -z "$repo" ] || [ "$repo" = "YOURUSER/TicoDLplus" ]; then
+if [ -z "$repo" ] || [ "$repo" = "YOURUSER/HaulNX" ]; then
   echo "Set UPDATE_REPO in include/config.h to your real GitHub repo first."
   exit 1
 fi
@@ -115,10 +115,10 @@ notes="$(printf '%s\n' "$notes" | sed -e '/./,$!d' | sed -e ':a' -e '/^\n*$/{$d;
 notesfile="$(mktemp)"
 trap 'rm -f "$notesfile"' EXIT
 if [ -n "$notes" ]; then
-  printf 'TicoDL+ %s\n\n%s\n' "$v" "$notes" > "$notesfile"
+  printf 'HaulNX %s\n\n%s\n' "$v" "$notes" > "$notesfile"
 else
   echo "WARN: no CHANGELOG.md section for $v - add a '## $v' entry for real notes."
-  printf 'TicoDL+ %s\n' "$v" > "$notesfile"
+  printf 'HaulNX %s\n' "$v" > "$notesfile"
 fi
 
 echo "Releasing v$v to $repo with notes:"
@@ -126,6 +126,6 @@ echo "----------------------------------------"
 cat "$notesfile"
 echo "----------------------------------------"
 echo "Assets: $nro, $editor"
-gh release create "$v" "$nro" "$editor" -R "$repo" -t "TicoDL+ $v" -F "$notesfile" \
+gh release create "$v" "$nro" "$editor" -R "$repo" -t "HaulNX $v" -F "$notesfile" \
   --target "$local_head" --latest
 echo "Done. Users can now update in-app via Settings (L) -> R."

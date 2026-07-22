@@ -1,8 +1,55 @@
-# TicoDL+ — Changelog
+# HaulNX — Changelog
+
+> Formerly released as **TicoDL+ / ticodl+**. Entries below dated before the
+> rename use the old name as it shipped at the time.
 
 Notes for each release. `release.sh` pulls the section matching the version in
 `VERSION` and attaches it to the GitHub release. Add a `## <version>` section
 here before running a release.
+
+## 1.0.0
+
+**HaulNX — first release under the new name.** Formerly TicoDL+; the version
+resets to 1.0.0 for the fresh brand and repository.
+
+**Its own ROM library**
+- HaulNX now owns a centralized ROM folder — **`sdmc:/roms/<console>/`** by
+  default — instead of chasing an emulator's config. Downloads install there and
+  the Installed tab browses it. Point whichever emulators you use at that folder
+  (per-emulator setup in the wiki).
+- The ROM-folder setting is now **Manage data → ROM Download Folder**; set a
+  custom path or leave it on the default. The old TICO auto-detection and the
+  "TICO not detected" startup prompt are gone.
+
+**Update from GitHub — or push a build over Wi-Fi**
+- **Settings → Check for updates** now asks where the update comes from:
+  **From GitHub** (the release check, as before) or **Over Wi-Fi** — the console
+  shows an address on this network; drop a HaulNX `.nro` on the served page or
+  push one from the App Utility. The same version as installed is accepted,
+  so new builds can be tested without a USB cable.
+- Both paths stage the build safely (validated, swapped in on the next launch,
+  previous build kept as a backup) and end with a **Restart now** option — the
+  app relaunches itself straight into the new build.
+- The receive screen shows **live progress** (percent and sizes) while a file
+  is arriving — collections and app builds alike — and the sender shows a
+  matching percentage.
+
+**App Utility (formerly the repo editor)**
+- The bundled HTML tool is now the **App Utility** (`appUtility-v1.0.0.html`).
+  Its **Send to Switch** dialog gains two tabs: **Collection** (as before) and
+  **App update (.nro)**, which validates the file and pushes it to the console.
+
+**More consoles**
+- Console icons for 31 more systems (3DO, the Atari line, Neo Geo family,
+  PC Engine, WonderSwan, Vectrex, and friends) in the card views.
+
+**Rebrand**
+- New name, icon, and in-app wordmark throughout. Data now lives under
+  `sdmc:/switch/HaulNX/` and the app ships as `HaulNX.nro`.
+
+> Upgrading from TicoDL+? Your data folder path changed, so HaulNX starts fresh.
+> Move anything you want to keep from `sdmc:/switch/ticodlplus/` (sources,
+> credentials, prefs) and your ROMs from their old location into `sdmc:/roms/`.
 
 ## 2.0.1
 

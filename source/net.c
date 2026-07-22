@@ -9,7 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define USER_AGENT "TicoDL+/0.1 (libnx)"
+#define USER_AGENT "HaulNX/1.0 (libnx)"
 
 static bool g_ready = false;
 

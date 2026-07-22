@@ -41,8 +41,8 @@ include $(DEVKITPRO)/libnx/switch_rules
 #   of a homebrew executable (.nro). This is intended to be used for sysmodules.
 #   NACP building is skipped as well.
 #---------------------------------------------------------------------------------
-TARGET	:=	TicoDLplus
-APP_TITLE	:=	ticodl+
+TARGET	:=	HaulNX
+APP_TITLE	:=	HaulNX
 APP_AUTHOR	:=	digdat0
 # Single source of truth: the version string lives in the VERSION file. It is
 # baked into the .nacp (APP_VERSION) and regenerated into include/version.h (the

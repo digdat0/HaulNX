@@ -413,6 +413,22 @@ class TableList : public pu::ui::elm::Element {
         this->dirty = true;
     }
 
+    // Update a single row's right-hand cell in place (text + colour) without
+    // rebuilding the list, so selection and scroll position are untouched. The
+    // render cache diffs per cell, so only this row re-bakes. Used by toggles
+    // like Manage consoles where a full Clear+re-add would reset scroll_top.
+    void SetRowRight(const s32 i, const std::string &right,
+                     const pu::ui::Color rclr) {
+        if (i < 0 || i >= (s32)this->rows.size()) {
+            return;
+        }
+        Row &r = this->rows[i];
+        r.right = right;
+        r.has_right = true;
+        r.rclr = rclr;
+        this->dirty = true;
+    }
+
     s32 Count() { return (s32)this->rows.size(); }
     s32 GetSelected() { return this->sel; }
     s32 RowsVisible() { return this->rows_visible; }

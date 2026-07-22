@@ -14,7 +14,7 @@ extern "C" {
 // open — and the self-updater can't replace a locked file. Stage the font on
 // the SD card and load it from there; romfs is only the copy source.
 static const char *stage_viet_font(void) {
-    static const char *sd = "sdmc:/switch/ticodlplus/viet-fallback.ttf";
+    static const char *sd = "sdmc:/switch/HaulNX/viet-fallback.ttf";
     static const char *rom = "romfs:/fonts/viet-fallback.ttf";
     FILE *in = fopen(rom, "rb");
     if (!in) {

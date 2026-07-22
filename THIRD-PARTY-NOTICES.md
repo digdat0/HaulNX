@@ -1,6 +1,6 @@
 # Third-party notices
 
-TicoDL+ is distributed with, or links against, the following third-party
+HaulNX is distributed with, or links against, the following third-party
 components. Their license notices are reproduced here as required.
 
 ---

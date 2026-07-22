@@ -453,8 +453,9 @@ class MainLayout : public pu::ui::Layout {
     pu::ui::elm::Rectangle::Ref tab_bar;
     pu::ui::elm::Rectangle::Ref footer;
     IconElement::Ref header_logo; // app badge, top-left of the title
-    // Tri-colour wordmark (green Tico / white DL / blue +), fixed in the
-    // header; `title` holds only the per-screen breadcrumb after it.
+    // Two-tone "HaulNX" wordmark (green Haul / blue NX), fixed in the header;
+    // `title` holds only the per-screen breadcrumb after it. Member names are
+    // legacy from the old three-part lockup; wm_plus is now unused.
     pu::ui::elm::TextBlock::Ref wm_tico, wm_dl, wm_plus;
     pu::ui::elm::TextBlock::Ref title; // first breadcrumb segment
     // Breadcrumb continuation: green "›" separators + up to two more path
@@ -481,7 +482,7 @@ class MainLayout : public pu::ui::Layout {
     pu::ui::elm::TextBlock::Ref empty_text;
     pu::ui::elm::TextBlock::Ref empty_hint; // smaller "what to do" line
     // Accent chip under the empty-state hint (a filled rounded pill + its text),
-    // used by the import page to call out the repo-editor alternative. Hidden
+    // used by the import page to call out the app-utility alternative. Hidden
     // unless SetEmptyState is given a note.
     pu::ui::elm::Rectangle::Ref empty_chip;
     pu::ui::elm::TextBlock::Ref empty_chip_text;
@@ -529,6 +530,8 @@ class MainLayout : public pu::ui::Layout {
                  pu::sdl2::Texture icon = nullptr,
                  const std::string &prefix = "", bool accent = false,
                  bool pill = true, bool pin = false, s32 bar = 0);
+    // Update one row's right cell in place (no rebuild → scroll/selection kept).
+    void SetRowRight(s32 i, const std::string &right, pu::ui::Color rclr);
     // Card view (console lists). ClearMenu resets to list mode; a screen that
     // wants cards calls SetCardsMode(true) and AddCard instead of AddRow.
     void SetCardsMode(bool on);
@@ -616,7 +619,7 @@ class MainApplication : public pu::ui::Application {
     std::string log_view_title;
     int log_clear_msg = 0;
 
-    // One-shot startup dialogs (TICO missing / no network), run on the first
+    // One-shot startup dialogs (e.g. no network), run on the first
     // frame of the UI loop — OnLoad is too early to render a dialog.
     bool startup_checks = false;
 
@@ -761,6 +764,8 @@ class MainApplication : public pu::ui::Application {
     bool imp_open = false;
     int imp_grace = 0; // >0: a file is in hand, still serving the redirect
     bool imp_onboard = false; // import launched from the first-run welcome
+    bool imp_nro = false; // receiver opened from Settings' update-over-Wi-Fi
+    bool imp_prog = false; // subtitle currently shows receive progress
 
   public:
     using Application::Application;
@@ -848,10 +853,16 @@ class MainApplication : public pu::ui::Application {
 
     // LAN collection import helpers.
     void ImportStart(bool onboarding = false);
+    void UpdateWifiStart(); // same receiver, update-flavored screen + page
     void ImportReturn(); // where the import flow lands when it ends
     void ImportTick(); // serve one request per frame while the screen is open
     int ImportPoll();  // serve one request, logging what it did
     void ImportApply(); // consume the uploaded file, confirm, and write it
+    void NroApply(char *body, size_t len); // an .nro was pushed: stage it
+    // Staged-build epilogue shared by both update paths (GitHub download and a
+    // LAN-pushed .nro): flip the update chips, then offer to relaunch in place.
+    // True when the app is closing to restart — the caller must return at once.
+    bool StagedRestartPrompt(const std::string &msg);
     void ImportStop();
     void RestoreBackup(); // swap the last import's backup back in
     void Welcome();       // first-run prompt while there are no collections

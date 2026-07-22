@@ -17,11 +17,13 @@
 
 #define HDR_MAX 8192 /* a request head larger than this is not ours */
 
-/* Once a client is accepted we read it with a blocking socket, which parks the
- * UI for the duration. That is deliberate: the peer is a browser on the same
- * LAN sending a few KB, so it takes a frame or two. The timeout bounds the
- * worst case (a client that connects and then dies) to a brief stall. */
+/* Requests are read incrementally, a slice per poll, so the UI thread keeps
+ * rendering during a large upload and can show its progress. Responses are
+ * still written on a briefly-blocking socket (they are small pages); this
+ * timeout bounds a peer that stops draining them. */
 #define RECV_TIMEOUT_MS 2000
+/* Watchdog for a client that connects and then goes quiet mid-request. */
+#define CLIENT_IDLE_NS  5000000000ULL /* ~5s without a byte drops the client */
 
 /* The app badge, served to the page from romfs at GET /logo.png. The console is
  * already serving the page, so it may as well serve this rather than carry a
@@ -49,64 +51,94 @@
     "header p{margin:0;color:var(--dim);font-size:.85rem}"                     \
     "</style>"
 
-/* The upload page. Self-contained by necessity: it is served off the console
- * with no internet in the path, so it cannot reference anything external. */
+/* Shared styling + drop-zone script for both upload pages. Self-contained by
+ * necessity: the pages are served off the console with no internet in the
+ * path, so they cannot reference anything external. */
+#define UPLOAD_CSS                                                             \
+    "<style>"                                                                  \
+    "ol{margin:0 0 1.25rem;padding-left:1.25rem;color:var(--dim);"             \
+    "font-size:.9rem}"                                                         \
+    "ol b{color:var(--fg);font-weight:600}"                                    \
+    "#drop{display:block;border:2px dashed var(--line);border-radius:.6rem;"   \
+    "padding:1.6rem 1rem;text-align:center;color:var(--dim);cursor:pointer;"   \
+    "transition:border-color .15s,color .15s}"                                 \
+    "#drop:hover,#drop.over{border-color:var(--accent);color:var(--fg)}"       \
+    "#drop b{display:block;color:var(--fg);margin-bottom:.15rem;"              \
+    "word-break:break-all}"                                                    \
+    "#drop input{display:none}"                                                \
+    "button{width:100%;margin-top:1.25rem;background:var(--accent);"           \
+    "color:#12161c;border:0;border-radius:.5rem;padding:.75rem;font-size:1rem;"\
+    "font-weight:600;cursor:pointer}"                                          \
+    "button:disabled{background:var(--line);color:var(--dim);cursor:default}"  \
+    ".alt{margin-top:1.25rem;padding-top:1.25rem;"                             \
+    "border-top:1px solid var(--line);text-align:center}"                      \
+    ".alt p{margin:0 0 .75rem;color:var(--dim);font-size:.85rem}"              \
+    ".alt a{display:inline-block;color:var(--fg);border:1px solid var(--line);"\
+    "border-radius:.5rem;padding:.6rem 1rem;text-decoration:none;"             \
+    "font-size:.9rem;transition:border-color .15s,color .15s}"                 \
+    ".alt a:hover{border-color:var(--accent);color:var(--accent)}"             \
+    "</style>"
+
+#define UPLOAD_SCRIPT                                                          \
+    "<script>"                                                                 \
+    "var d=document.getElementById('drop'),i=d.querySelector('input'),"        \
+    "b=document.getElementById('go'),n=d.querySelector('b');"                  \
+    "function s(){if(i.files.length){n.textContent=i.files[0].name;"           \
+    "b.disabled=false;}}"                                                      \
+    "i.addEventListener('change',s);"                                          \
+    "['dragenter','dragover'].forEach(function(e){d.addEventListener(e,"       \
+    "function(v){v.preventDefault();d.classList.add('over');});});"            \
+    "['dragleave','drop'].forEach(function(e){d.addEventListener(e,"           \
+    "function(v){v.preventDefault();d.classList.remove('over');});});"         \
+    "d.addEventListener('drop',function(v){i.files=v.dataTransfer.files;s();});"\
+    "</script>"
+
+/* The collection upload page, shown while Import collection is open. */
 static const char PAGE[] =
     "<!doctype html><meta charset=utf-8>"
     "<meta name=viewport content=\"width=device-width,initial-scale=1\">"
-    "<title>ticodl+ - Import collection</title>" PAGE_CSS
-    "<style>"
-    "ol{margin:0 0 1.25rem;padding-left:1.25rem;color:var(--dim);"
-    "font-size:.9rem}"
-    "ol b{color:var(--fg);font-weight:600}"
-    "#drop{display:block;border:2px dashed var(--line);border-radius:.6rem;"
-    "padding:1.6rem 1rem;text-align:center;color:var(--dim);cursor:pointer;"
-    "transition:border-color .15s,color .15s}"
-    "#drop:hover,#drop.over{border-color:var(--accent);color:var(--fg)}"
-    "#drop b{display:block;color:var(--fg);margin-bottom:.15rem;"
-    "word-break:break-all}"
-    "#drop input{display:none}"
-    "button{width:100%;margin-top:1.25rem;background:var(--accent);"
-    "color:#12161c;border:0;border-radius:.5rem;padding:.75rem;font-size:1rem;"
-    "font-weight:600;cursor:pointer}"
-    "button:disabled{background:var(--line);color:var(--dim);cursor:default}"
-    ".alt{margin-top:1.25rem;padding-top:1.25rem;"
-    "border-top:1px solid var(--line);text-align:center}"
-    ".alt p{margin:0 0 .75rem;color:var(--dim);font-size:.85rem}"
-    ".alt a{display:inline-block;color:var(--fg);border:1px solid var(--line);"
-    "border-radius:.5rem;padding:.6rem 1rem;text-decoration:none;"
-    "font-size:.9rem;transition:border-color .15s,color .15s}"
-    ".alt a:hover{border-color:var(--accent);color:var(--accent)}"
-    "</style>"
+    "<title>HaulNX - Import collection</title>" PAGE_CSS UPLOAD_CSS
     "<div class=card>"
     "<header><img src=\"/logo.png\" alt=\"\">"
-    "<div><h1>ticodl<span>+</span></h1><p>Import collection</p></div></header>"
+    "<div><h1>Haul<span>NX</span></h1><p>Import collection</p></div></header>"
     "<ol>"
-    "<li>Find the <b>dl_sources.json</b> you saved from the repo editor.</li>"
+    "<li>Find the <b>dl_sources.json</b> you saved from the app utility.</li>"
     "<li>Drop it below, or click to browse for it.</li>"
     "<li>Send it, then confirm the import on your Switch.</li>"
     "</ol>"
     "<form method=post enctype=multipart/form-data>"
     "<label id=drop><b>Drop dl_sources.json here</b>or click to choose a file"
-    "<input type=file name=f accept=\".json,application/json\" required></label>"
+    "<input type=file name=f accept=\".json,application/json\" required>"
+    "</label>"
     "<button id=go disabled>Send to Switch</button>"
     "</form>"
     "<div class=alt>"
     "<p>Want to start from what this console is already using?</p>"
     "<a href=\"/dl_sources.json\" download>Download current dl_sources.json</a>"
-    "</div>"
-    "<script>"
-    "var d=document.getElementById('drop'),i=d.querySelector('input'),"
-    "b=document.getElementById('go'),n=d.querySelector('b');"
-    "function s(){if(i.files.length){n.textContent=i.files[0].name;"
-    "b.disabled=false;}}"
-    "i.addEventListener('change',s);"
-    "['dragenter','dragover'].forEach(function(e){d.addEventListener(e,"
-    "function(v){v.preventDefault();d.classList.add('over');});});"
-    "['dragleave','drop'].forEach(function(e){d.addEventListener(e,"
-    "function(v){v.preventDefault();d.classList.remove('over');});});"
-    "d.addEventListener('drop',function(v){i.files=v.dataTransfer.files;s();});"
-    "</script></div>";
+    "</div>" UPLOAD_SCRIPT "</div>";
+
+/* The app-update page, shown while Settings' update-over-Wi-Fi screen is
+ * open. Same receiver either way — this only changes the instructions. */
+static const char PAGE_NRO[] =
+    "<!doctype html><meta charset=utf-8>"
+    "<meta name=viewport content=\"width=device-width,initial-scale=1\">"
+    "<title>HaulNX - Update app</title>" PAGE_CSS UPLOAD_CSS
+    "<div class=card>"
+    "<header><img src=\"/logo.png\" alt=\"\">"
+    "<div><h1>Haul<span>NX</span></h1><p>Update app</p></div></header>"
+    "<ol>"
+    "<li>Find the <b>HaulNX .nro</b> build to install &mdash; the same "
+    "version as installed is fine.</li>"
+    "<li>Drop it below, or click to browse for it. (The app utility can "
+    "also push it: <b>Send to Switch &rsaquo; App update</b>.)</li>"
+    "<li>Send it, then confirm the install on your Switch.</li>"
+    "</ol>"
+    "<form method=post enctype=multipart/form-data>"
+    "<label id=drop><b>Drop HaulNX.nro here</b>or click to choose a file"
+    "<input type=file name=f accept=\".nro\" required>"
+    "</label>"
+    "<button id=go disabled>Send to Switch</button>"
+    "</form>" UPLOAD_SCRIPT "</div>";
 
 /* Served at /sent, which a successful upload is redirected to. Reaching this
  * by GET is the point: it leaves the browser on a page it can safely reload,
@@ -114,7 +146,7 @@ static const char PAGE[] =
 static const char PAGE_OK[] =
     "<!doctype html><meta charset=utf-8>"
     "<meta name=viewport content=\"width=device-width,initial-scale=1\">"
-    "<title>ticodl+ - Sent</title>" PAGE_CSS
+    "<title>HaulNX - Sent</title>" PAGE_CSS
     "<style>"
     "p.m{margin:0 0 .75rem}"
     "p.n{color:var(--dim);font-size:.875rem;margin:0 0 1.25rem}"
@@ -125,11 +157,11 @@ static const char PAGE_OK[] =
     "</style>"
     "<div class=card>"
     "<header><img src=\"/logo.png\" alt=\"\">"
-    "<div><h1>ticodl<span>+</span></h1><p>File sent</p></div></header>"
-    "<p class=m>Confirm the import on your Switch to apply it.</p>"
+    "<div><h1>Haul<span>NX</span></h1><p>File sent</p></div></header>"
+    "<p class=m>Confirm on your Switch to apply it.</p>"
     "<p class=n>The console stops listening once a file arrives. To send "
-    "another, re-open <b>Manage data &rsaquo; Import collection</b> on your "
-    "Switch, then reload this page.</p>"
+    "another, re-open the receive screen on your Switch, then reload this "
+    "page.</p>"
     "<a href=\"/\">Reload</a></div>";
 
 /* Write every byte or fail. A short write here is not cosmetic: the response
@@ -159,7 +191,7 @@ static bool send_all(int fd, const char *p, size_t n) {
 }
 
 /* Send a complete response. `body` may be NULL for a bodiless status.
- * Access-Control-Allow-Origin is set so the repo editor, opened from disk (and
+ * Access-Control-Allow-Origin is set so the app utility, opened from disk (and
  * therefore a "null" origin), can POST here directly later on. */
 static void send_resp(int fd, const char *status, const char *ctype,
                       const char *body) {
@@ -257,6 +289,20 @@ static const char *hdr_val(const char *head, const char *name) {
     return NULL;
 }
 
+/* memmem in all but name: find `pat` inside `hay` by explicit length. The
+ * body may be a binary .nro full of NUL bytes, so strstr cannot walk it. */
+static char *mem_find(char *hay, size_t hlen, const char *pat, size_t plen) {
+    if (plen == 0 || hlen < plen) {
+        return NULL;
+    }
+    for (size_t i = 0; i + plen <= hlen; i++) {
+        if (hay[i] == pat[0] && memcmp(hay + i, pat, plen) == 0) {
+            return hay + i;
+        }
+    }
+    return NULL;
+}
+
 /* Cut the first file part out of a multipart/form-data body, in place.
  * Handles the single-file form we serve, not multipart in general. */
 static bool multipart_slice(char *body, size_t *len, const char *ctype) {
@@ -284,150 +330,243 @@ static bool multipart_slice(char *body, size_t *len, const char *ctype) {
     }
 
     char pat[160];
-    snprintf(pat, sizeof(pat), "--%s", bnd);
-    char *start = strstr(body, pat);
+    int pn = snprintf(pat, sizeof(pat), "--%s", bnd);
+    char *start = mem_find(body, *len, pat, (size_t)pn);
     if (!start) {
         return false;
     }
-    char *data = strstr(start, "\r\n\r\n"); /* end of this part's own headers */
+    /* end of this part's own headers */
+    char *data = mem_find(start, (size_t)(body + *len - start), "\r\n\r\n", 4);
     if (!data) {
         return false;
     }
     data += 4;
-    snprintf(pat, sizeof(pat), "\r\n--%s", bnd);
-    char *end = strstr(data, pat);
+    pn = snprintf(pat, sizeof(pat), "\r\n--%s", bnd);
+    char *end = mem_find(data, (size_t)(body + *len - data), pat, (size_t)pn);
     if (!end) {
         return false;
     }
-    *end = '\0';
     *len = (size_t)(end - data);
-    memmove(body, data, *len + 1);
+    memmove(body, data, *len);
+    body[*len] = '\0'; /* the buffer holds clen+1 bytes, so this fits */
     return true;
 }
 
-/* Serve one accepted connection. Returns 1 if it delivered a file. */
-static int handle_client(HttpSrv *s, int fd) {
-    char *head = malloc(HDR_MAX + 1);
-    if (!head) {
-        return 0;
+/* Drop the in-flight connection and everything read so far. Never touches
+ * s->body — a completed upload stays owned by the caller. */
+static void client_reset(HttpSrv *s) {
+    if (s->client_fd >= 0) {
+        close(s->client_fd);
+        s->client_fd = -1;
     }
-    /* Read until the end of the request head. The body (if any) starts in
-     * whatever the last recv over-read, and is picked up below. */
-    size_t n = 0;
-    char *body_start = NULL;
-    while (n < HDR_MAX) {
-        ssize_t r = recv(fd, head + n, HDR_MAX - n, 0);
-        if (r <= 0) {
-            break;
-        }
-        n += (size_t)r;
-        head[n] = '\0';
-        body_start = strstr(head, "\r\n\r\n");
-        if (body_start) {
-            break;
-        }
-    }
-    if (!body_start) {
-        free(head);
-        return 0;
-    }
-    body_start += 4;
+    free(s->head);
+    s->head = NULL;
+    s->head_len = 0;
+    free(s->cbody);
+    s->cbody = NULL;
+    s->cbody_len = 0;
+    s->cbody_total = 0;
+    s->ctype[0] = '\0';
+    s->last_data_ns = 0;
+}
 
-    if (strncmp(head, "GET ", 4) == 0) {
-        if (strncmp(head + 4, "/logo.png", 9) == 0) {
-            if (!send_file(fd, LOGO_PATH, "image/png", NULL)) {
-                send_resp(fd, "404 Not Found", "text/plain", "no logo");
-            }
-            free(head);
-            return 0;
-        }
-        /* Export: hand back the collection file the console is running on, so
-         * it can be edited and sent straight back. */
-        if (strncmp(head + 4, "/dl_sources.json", 16) == 0) {
-            bool sent = send_file(fd, SOURCES_PATH, "application/json",
-                                  "dl_sources.json");
-            if (!sent) {
-                send_resp(fd, "404 Not Found", "text/plain", "no config");
-            }
-            free(head);
-            return sent ? 3 : 0;
-        }
-        if (strncmp(head + 4, "/sent", 5) == 0) {
-            send_resp(fd, "200 OK", "text/html; charset=utf-8", PAGE_OK);
-            free(head);
-            return 2; /* the upload landed safely; nothing is pending */
-        }
-        /* Any other path is the upload form: there is one thing to do here. */
-        send_resp(fd, "200 OK", "text/html; charset=utf-8", PAGE);
-        free(head);
-        return 0;
+/* Reads are non-blocking (resumed a poll at a time); switch to a briefly
+ * blocking socket before writing a response, so send_all doesn't spin on
+ * EAGAIN and the timeouts below actually apply. */
+static void make_blocking(int fd) {
+    int fl = fcntl(fd, F_GETFL, 0);
+    if (fl >= 0) {
+        fcntl(fd, F_SETFL, fl & ~O_NONBLOCK);
     }
+    struct timeval tv = {RECV_TIMEOUT_MS / 1000,
+                         (RECV_TIMEOUT_MS % 1000) * 1000};
+    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+}
+
+/* Nothing finished this poll: keep the connection if it made progress (or is
+ * merely young), drop it once it has been silent for the watchdog window. */
+static int client_idle(HttpSrv *s, bool got_data) {
+    unsigned long long now = armTicksToNs(armGetSystemTick());
+    if (got_data || s->last_data_ns == 0) {
+        s->last_data_ns = now;
+    } else if (now - s->last_data_ns > CLIENT_IDLE_NS) {
+        client_reset(s);
+    }
+    return 0;
+}
+
+/* Head complete, method GET/OPTIONS: answer at once and be done. */
+static int respond_simple(HttpSrv *s, int fd, const char *head) {
+    int ret = 0;
+    make_blocking(fd);
     if (strncmp(head, "OPTIONS ", 8) == 0) {
         send_resp(fd, "204 No Content", "text/plain", NULL);
-        free(head);
-        return 0;
+    } else if (strncmp(head + 4, "/logo.png", 9) == 0) {
+        if (!send_file(fd, LOGO_PATH, "image/png", NULL)) {
+            send_resp(fd, "404 Not Found", "text/plain", "no logo");
+        }
+    } else if (strncmp(head + 4, "/dl_sources.json", 16) == 0) {
+        /* Export: hand back the collection file the console is running on,
+         * so it can be edited and sent straight back. */
+        bool sent = send_file(fd, SOURCES_PATH, "application/json",
+                              "dl_sources.json");
+        if (!sent) {
+            send_resp(fd, "404 Not Found", "text/plain", "no config");
+        }
+        ret = sent ? 3 : 0;
+    } else if (strncmp(head + 4, "/sent", 5) == 0) {
+        send_resp(fd, "200 OK", "text/html; charset=utf-8", PAGE_OK);
+        ret = 2; /* the upload landed safely; nothing is pending */
+    } else {
+        /* Any other path is the upload form: there is one thing to do here.
+         * Which form depends on the screen that opened the server. */
+        send_resp(fd, "200 OK", "text/html; charset=utf-8",
+                  s->nro_page ? PAGE_NRO : PAGE);
     }
-    if (strncmp(head, "POST ", 5) != 0) {
-        send_resp(fd, "405 Method Not Allowed", "text/plain", "no");
-        free(head);
-        return 0;
+    client_reset(s);
+    return ret;
+}
+
+/* Advance the in-flight connection by whatever has arrived. Called once per
+ * poll; returns the httpsrv_poll codes. */
+static int client_step(HttpSrv *s) {
+    int fd = s->client_fd;
+    bool got_data = false;
+
+    /* Phase 1: the request head. The body (if any) starts in whatever the
+     * last recv over-read, and is carried into phase 2 below. */
+    if (!s->cbody) {
+        char *body_start = NULL;
+        while (s->head_len < HDR_MAX) {
+            ssize_t r = recv(fd, s->head + s->head_len, HDR_MAX - s->head_len,
+                             0);
+            if (r > 0) {
+                s->head_len += (size_t)r;
+                got_data = true;
+                s->head[s->head_len] = '\0';
+                body_start = strstr(s->head, "\r\n\r\n");
+                if (body_start) {
+                    break;
+                }
+                continue;
+            }
+            if (r < 0 && errno == EINTR) {
+                continue;
+            }
+            if (r < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+                break; /* nothing more this frame */
+            }
+            client_reset(s); /* peer closed or errored mid-head */
+            return 0;
+        }
+        if (!body_start) {
+            if (s->head_len >= HDR_MAX) {
+                client_reset(s); /* head too big to be ours */
+                return 0;
+            }
+            return client_idle(s, got_data);
+        }
+        body_start += 4;
+
+        if (strncmp(s->head, "GET ", 4) == 0 ||
+            strncmp(s->head, "OPTIONS ", 8) == 0) {
+            return respond_simple(s, fd, s->head);
+        }
+        if (strncmp(s->head, "POST ", 5) != 0) {
+            make_blocking(fd);
+            send_resp(fd, "405 Method Not Allowed", "text/plain", "no");
+            client_reset(s);
+            return 0;
+        }
+
+        const char *cl = hdr_val(s->head, "content-length:");
+        long clen = cl ? strtol(cl, NULL, 10) : -1;
+        if (clen <= 0) {
+            make_blocking(fd);
+            send_resp(fd, "400 Bad Request", "text/plain", "no length");
+            client_reset(s);
+            return 0;
+        }
+        if (clen > HTTPSRV_MAX_BODY) {
+            make_blocking(fd);
+            send_resp(fd, "413 Payload Too Large", "text/plain", "too big");
+            client_reset(s);
+            return 0;
+        }
+        /* The content type outlives the head buffer (multipart slicing needs
+         * it once the whole body is in), so keep a copy. */
+        const char *ct = hdr_val(s->head, "content-type:");
+        size_t ci = 0;
+        if (ct) {
+            while (ct[ci] && ct[ci] != '\r' && ct[ci] != '\n' &&
+                   ci + 1 < sizeof(s->ctype)) {
+                s->ctype[ci] = ct[ci];
+                ci++;
+            }
+        }
+        s->ctype[ci] = '\0';
+
+        char *body = malloc((size_t)clen + 1);
+        if (!body) {
+            client_reset(s);
+            return 0;
+        }
+        size_t have = s->head_len - (size_t)(body_start - s->head);
+        if (have > (size_t)clen) {
+            have = (size_t)clen;
+        }
+        memcpy(body, body_start, have);
+        s->cbody = body;
+        s->cbody_len = have;
+        s->cbody_total = (size_t)clen;
+        free(s->head);
+        s->head = NULL;
+        s->head_len = 0;
     }
 
-    const char *cl = hdr_val(head, "content-length:");
-    long clen = cl ? strtol(cl, NULL, 10) : -1;
-    if (clen <= 0) {
-        send_resp(fd, "400 Bad Request", "text/plain", "no length");
-        free(head);
-        return 0;
-    }
-    if (clen > HTTPSRV_MAX_BODY) {
-        send_resp(fd, "413 Payload Too Large", "text/plain", "too big");
-        free(head);
-        return 0;
-    }
-
-    char *body = malloc((size_t)clen + 1);
-    if (!body) {
-        free(head);
-        return 0;
-    }
-    size_t have = n - (size_t)(body_start - head);
-    if (have > (size_t)clen) {
-        have = (size_t)clen;
-    }
-    memcpy(body, body_start, have);
-    while (have < (size_t)clen) {
-        ssize_t r = recv(fd, body + have, (size_t)clen - have, 0);
-        if (r <= 0) {
+    /* Phase 2: the body, as much as has arrived. */
+    while (s->cbody_len < s->cbody_total) {
+        ssize_t r = recv(fd, s->cbody + s->cbody_len,
+                         s->cbody_total - s->cbody_len, 0);
+        if (r > 0) {
+            s->cbody_len += (size_t)r;
+            got_data = true;
+            continue;
+        }
+        if (r < 0 && errno == EINTR) {
+            continue;
+        }
+        if (r < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
             break;
         }
-        have += (size_t)r;
-    }
-    body[have] = '\0';
-    size_t blen = have;
-    if (have < (size_t)clen) {
-        send_resp(fd, "400 Bad Request", "text/plain", "short body");
-        free(body);
-        free(head);
+        client_reset(s); /* peer closed or errored mid-body */
         return 0;
     }
+    if (s->cbody_len < s->cbody_total) {
+        return client_idle(s, got_data);
+    }
 
-    /* The page posts a form; a direct POST (the repo editor, later) sends the
-     * JSON as the whole body. */
-    const char *ctype = hdr_val(head, "content-type:");
-    if (ctype && strncasecmp(ctype, "multipart/form-data", 19) == 0 &&
-        !multipart_slice(body, &blen, ctype)) {
+    /* Complete. The page posts a form; a direct POST sends the file as the
+     * whole body. */
+    s->cbody[s->cbody_len] = '\0';
+    size_t blen = s->cbody_len;
+    if (strncasecmp(s->ctype, "multipart/form-data", 19) == 0 &&
+        !multipart_slice(s->cbody, &blen, s->ctype)) {
+        make_blocking(fd);
         send_resp(fd, "400 Bad Request", "text/plain", "bad form");
-        free(body);
-        free(head);
+        client_reset(s);
         return 0;
     }
-    free(head);
-
+    make_blocking(fd);
     send_redirect(fd, "/sent");
     free(s->body); /* a previous upload we never consumed */
-    s->body = body;
+    s->body = s->cbody;
     s->body_len = blen;
+    s->cbody = NULL; /* handed over; client_reset must not free it */
+    s->cbody_len = 0;
+    s->cbody_total = 0;
+    client_reset(s);
     return 1;
 }
 
@@ -445,6 +584,7 @@ bool httpsrv_local_ip(char *out, size_t out_sz) {
 bool httpsrv_open(HttpSrv *s) {
     memset(s, 0, sizeof(*s));
     s->listen_fd = -1;
+    s->client_fd = -1;
 
     int fd = socket(AF_INET, SOCK_STREAM, 0);
     if (fd < 0) {
@@ -473,28 +613,45 @@ int httpsrv_poll(HttpSrv *s) {
     if (s->listen_fd < 0) {
         return -1;
     }
-    int fd = accept(s->listen_fd, NULL, NULL);
-    if (fd < 0) {
-        return 0; /* nobody waiting */
+    if (s->client_fd < 0) {
+        int fd = accept(s->listen_fd, NULL, NULL);
+        if (fd < 0) {
+            return 0; /* nobody waiting */
+        }
+        /* The listener is non-blocking so accept() can't stall the render
+         * loop. Reads want the same: the request is consumed a slice per
+         * poll, so make sure the accepted socket carries the flag too (this
+         * BSD-derived stack inherits it, but don't rely on that). */
+        int fl = fcntl(fd, F_GETFL, 0);
+        if (fl >= 0) {
+            fcntl(fd, F_SETFL, fl | O_NONBLOCK);
+        }
+        s->client_fd = fd;
+        s->head = malloc(HDR_MAX + 1);
+        if (!s->head) {
+            client_reset(s);
+            return 0;
+        }
+        s->head_len = 0;
+        s->head[0] = '\0';
+        s->last_data_ns = armTicksToNs(armGetSystemTick());
     }
-    /* The listener is non-blocking so accept() can't stall the render loop, and
-     * this stack (BSD-derived, unlike Linux) hands that flag down to the
-     * accepted socket. Clear it: a non-blocking send() fails with EAGAIN as soon
-     * as the window fills, which truncates anything bigger than one bufferful,
-     * and it would silently ignore the timeouts set below. */
-    int fl = fcntl(fd, F_GETFL, 0);
-    if (fl >= 0) {
-        fcntl(fd, F_SETFL, fl & ~O_NONBLOCK);
+    return client_step(s);
+}
+
+bool httpsrv_receiving(const HttpSrv *s, size_t *now, size_t *total) {
+    bool on = s->listen_fd >= 0 && s->client_fd >= 0 && s->cbody_total > 0;
+    if (now) {
+        *now = on ? s->cbody_len : 0;
     }
-    struct timeval tv = {RECV_TIMEOUT_MS / 1000, (RECV_TIMEOUT_MS % 1000) * 1000};
-    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
-    int r = handle_client(s, fd);
-    close(fd);
-    return r;
+    if (total) {
+        *total = on ? s->cbody_total : 0;
+    }
+    return on;
 }
 
 void httpsrv_close(HttpSrv *s) {
+    client_reset(s);
     if (s->listen_fd >= 0) {
         close(s->listen_fd);
         s->listen_fd = -1;

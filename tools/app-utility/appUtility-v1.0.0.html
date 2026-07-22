@@ -1,0 +1,873 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>HaulNX App Utility</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    --bg:#0e0f12; --panel:#171921; --panel2:#1e2129; --line:#2a2e39;
+    --text:#e7eaf0; --muted:#9aa2b4; --accent:#3f7bdc; --accent-lite:#5aa0f5;
+    --green:#8fd329; --amber:#e0a83c; --red:#e04e4e; --radius:12px;
+    /* Derived background layers */
+    --bg-header:#12141b; --bg-input:#0f1116; --bg-repo:#13151c;
+    --btn-danger-border:#402126; --btn-danger-hover:#2a1416;
+    --warn-bg:#2a2412; --warn-border:#4a3d18; --warn-text:#e7cf8a;
+    --tag-on-border:#274016;
+  }
+  
+  :root[data-theme="light"] {
+    --bg:#f8f9fa; --panel:#ffffff; --panel2:#f0f2f5; --line:#d1d5db;
+    --text:#111827; --muted:#6b7280; --accent:#2563eb; --accent-lite:#3b82f6;
+    --green:#16a34a; --amber:#d97706; --red:#dc2626;
+    /* Derived background layers for light mode */
+    --bg-header:#ffffff; --bg-input:#f9fafb; --bg-repo:#fbfbfc;
+    --btn-danger-border:#fca5a5; --btn-danger-hover:#fef2f2;
+    --warn-bg:#fefce8; --warn-border:#fef08a; --warn-text:#854d0e;
+    --tag-on-border:#bbf7d0;
+  }
+
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+    font:15px/1.45 system-ui,Segoe UI,Roboto,sans-serif; transition: background 0.2s, color 0.2s;}
+  a{color:var(--accent-lite)}
+  header{position:sticky;top:0;z-index:5;background:var(--bg-header);
+    border-bottom:1px solid var(--line);padding:12px 18px;
+    display:flex;gap:12px;align-items:center;flex-wrap:wrap; transition: background 0.2s;}
+  header h1{font-size:17px;margin:0;font-weight:700;letter-spacing:.3px}
+  header h1 b{color:var(--green)} header h1 i{color:var(--accent-lite);font-style:normal}
+  header h1 img.applogo{height:1.5em;width:auto;vertical-align:middle;margin-right:9px;border-radius:5px}
+  .sp{flex:1}
+  main{max-width:1400px;margin:0 auto;padding:18px}
+  .panel{background:var(--panel);border:1px solid var(--line);
+    border-radius:var(--radius);padding:16px;margin-bottom:16px; transition: background 0.2s;}
+  .panel h2{margin:0 0 12px;font-size:14px;text-transform:uppercase;
+    letter-spacing:.6px;color:var(--muted);font-weight:700}
+  button{font:inherit;font-weight:600;color:var(--text);cursor:pointer;
+    background:var(--panel2);border:1px solid var(--line);border-radius:9px;
+    padding:8px 14px; transition: background 0.2s, border-color 0.2s;}
+  button:hover{border-color:var(--accent)}
+  button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+  button.primary:hover{background:var(--accent-lite)}
+  button.ghost{background:transparent}
+  button.sm{padding:5px 10px;font-size:13px;border-radius:8px}
+  button.danger{color:var(--red);border-color:var(--btn-danger-border)}
+  button.danger:hover{background:var(--btn-danger-hover);border-color:var(--red)}
+  input,select{font:inherit;color:var(--text);background:var(--bg-input);
+    border:1px solid var(--line);border-radius:8px;padding:7px 9px;width:100%; transition: background 0.2s;}
+  input:focus,select:focus{outline:none;border-color:var(--accent)}
+  label.fld{display:block;font-size:12px;color:var(--muted);margin:0 0 4px}
+  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:end}
+  .grow{flex:1;min-width:120px}
+  .chk{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--muted);
+    white-space:nowrap;padding-bottom:8px}
+  .chk input{width:auto}
+  .muted{color:var(--muted)} .green{color:var(--green)} .amber{color:var(--amber)}
+  .pill{display:inline-block;background:var(--bg-input);border:1px solid var(--line);
+    border-radius:999px;padding:2px 9px;font-size:12px; transition: background 0.2s;}
+  
+  /* repos inside a console group: two per row */
+  .repos{padding:10px 0 4px;display:grid;gap:10px;align-items:start;
+    grid-template-columns:repeat(2,minmax(0,1fr))}
+  .repos > .empty{grid-column:1/-1}
+  @media (max-width:1400px){ .repos{grid-template-columns:1fr} }
+  .repo{border:1px solid var(--line);border-radius:10px;padding:11px;
+    background:var(--bg-repo); transition: background 0.2s;}
+  .repo .row{margin-bottom:8px}
+  .tag{font-size:11px;padding:1px 7px;border-radius:6px;border:1px solid var(--line)}
+  .tag.on{color:var(--green);border-color:var(--tag-on-border)}
+  .tag.off{color:var(--muted)}
+  .empty{color:var(--muted);text-align:center;padding:22px;font-style:italic}
+  .warn{background:var(--warn-bg);border:1px solid var(--warn-border);color:var(--warn-text);
+    border-radius:9px;padding:10px 12px;margin-bottom:12px;font-size:13px;
+    white-space:pre-wrap; transition: background 0.2s;}
+  /* modal: the sheet is fixed; only .sheet-bd scrolls, so nothing slides
+     under (or over) the header. */
+  .modal{position:fixed;inset:0;background:rgba(0,0,0,.62);display:none;
+    z-index:20;padding:24px;overflow:hidden}
+  .modal.on{display:flex;align-items:center;justify-content:center}
+  .sheet{width:100%;max-width:1400px;max-height:100%;background:var(--panel);
+    border:1px solid var(--line);border-radius:14px;overflow:hidden;
+    display:flex;flex-direction:column; transition: background 0.2s;}
+  .sheet-hd{padding:14px 16px 0;border-bottom:1px solid var(--line);
+    display:flex;flex-direction:column;gap:8px;align-items:stretch;flex:0 0 auto;z-index:2;
+    background:var(--panel);border-radius:14px 14px 0 0; transition: background 0.2s;}
+  .hd-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+  /* a header with no column-label row underneath needs its own bottom padding */
+  .sheet-hd > .hd-row:last-child{padding-bottom:14px}
+  .sheet-ft{padding:12px 16px;border-top:1px solid var(--line);flex:0 0 auto;
+    display:flex;gap:10px;align-items:center;background:var(--panel);
+    border-radius:0 0 14px 14px; transition: background 0.2s;}
+  /* the column labels must line up with the rows below, which sit inside a
+     scroll container whose scrollbar gutter eats 12px of width */
+  .hd-cols{margin-right:12px}
+  .hd-cols th{border-bottom:none;padding-bottom:10px}
+  .sheet-bd{padding:0 16px 16px;flex:1 1 auto;overflow-y:auto;overscroll-behavior:contain;
+    scrollbar-gutter:stable}
+  /* keep the scrollbar visible so it can be grabbed and dragged */
+  .sheet-bd{scrollbar-width:auto;scrollbar-color:var(--line) transparent}
+  .sheet-bd::-webkit-scrollbar{width:12px}
+  .sheet-bd::-webkit-scrollbar-track{background:var(--bg-input);border-radius:8px}
+  .sheet-bd::-webkit-scrollbar-thumb{background:var(--line);border-radius:8px;
+    border:3px solid var(--bg-input)}
+  .sheet-bd::-webkit-scrollbar-thumb:hover{background:var(--muted)}
+  table{width:100%;border-collapse:collapse}
+  /* fixed layout so the header table and the row table share column widths */
+  table.files{table-layout:fixed}
+  table.files col.c-size{width:90px}
+  table.files col.c-md5{width:180px}
+  table.files col.c-act{width:170px}
+  th,td{text-align:left;padding:8px 8px;border-bottom:1px solid var(--line);
+    font-size:13px;vertical-align:top}
+  th{color:var(--muted);font-weight:600;background:var(--panel); transition: background 0.2s;}
+  th.num,td.num{text-align:right;white-space:nowrap;color:var(--muted)}
+  .fname{word-break:break-all}
+  code{background:var(--bg-input);border:1px solid var(--line);border-radius:6px;
+    padding:1px 6px;font-size:12px; transition: background 0.2s;}
+  .status{font-size:13px}
+  .tabs{display:flex;gap:6px;margin-bottom:12px}
+  .tabs button{border-radius:999px}
+  .tabs button.act{background:var(--accent);border-color:var(--accent);color:#fff}
+  details summary{cursor:pointer;color:var(--muted);font-size:13px}
+  .hint{font-size:12px;color:var(--muted);margin-top:6px}
+  /* card grid overview */
+  .cards{display:grid;gap:12px;
+    grid-template-columns:repeat(auto-fill,minmax(190px,1fr))}
+  .card{background:var(--panel2);border:1px solid var(--line);border-radius:var(--radius);
+    padding:14px;cursor:pointer;display:flex;flex-direction:column;gap:10px;min-height:92px;
+    transition:background .15s,border-color .15s,transform .1s}
+  .card:hover{border-color:var(--accent);transform:translateY(-1px)}
+  .card.hidden-group{opacity:.55}
+  .card-title{font-size:17px;font-weight:700;letter-spacing:.3px;
+    word-break:break-all;display:flex;align-items:center;gap:8px}
+  .card-sub{font-size:12px;color:var(--muted);font-weight:500;
+    margin-top:-4px;word-break:break-word}
+  .card-foot{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:auto}
+  .card.add{align-items:center;justify-content:center;color:var(--muted);
+    border-style:dashed;font-weight:600;background:transparent}
+  .card.add:hover{color:var(--accent)}
+  /* group controls, inline on the title row */
+  .grp-ctl{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .grp-ctl select{width:auto;min-width:110px}
+  .grp-ctl input[data-f="target"]{width:auto;min-width:130px}
+  .grp-ctl .chk{padding-bottom:0}
+  /* consoles + quick test share one row: 75% / 25% */
+  .panel-row{display:grid;gap:16px;grid-template-columns:minmax(0,3fr) minmax(0,1fr);
+    align-items:start}
+  .panel-row > .panel{margin-bottom:16px}
+  @media (max-width:1200px){ .panel-row{grid-template-columns:1fr} }
+</style>
+</head>
+<body>
+
+<header>
+  <h1><img class="applogo" alt="" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAkt0lEQVR42pWbd5wlV3Xnv/feqnqpX+c0eRRHGgWUsJIRMIixEUICAUZCwLIOeG1jvLusbYI/llgHEYzBaxvbeLEX44ADIIFsbDAKoEESyjMaTU7SdI4vV7r37B9V73WPwPv5bM/nTXe/V32r7rkn/s7vKH7E11133aU/9rGPOYA777zziunp6VuiJHl11OnsiONkHMQgAkqhFIAi+z37+/wjRASRtXWdE0Bwkl0vAA6ss4gIzjmsFUQc4gQnIAjiJFuL/Bb5+6DyN1T2LGjneWbZD/zDhULwncGR4fse3/PQU/lD6OxuZ36p/+B3uemmW69rtVZ/bX5hfvfqaq3UbrdJkgTp7kjlO0WhlMqeKn+s3kJdIXQXRVgvkd6PZ1zT/W/tDRG1/lOU9H5CvexyUBhjCIKAQqEcDgwM/Ht/dfCeZ5999Pvr9/ejBNBba/eNN/7W6enpj0xNTelOGOH7vvV9T3nGqN4hqPz2av0i+UZUpg2S/1vbsOQCFJxkwnCyfqNrv/eE4/JbyjrhSHfr6ySZ3RjBIeKctU7EpsYLfAb6B13/8PAnj97+to+qTLN7e1XrNq9uvvl9xXrj0F+cOHHiHTMzM1IqVVyhEJie7il5mb6oMzevulopa+LIBSUITiyud2qCc7ki5xtfLxwRlSls7zFVb6NC/tm641cC4gSl8rvnErQ2sTZNdF+1X42OTty3dcvEux5++OFW96EVoN7+9rdrgNnZ2S8fPXbsbQsLi+lA/4DJ9TvbpFYoJbnN56egFSg5Q5SqJ4Ts6ZxaE4YoQWndk6PLNSKz/+yhU+syHyDZ57hsJdcVSL6uAsQp1tuOuDXhZzJwXZOVJI5suVz2xjZs/Prorhve9tTnP28BMXfddZf+3Oc+5yYnJ3/z+Injvzg7O58ODgx5IqKUViil0VqtbUqRC0KtaUXuDLPrsr9RRqFM9p7SgjYK0Y522CC1IYkNSWxEYkOiNCRJQ+IkplAogFY9YSqlMkGjevcXFCiNKJ3tVGsUkvuG7NpMmXp2o4zxdBSFiUuTnd7iilleWvgOYBTAG9/4xitPHj/+/YNHjpn+ar8GUUpplFb5BtacmlaAlkyt1ZrbU90bK9AaMNmxaJVpSepSSqUyV156LUorRLrOsxsdFFHc5tEnv0uSWnAK53K/4TInnrsNxHVtUvd8ArkGiV1nfs6uOVhxKKUkSRI3OjIsmzZtvv655576gQewsrT0odPT00GxWLJnWHEuQE2m/trkNmqFFMEYjTYaJ2vakR9Otvmu8LQGq/iV932Qs871cLq2Zqsqi4XiUjy7mUt2XsRnP/9pioUKkrrc1lWm7gqUk54AHQprLS5xQPYsxhiUs4hzuabkSqIM4pzyPJ96veGVK7WPKqVu9d7+9rfvfPbZZ9/QaofS11c1Qqbe670j2iEOksinUq4wOFbBL3isLtdoNOsYX4PKvJLSCm3yNXTmJ5yLmZzYyMBggNv2e0xuV0QJiLI9P1D0hJP7Bti8+Rfp768SxRalNKIcGoXTqud3xDm0CAEJA0OD+EGZNOpQX1mmFSakXhGtTa4B5C44E6RWyiRJLK1mffd1r7zuFd7c3MzNtVqtYoznVO7nMwFkx6mN4FLD5OQEb7r9HC6+DioTTfxCQKc5RLMV8sK3L+Zrf/sw9fY8gV8E5VBGQIPROvML2pHaDpXhPig7dKRwOJAUcWCLKcGgIYpaKJ35D0R3FQRF9nOSpoz1j3LlG25n+vI3YUwJ5xXwbIvC8jFaj/8rLz10P0uNFqnx0S5zqDjbc45aawmjuDi3uHSL126HN3Y6IZ7x1rIrdHaaRog6ile97nx+4WPj+NuPs9Jaoh4mGE9RHDaoGjz6eJuJiS2sHp3PI4MCLZjcgTqlQINziihOKDpFbMGKIE5hbYpTjijJ728UCpOZWx7+RASFBitsmtzIC88d4ej5l0PFR1IgdRSHL2fip25j47XfIfjzX2Pm+BESXcCIzZxXFmtRSpMkCalLb9BRFO1IU4c2Jjv3LIdFaSEOhSuv3cZ/+1yF5tjjnJiaorkEWhV49B+rfPqOAmG9hC6vMP3iLFEUZ2ajFVprdDcSeILxFFppYmcJU5e/LGFiCVMhtI4oV1kTKFRA9vIUYnLvr8ClQnNlgcUGFJoLnHfvBxg88ABEKdF8jVPHOjxffT3e+77I0ORWVBrmTkmvz/uUc44kdTt1mtoxAbTJYk837DgnVCpF3nN3mXl5gXpNKJY8KMWEiWX43CYX7K5jig6JPMJOk9SmvUxQa4XyBO2RqbNxWJsSpSlhYunEKWH3laSEqSO2MSIOHSiU51BeFk2UUXkeonHi6LRDApPgBBam54iXF1CFAIki0B7RTJ2pwqUU3/oxSgac0r16IY+vSpygkHEPVElrg1aql0R4nmZ1KeTadw4xtGOF2bkEG5Y4/ugAoixjF6yy5SLFlosKJJGjsaQQ5fL18zRYu+z0PEGw4GcHEaYOHQlxrLCkCA5nBRM74hS0Ae25LNcQjbKC2Dxi5xaSKjCdZWJTInn3F4EipYMPsXvp79kXXM7xs28nnFuicc4b8c+9js4L34VCH1iHqG4hJmilPE+rLNZrpWGt3gLgktcUaCcdlmc1T//Veaj6Jmq1Gqv2EDd9uMbgBkva8YlDaLbriK+w2CwpMYpO2iYwHirIlvUCj9g6VAxxYjOT1ClpojAqM4s+v4jn+xR9aIYhVgTtFzIhZJpKs1GjXGjiJaukXhkKEB95jEr8GH5jCtnwU+AXCNMywQWvR/Z9J5OstVmlmhdxAni91FGtpTPOCX5BMTAWECZ1nvxGmSN7mpx9ySxWd5ja53jgLy1vvVsIl4UoVGhPIZ7G4VBGEaVtrrzkGm7Z9VZWa3UGqkOsLk2jwhgXecSRw+FwDlLrCHRKvdGkEmp+9Z2/SbvTolDy+bN/+t8cOn6CQBURlWWUkQqoSkTRt6ilI5xz+j5OjF/E3zxzLXrbNZw1fR/SnGfqsvdRrG7K7L+bo4isFRBO8Jy1Z5SV3UJCGQt+TLMDp4+0qLWWeOH5RUBjfMupF+q0wzKdhiOKFZWd4zSOvoSorChK04RbXnsHJ+3/YfJVM6zWCoSuSbFP0wgTnLOkziFWIcoStoRgXDHrPkFfuY9QFimfeDNv2fUOPrbvoxQrZdJU0Fi8iRtx7X0Q1gie/Gsucf/ObPMiand+GXfsOc498AtMDFX426MXowcmexmj9NLpbg0jaFF6rcAhy/NFHJ6vCIqKMLKYkTbLi8vESUoURizMLlLdnpJ6QqfhkSZQX11BCRmokVqSxPEvD9zLxsItvDB1DG/nSdTWZRpxRDuytGJHGGeRoJM6OhF0VIRsXaG56TBHjwij3rV89f4vUyxWeqCJ0ppwZR4bRZhOk9XNP8FXny+wNHIDo4fvo7ryPHvqF3DfCyXM8E6sLqI8H3FurVjLawWlQLssS8gqtbzaExEKZYVXSum0UjZcpZGJJeamZ5mZmsKNLbH1RkXiLLVajE48ZLaNGHBiiWxKsVDmK9/8Gs/84BhnT/82zzxcJ3WKduhoJ5ZWnNJMHO1U6KSWjk3odISOS9j3L2VuUJ/iS3/7Jfa9sJdisYjrVonKQ7X3Uig41NIccs4uWj/zTZKBjby181e8QX+T9s6fofGmL2CDKk6VUaaY1QKQOcFuga0UWonLVN/1AB6ccxTKGhVkGrDhbM3VP1dm4idaTPxkxI/9QsDkdkOSCM0Vh7IKZR3OdQENTSKW0Yl+Pv+lP2Lq+DLnzH6YA/uXoQzt0BImEMZCO7a0I2h3IC1a9j9k2V3+OP/8nXt56JEHGR4fIU2zogabQWWKCCMJaW0FSVIUKao8wreenubx/QvoYgVFgoQxVldRQQUlNgunkue4eVDxpIu2rMOyrHMU+wJUIMSxo+gbdl4dsGHDZuhvUx5I0E4Tx9CsK1KbkqYpYoS4GWF8oVwqMDo0xtD2EX7/zz7Bb37wt9kWv5+D8kdMbh0grDswmSO0CQT9wpHHQ25SH+cHjz/J1++/j8FtQ1gcxmq0UjgNzghJlBCHIdSXwIJ0GjB8Pieu+1OwCga3Qrya2X6xiAoquGQZhQ9qzecBeL1jXwdlORGKFUOqLWGSUOpzLOwZ4pnPjzB6+Qqv+Nklkhhia1icDqmttkh0h6GBYSYnNzA2vpFKdQTPL5K0IyqlEX7rU7/BPR/9DJuPvpvjfInhsQpRK0UECn2GY891eG37w0xNzfFXf/2XDJ83BL5QX22S1lKIgQQwPh4BjhRq09BpQ2ogqrE1fJLR8Aizi/3MbrwV5w9hlYcqDSD1U1ky1QVTcrjA6+kC65IYJ/h9kIgDV0DCEvNTLQ4erXPusOMKAlI/YvZ4glnawOVXjjOyZZzYaeq1VZKFVYYWlzivWWebr/hiaRS/VOI3P/lr/M5Hfp/avlVmL/kGg9Uq1oRMvxhx8cx/olVz/K/PfYaBrQO04zZe6nPFpT/Gzu2XMthXpVVb4dln9vHEo0+yamO8ySUIm2Bh4vAXuNg9RFAdxpw4RPTiUyy98hNI/xCqOJAXQ2vb72YC3plYcw5jpUKxzyDKcuArQ5z+fpnNN81y3a836NPDPP37G0lGZxmR89lYPY/QW8KbOs3Q/DS7jWWnF7D1nM14526hfPQo31xaxKtUcJ06d//ur/OxD/8ej+9vsnzeQ5jlYeIHtzC6Ywf/9ODfYMqKetjiuqsu5X2//NNsuvzNTLaGGKlETA56pLbAAw98i7s+9BGeePEIutXGdWZxB/+RUyP9FDpN6mkFM/swevNzyIZboTiAEtfDEdZjeB5KelB3F91xTihWFYkTDj+xwosvrFK5LOFVv1rmic85nvq3eUyhzUWvVJzdeZybpMOWjVuolDajzjubdlCkudpCmRSN4zLt+EoMSRQjUcyfffGz/MSuW7AnRhkvbaVTidl39CCXXXI9p2Ze5ModF/Dlj/9XvPMGeaK+yMwK0GrQH1Qol0fY/eNXsfmL9/K+j3yCPS/ux6sG1JsNfBLSxRWcOJLEIrFDUlDBAHTDoPRyIpRSmJGhkbsbjRbKZOWn8iBsp+x4VYmxSyyu2qYw3mJoaIjjX57ETNawfauUt4WsLPm824NXbxwnfPfPE67WaE/NE6ws4C/MIaqEf9MtHByZ5NDJKS7ecQmvvWE3Z23fwcLyCrbts9qoUe80aLZaLC+tMNQ3xHveeCvnliv4wWnCPkOYbGWLD8OjgxA2OPJ8g8ObJrn+pu3s+foe6skINKZIlvbhlMJGNVpqO+6sd6IHR1AzP0BOfx9VqOSmkB16f38VMzw8cnej2cwQFATtKcJ2ws7dZcqbI8SP2fLKgL1/4XFkT0R5POGin3UkErNysMywP8gVp0/QOXmKsmcpjG0kueH12NvfQ+Ht7+QbL07zwFPPccUrrqRSGabWaLK4vEIUJ8RJRKvTznE/IUktShS1qM1g/1Y2kLLt3DZPnIqon6qxYayP9oLiEU8TDzzPVWOLlNttvv3QMmbT5cTLsyRhm0hvRs5+L0xchKr0oZcPICf/HVUog+Q4oTiqfX14vb5C3trqhsNCnyayjjACpxXD19appSmj1/jETdCBh/NWeC4cpfGun6H6ymuIzzoXNzhE2O7QXlmhr17jkX+5n2MHDjFY6ePk1GlKpTIKRZqmecRxhHGMTVIUjihN2fv8QSY2TlIpXcjq/z5EYftGtp11MU8+fZxDUZOLbtSctzRFZb9w07Z+PlE8yIq/Da6+C2pT4Fdh9DxUQUEaQWl4rVcgZ/Y2vPV9IoXGiaANBP0QRYJ4ijS1bHutMHG1h+p42MhBEBF3msxIxOnX3cQFO3bQnJnBnZ4iSRLaYUjHC1ipNzl58gQ7LtyJBtIkwaYuS20RbJJhCGmcgBJsmgCa5556ljRpUxnaxjmlJn/wtU/yprfdSeulQ2x+xNFZ7uPFFWEVx3ihRnP1EMOlDivD1xL3n99tNSGpAq8flL/W1lsX9Lz1rTLnHNqC8UCXLFHksClYLFor0vky+z5VpXjRPDuvu5CRrZv5/hPf56kHHmD72ASdVoc0tcRJRLvdwbqIzVvORvEIB/bv57wLL2RhYSmH6x1OsogjYnEuwwCsddgk5uTxk9Sabd7yjh189pMf5+D+faw2Q66++lq++vAsk9tHaUmEIsUmDruwF6b/CX3Zb8DARai0hegAEkH5/Vk5nMPkXbRbRPCstb2+nCDYFEyg8cuGVmyxDsQqtC90miltt0pQL3Hjxp/mj0/9Ca1mg337D/D6eotGo4m1Ke0wJgwjojBiw8bNbNl+FjOnX2LDxo0oJbTbHZQCZ11elWZ5uBUHzmLjGBGhtrzMo3se45rrX83wyBhjY5vY99x+Lr/+XJZpErkIrYRLz1ZMdc5iOXgvMnAJ2DgD80WQ1KJ0BaU8JK8H6GUEgl6fCCKAzeDsVKekDqxVpAhxy1DckrDxpxf5jbt/nb1PHOLIsUNUq1VOnTjJsZMnWW22WFytsbJap1arU6vXqddr9FWHaXdaHD50AM9owk4T5yzOWaxLsGlCamNcEuGSBGsTUmeJOh0OPPs0frHIjbvfSMetokfGqU8VWVxqEYaWfXtPUvVa/NytO0m2/BwydjnYBMHkrTSNbbfApWe2gV22XTM8NHx3s9XqSUEpRZKkTPy4w5QdUeRwubNqR20ulBvxT5zFZ/7wHgCiKGRufoHRsQmMCZidnmFleZWFhQVmpk4xMTbAhslxzjn3bJ555mlAU+2r0KytoE3e5xOLOItL0wwhthZnHc45PGMY3TDGjpFxrr4sIb1ihJeOaNpTbWxgOPz8c3zj3vu549ZrOb0cMdseR+sc5nEO7VXgxe/ipu5HeUXAZT3kbhQQJ1mtrE0eCYS07Tj4vTYXvNnLGhcODIYoFPqiCc47fzvvete70NrgXAYzDfYViNsrGInxfUMpKLBlcjvP792Pc5Ytm7Zw112/wSc+8XtEYUSzvprbvcruK+C6HU4UnhcQFALqC/M8+K1vc9mm82keqSHLx5kvbUSaBdp7pnnw2/8K4tBK2FRZYd9qjPK87PT9MmrpOHLs7/MyWK0FgpxkobZvO1tm5ubQxssxc0XSSfE2Rex8v8/YFk0cOYg9kjRm9ZvjXD9+G7EKCcMYoxXaaOI4waa2Z0ueZ5iaOo3nB9RqNZ57bi9vuvmNnH3WNlZqdarVKkkUZsBEjkIrskrUGIPv+6RpQhxHaOMxMTZByVgSndDBgCvSXllhdXWZSy69DJ02+Oj/eYnOue9H6RTR/ZhoFQ78Oe7kF1DGQxkPXOZ0xVk2TE7idbMiZC0l1gVFNAUnv5ng3lBgZINBBRbnNIVRx7P7nuOp558CyTvHeT9Breudp3HIe9/zHjZs3Mh3v/c9zj3nbL5x//284hWXMTw0TBRH2amLOyMsdYuxblqutQYRnon3YgU0Gu2yMtr4BqUMz+09wFCfB/5rMujZaUz9GJz+Nu70PyJisyaDkzP4JArwnMs5OHotPChAacPynoQ0iVi53DC0wVDp07TTNhPlAqMjY4SdEOOZvH+fLWo8jziOuGDHORw8fJjvPPgQiKPZbFMqlXjhwAGstT9ET+n2CLMOtOqtp3O/5HK97dJjhIx/ZK1jaGiQvh07iFpt9PwzUD+FLD+BrDwCyXKGCJ0h5TUujvfDhJlsYWU0KjHUv58SnhTmN1iCsqYz1WFwoo3vBzSarR6a7ETQCpqrdaJOh7mCYTVYZW5xMevUiuDSBG08VA+CX8c5sI7A9/B8nyRJcM5htCGOQ2InVPuq+MbDujRHsDJQzzrL8NAwnTDGTf8bZuFhXLII0VTm+XXxDC5VDwjo9kDEuR+iSkmeFSrPQ6wimkpRU46OdohzdPrbVMpllpaWEGcyKFwp6rVVrrrycq565SvpRAlPPPYYi0vLWLEEfsCrXreLSl+VJEl7D9CltSCZ30gSS5Km+EGAUoJzKWG7w6OPPcZKbZW+apVu7pJ9LhQKBVrNFegcQMIutOehdDHrCXaJFDkakLXZ8nuuWYRGxOUMjy4NJcf7tUa6HtvFtFst+qrDWGfRLvMDjdoKt7zpTezavZt/+ed/pRNGoAxaOSIbMzA0TLOVsLg8gzEaEcE6B7kAOk5IbUwUxXhKEShFR2Dj2Aijmzbxi7/8Ab7zb//Kk08/Tanch3NZw1Oc4Hkeq8uNzGB00AW/c/hbrzHaeiauegftrXkEOcM8lFIYpRCy3r8z3ZOCWr3O0PBYbruWJLJU+8rc+pY38yd/+gWajRqXXHwp5UKBmenT1Op1EKHdahCnFmezv3Mu6/03kphrhyr8SpAwm7T5dCgcDi0f2DrO6xtTPLjnIH/11CDvee+7mZub5fTULEGOFJMfVr3RRGkf7XlnEt+6XMMfZsjlx94FRHKvI5JRs7oQuVYKbQy+5+HpLDy1Wp0MUs65PGFrhbe+7TZOnHiRl158id27X8/o2Cizc/PZJrWm1WoxMzvN0OAQQVBAq4zN4XmGMLVsn5/inDjifLEMNWu4NOHi2jKDYcLVZY/W1It85d5vcMc734lIktUMeaIkLiWKIzzfy9Y0BqP1Ou1Xvb7lGS0gEUx/deDuZrPVc0yCylGTLFvONqrRSqMyciBJGjM+NkGt3qDdajLQ38/P/Nx/4R/+4WuIQKvZYH5untmZKayzvWRHgEa9jtYapQ3OOUQUBc9j7+mXeHBmmi8trPBCqugbHObho0fZs7TE384tU6v0s7S0ys4LdzI+PsoLzz+L9gqUCkVKhSILi4t4xu+xW6T7XdZXu+somyL0VSpocXJGGOgqiutR7aTHglVGYYyHTR2dTptKuYKN27z1rbexstLg8KFj9PX1cXpqhiNHDmelrQjG81BaEXU6tJrNnPOzxjINjME763yeHd3E4UKFytgE5WKJ1vZzeWpgjOmBYfr6h+iv9vPVe7/Orte9ntGxCdI4pBAEhFGIc5KfulrjLwo/IvzJGcRMLWsdwR5nT9ZVh07WvGePQIGi025RDHxQhv37X+CyS3dy5VWX0Wi0KBTKBIUS7SgiCkOSOMVawfcDqgNDpIkjjhOSJCWKYjphjE6F4eoI1Uo/ShRJaimagIHqMKVCBeeEJEnYcf75jI2O4jIKGb7v0em01yVha5gf609e1ja/vgD0JGd4nhkOc4R4XRtpfdGojaYTdhgaHkP7BR57dA9/8qd/wvt/6T/z6KNPU1utYcVh0wz2EptRXbQCz/PRWq+xz3ROiJSM/OQk4xauHYTDeF6uskUuuegiPvXJT7K8tID2y3i+T6O2kq+ZJ/pK51mt63FWu5D/Gb8qUBsmN8rcwmKWoKwnDeeEx/X8AaWzhdM0zZhfkxtYrTXotNsEpTKjI6PEUTvr463RutFnkmd7MTyTs1o7EpGXJapyBilba01iLctLS3hGERQqlIs+yytLGOOjtZfxGFUW0p1zeQbJGhrU03LH+OgoXo/pLT/E9QZxiNYgCoegXMYCUYBNHS+eOoHxfKy1lCoVkiRhZm4OrONl/Xb+/77kR5DYBbTH4NAIge+RxB0iZ2k3U7Qp9JKprNWX0e8yoEX1OMi9kLiuJPCkV4zIyxRdeqfjRPC0ykkW2TW+V8icmwLP92k3axT8gGJQJEni7CSky9CTH0FKX7tPRqjKEKvMtskErzVYm5OpBT8okNqYNE3wvRLKaHyfnKiZr54zzFyanEEv72qA6ppdXrh67ofZ8t1gyHomcrPZATTFoo8xGqcUBo9OO843AQvz0732uv1/nO96U1RKka4DK7OQeSZU2/VvUSci6mQmlYhGkjYApXJ/hi2g6LTqOTM0wAv8HuZw5nzC2iyDqfZV72612hmdtUuP7BKe80e11vKq123iqhsmeOl4nSQGYxTWOm7YPcllV0/y0okGaSoYo1BGY7RCGZOTqjUmp7F201OlNJ5vcE7YtHWAm99xHoJifrqFRqhedj3VH9tFfPIAklpEQXF8Axt2347TPlvKmne+607Gx8c5ePAwvu+TxBE33/wGbrzxdSwsLrCyvNLzbV1y9xrhGsqlMkxMTIo2nnh+STy/JH5QEj8oS1CoSKHUJ35QlkKhJH+/91XyYLxLtl80In7QJ9XBIalU+uSvn7lGHkp2yVkXjgqUBFXKvucvv1CRSv+AaK8iUJJSuSqV6oCUKlUxXkXAlzfcfpY8I7vkfb+7U6AolWqfDP6vZ6R0v8jQL31OikZJoH3pu+YnZeR+keov/rVsmhyT5/c/LyIit9/+UwLInXe+U0REfvCDx2ViYkKMKUhQqIgflHsvzy+L55VEmUDGxybFA+IMLZBedtyDi7pUEg3zqw3qLzlqKyFJ7MhynIS5xToy26LdiRmdCLj4lSPEqc1HVzQnD7SYPtXkgksHGN9UZu9jS3TajnLF47obhzl+sEazHXOyucLqaqfHN47ais5hS3r5L1C65Qjtr30Gm0D9RUsQWqZmF7jlljfzyPce5J577mFlZYVPfPzjnDp1grfcdhtzc3MUClW6Pk5ytKs3Q5Bld4mntVpSsGHdFeuiwJrVduIIF6W84vphWgsO5WmMUjgvpRZa2i3LpdcM8O4/72N1OcIzmkJJ0Zmv8ru3nuCmnx/imneU+dBrVzj6bMi2C8t84G+G+cYfa575Vo1GmJJ2hyycw3TAqBQ31yF6zT0E+x/BtZZR1mAjR9Eojh87ygc/+Kv8wR98lr/8y7/AaMMvvf/9TJ2eolCs4qzNqLvdCOjWeABKKSUiM561ckBpvSFL/EQJ+ZBDD4XJJFFrJxQ6CW+5p4zxszzJaMXyQpvVBUOhrHjiW4vMvKmFSKYhr76zn2v/U4mtrygyu9Dk5HyHOE1RSmPFcWp2leVai9QJy+2IMEp77TnbFlS8TPD4nxFd/xH4yT/G3/uHhMsJum0zHKDUz9/93Zd562238ZrXvJpvfevb3Hff1ykU+7Joss75dbPbjAQmzhhtlGK/5/vm3z3P7IriNCdL8rIWUqZCjQgaDcXXPz1PVE9QWmG04fr3VvGGHDYVfvKnN3LxW4I1qruXMHU6JkpS2rFjuamIkywk2VRYalrqHUsqlvlGQrOTZLkHBmnEUPSIn/xTTFtIrv4IXPBB3HwL27YYowg7de6443YuvfQSjp84weVXXsHNN9/M/fffT6k8QJoknDHjQy/NV57ReJ7/oPb9vq8WgkJDnOvSsjOMMAcm87DMUiNldiVl3zdb7Lu/yd6vN3jm3jrLszCznBKUDWffEvBSvcnXP7nIV/7nDHsfbLPUFjpNR9tZ5lYTyhVDMVB4JcXMakwrzuaE5hYTxFcUiwZnHXaxjVtsIV4fyWO/jff814jqo7jlFipyhKmw44IL+fCHP8Shw0d4/y9/gKXFVT704Q+xceNGOu0m2uicDndGdSCIqCAI6uVy8av65MlDh0qFwj8Evqec6xJS84G3XHcUkPiKUEGxz+B7JYJSmVIloFM0tDHEnZRTR0NUX4FLbqtyxR39jFxUoJYoYlJmjoWspsJl/6PELV8Y5OIPlFhqC7UFy+piysqCYuNuw667xrGJQ0cBuq0xYlAK7J7/ijf3AlqGse2IifFhPvOZz6KUx+/87j384PEf8OlP/x4bJjfwqU99ioGBam4GZ6ZhzjrrB54ql4r/cPTo0WMKUFu3nndWs7X81MpybUBpLV1uqcqzOaUc215TRkrC6Qc7uLBLrnRsfnUJKQovfatF35jPxmtLKE/AOZI2qKJm5rEOrbmELa+t4JXXgo1taKa+3yFtp0xcVaK63RDOOaYfCdFbbkVMH0zfi7IJNmlD5Wy8TW8gPv1tzt+QcM31N3Ds2FH27NlDEJRJkg67du1icnKS737vEU6fnsIYf21eUcQ5sWpocHBlYKB6xcmTJ1+kO960edu2OwYGBgVMqk1gtQlEm0CMVxBt/G4+K0rlOYNXFOMVBLSAEq0DAT9rLeXvdV8KX4zpXnvmS+tAjFc84z1jCpKPB4jRfp6jlEXlc1pZ50v1nsnzC+L7pfx5erWeGK8k2hS6Lwsm7e8flM2bt92RH4PpGoYB7JYtW36l3mh8tl5vgqhUa20kixgo3UVx1Vq1nA9H9EKMYl1d7tYGCR29DtDLC55uKaLy0by17liO5IpdF49N9r643pheNnNoe0i2yak+Lh+VyQ7fWRHn9VerVKv9/31q6tRnuns2657G1Ov1RycnJg5rrX/cOdufWqvy4dVsAEh6A4T5BM/6iu9lNZW8fO5Xvewz9bKp0PV1ukKJdEG5PDrpHslN5SWyE5cnOmsk6LWxOpxzzok4XQh83d/fN99XGfgvU1MnP9/dfE/91wuhVqvt3bJly1eM8Xxj9DkKyiIowanuoMEa0EDPT3SZd0rJmYXHmfXluqGV/1cVLGvFWXeCdP2MbA+mW+P9d1GfLqirtVKFwNOVcqnW11f90tDQwH8+efLYw+s3/x89Ru+Cc8+96JwwrL05jpNdcZxc4Zyb7NbW65GDNbBB/fB88Q/B0aq3gfWXqP/os3WT6OsFq9a92cVUugCuUmrZ87wnfd9/oL+/795Dhw4devneul//FyypENnIqDyLAAAAAElFTkSuQmCC"><b>Haul</b><i>NX</i> &nbsp;App Utility</h1>
+  <div class="sp"></div>
+  <button id="btnCredsOpen" class="ghost" title="archive.org credentials"
+    style="font-size:16px; padding:4px 8px;">⚙️</button>
+  <button id="btnTheme" class="ghost" title="Toggle theme" style="font-size:16px; padding:4px 8px;">☀️</button>
+  <button id="btnImport">Import JSON…</button>
+  <button id="btnSend" title="Send straight to a Switch running HaulNX">Send to Switch…</button>
+  <button id="btnExport" class="primary">Export dl_sources.json</button>
+</header>
+
+<div class="modal" id="sendModal">
+  <div class="sheet" style="max-width:520px">
+    <div class="sheet-hd">
+      <div class="hd-row">
+        <b>Send to Switch</b>
+        <span class="muted">·&nbsp; both devices on the same network</span>
+      </div>
+    </div>
+    <div class="sheet-bd">
+      <div class="tabs" style="margin-top:14px">
+        <button id="sendTabCol" class="sm act">Collection</button>
+        <button id="sendTabNro" class="sm">App update (.nro)</button>
+      </div>
+      <div class="row">
+        <div class="grow"><label class="fld">Switch address</label>
+          <input id="sendIp" placeholder="192.168.1.42" spellcheck="false"></div>
+      </div>
+      <div id="sendPaneCol">
+        <div class="hint">Sends the collection you're editing here. On the Switch,
+          open <b>Settings &rsaquo; Manage data &rsaquo; Import collection</b>. It
+          shows the address to type above. Leave that screen open — it stops
+          listening once a file arrives, and you confirm the import there.</div>
+      </div>
+      <div id="sendPaneNro" style="display:none">
+        <div class="row" style="margin-top:10px">
+          <input id="nroFile" type="file" accept=".nro" class="grow">
+        </div>
+        <div class="hint">Pushes a freshly built <b>HaulNX .nro</b> to the console
+          — no USB cable needed, and the same version as installed is fine. On
+          the Switch, open <b>Settings &rsaquo; Check for updates &rsaquo; Over
+          Wi&#8209;Fi</b>; you confirm the install there and restart to switch
+          to the new build.</div>
+      </div>
+      <div id="sendMsg" class="hint"></div>
+    </div>
+    <div class="sheet-ft">
+      <div class="sp" style="flex:1"></div>
+      <button id="sendGo" class="primary">Send</button>
+      <button id="sendClose" class="sm">Close</button>
+    </div>
+  </div>
+</div>
+
+<main>
+  <div id="warnBox"></div>
+
+  <div class="panel-row">
+    <div class="panel">
+      <h2>Supported consoles (consoles)</h2>
+      <div id="tconsoles"></div>
+      <div class="row" style="margin-top:10px">
+        <input id="newConsole" class="grow" placeholder="add a console key, e.g. dc, psx, snes">
+        <button id="btnAddConsole" class="sm">Add console</button>
+      </div>
+      <div class="hint">These are the folders under <code>sdmc:/roms/</code> the app lets you target.</div>
+    </div>
+
+    <div class="panel">
+      <h2>Quick test — any archive.org item</h2>
+      <div class="row">
+        <input id="qtId" class="grow" placeholder="paste an archive.org id or a details/download URL">
+        <button id="qtGo" class="primary">View files</button>
+      </div>
+      <div id="qtStatus" class="status muted" style="margin-top:8px"></div>
+      <div class="hint">Accepts a bare id, a details URL, or a
+        <code>/download/&lt;id&gt;/&lt;subfolder&gt;/</code> URL.</div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <button id="btnBack" class="sm" style="display:none;margin-bottom:12px">← All consoles</button>
+    <div style="display:flex;align-items:center;flex-wrap:wrap;gap:10px">
+      <h2 id="groupsTitle" style="margin:0">Console groups</h2><div class="sp" style="flex:1"></div>
+      <div id="groupCtl" class="grp-ctl"></div>
+      <button id="btnAddGroup" class="sm">+ Add console group</button>
+    </div>
+
+    <div id="groups" style="margin-top:14px"></div>
+  </div>
+</main>
+
+<div class="modal" id="credModal">
+  <div class="sheet" style="max-width:560px">
+    <div class="sheet-hd">
+      <div class="hd-row">
+        <b>archive.org credentials</b>
+        <span class="muted">·&nbsp; optional — only for restricted items</span>
+      </div>
+    </div>
+    <div class="sheet-bd">
+      <div class="row" style="margin-top:14px">
+        <div class="grow"><label class="fld">Access key</label>
+          <input id="ak" placeholder="S3 access key"></div>
+        <div class="grow"><label class="fld">Secret key</label>
+          <input id="sk" placeholder="S3 secret key"></div>
+      </div>
+      <div class="hint">Public collections need no keys. For restricted items, the
+        surest route is to be logged in to archive.org in this browser (downloads
+        use your session). Keys here are exported to <code>credentials.json</code>
+        for the app, alongside your S3 login page at
+        <a href="https://archive.org/account/s3.php" target="_blank">archive.org/account/s3.php</a>.</div>
+    </div>
+    <div class="sheet-ft">
+      <div class="sp" style="flex:1"></div>
+      <button id="btnCreds" class="primary">Export credentials.json</button>
+      <button id="credClose" class="sm">Close</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="modal">
+  <div class="sheet">
+    <!-- everything in .sheet-hd is fixed: title, filter, close, status, column labels -->
+    <div class="sheet-hd">
+      <div class="hd-row">
+        <b id="mTitle">Files</b><span id="mSub" class="muted"></span>
+        <div class="sp" style="flex:1"></div>
+        <input id="mFilter" placeholder="filter files…" style="max-width:220px">
+        <button id="mClose" class="sm">Close</button>
+      </div>
+      <div id="mStatus" class="status muted"></div>
+      <div class="hd-cols">
+        <table class="files">
+          <colgroup><col><col class="c-size"><col class="c-md5"><col class="c-act"></colgroup>
+          <thead><tr><th>Name</th><th class="num">Size</th><th>md5</th><th></th></tr></thead>
+        </table>
+      </div>
+    </div>
+    <div class="sheet-bd">
+      <div id="mFiles"></div>
+    </div>
+  </div>
+</div>
+
+<input type="file" id="fileInput" accept=".json,application/json" style="display:none">
+
+<script>
+"use strict";
+const $ = s => document.querySelector(s);
+const el = (t,c) => { const e=document.createElement(t); if(c)e.className=c; return e; };
+
+// ---- theme logic ----------------------------------------------------------
+const themeBtn = $("#btnTheme");
+let savedTheme = "dark";
+
+try {
+  savedTheme = localStorage.getItem("tico_theme") || "dark";
+} catch (e) {
+  console.warn("localStorage blocked. Theme preference won't be saved between reloads.");
+}
+
+if (savedTheme === "light") {
+  document.documentElement.setAttribute("data-theme", "light");
+}
+themeBtn.textContent = savedTheme === "light" ? "🌙" : "☀️";
+
+themeBtn.onclick = () => {
+  const isLight = document.documentElement.getAttribute("data-theme") === "light";
+  
+  if (isLight) {
+    document.documentElement.removeAttribute("data-theme");
+    themeBtn.textContent = "☀️";
+    try { localStorage.setItem("tico_theme", "dark"); } catch(e){}
+  } else {
+    document.documentElement.setAttribute("data-theme", "light");
+    themeBtn.textContent = "🌙";
+    try { localStorage.setItem("tico_theme", "light"); } catch(e){}
+  }
+};
+
+// ---- state (mirrors dl_sources.json) --------------------------------------
+let state = { creds:{accessKey:"",secret:""}, tico:[], groups:[] };
+let fileHandle = null; // File System Access API, when available
+
+// ---- app-parity helpers ---------------------------------------------------
+function extractId(input){
+  if(!input) return "";
+  let s = input.trim().replace(/[\/\s]+$/,"");
+  const q = s.search(/[?#]/); if(q>=0) s=s.slice(0,q);
+  for(const m of ["/details/","/download/","/metadata/","/serve/"]){
+    const i = s.indexOf(m);
+    if(i>=0){ s = s.slice(i+m.length); break; }
+  }
+  if(s.includes("://")) { 
+    const parts = s.split("/"); s = parts[parts.length-1] || parts[parts.length-2] || "";
+  }
+  return s.split("/")[0];
+}
+function encodePath(p){ 
+  return String(p).split("").map(ch=>{
+    if(/[A-Za-z0-9\-_.~/]/.test(ch)) return ch;
+    return "%"+ch.charCodeAt(0).toString(16).toUpperCase().padStart(2,"0");
+  }).join("");
+}
+function downloadBase(repo){
+  const b = (repo.URL||"").trim();
+  return b ? b.replace(/\/+$/,"") : "https://archive.org/download/"+encodeURIComponent(extractId(repo.a_id));
+}
+// Subfolder of an archive.org download base, e.g.
+//   https://archive.org/download/nds_apfix/apfix/  ->  "apfix"
+// Metadata file names are already relative to the item root ("apfix/rom.zip"),
+// so the subfolder is a *filter*, not something to append again.
+function basePrefix(base){
+  const m = String(base||"").replace(/\/+$/,"")
+    .match(/^https?:\/\/[^\/]*archive\.org\/(?:download|serve|compress)\/[^\/]+\/(.+)$/i);
+  return m ? decodeURIComponent(m[1]) : "";
+}
+// Join base + file name. If the base points into a subfolder of the item, the
+// name already carries that subfolder, so strip it rather than double it; a
+// file outside the subfolder resolves against the item root instead. Only the
+// subfolder counts as overlap -- an item id that happens to match the first
+// path segment (item "ps2", file "ps2/game.iso") must NOT be collapsed.
+function fileUrl(base, name){
+  const b = String(base||"").replace(/\/+$/,"");
+  const m = b.match(/^(https?:\/\/[^\/]*archive\.org\/(?:download|serve|compress)\/[^\/]+)\/(.+)$/i);
+  if(!m) return b + "/" + encodePath(name);      // custom mirror: use as-is
+  const root = m[1];
+  const prefix = basePrefix(b);
+  if(prefix && String(name).startsWith(prefix+"/"))
+    return b + "/" + encodePath(String(name).slice(prefix.length+1));
+  return root + "/" + encodePath(name);
+}
+const ARCH = [".zip",".7z",".rar",".tar",".tgz",".tbz",".tbz2",".txz",".tar.gz",".tar.bz2",".tar.xz"];
+const isArchive = n => ARCH.some(x=>n.toLowerCase().endsWith(x));
+function human(b){ b=+b||0; const u=["B","KB","MB","GB","TB"]; let i=0;
+  while(b>=1024&&i<4){b/=1024;i++;} return b.toFixed(b<10&&i>0?1:0)+" "+u[i]; }
+
+// Full display names, kept in sync with console_full_name() in the app's
+// source/MainApplication.cpp. Unknown/custom slugs simply have no entry.
+const CONSOLE_NAMES = {
+  // Nintendo
+  "nes":"Nintendo Entertainment System", "fds":"Famicom Disk System",
+  "snes":"Super Nintendo Entertainment System", "n64":"Nintendo 64",
+  "gb":"Game Boy", "gbc":"Game Boy Color", "gba":"Game Boy Advance",
+  "nds":"Nintendo DS", "3ds":"Nintendo 3DS", "gc":"Nintendo GameCube",
+  "wii":"Nintendo Wii", "virtual-boy":"Nintendo Virtual Boy",
+  "pokemon-mini":"Pokemon Mini", "game-and-watch":"Nintendo Game & Watch",
+  // Sega
+  "sg-1000":"Sega SG-1000", "master-system":"Sega Master System",
+  "game-gear":"Sega Game Gear", "genesis":"Sega Genesis", "sega-cd":"Sega CD",
+  "sega-32x":"Sega 32X", "saturn":"Sega Saturn", "dc":"Sega Dreamcast",
+  // Sony
+  "psx":"Sony PlayStation", "ps2":"Sony PlayStation 2",
+  "psp":"Sony PlayStation Portable",
+  // NEC
+  "pc-engine":"NEC PC Engine", "pc-engine-cd":"NEC PC Engine CD",
+  "supergrafx":"NEC SuperGrafx", "pc-fx":"NEC PC-FX",
+  // SNK
+  "neo-geo":"SNK Neo Geo", "neo-geo-cd":"SNK Neo Geo CD",
+  "neo-geo-pocket":"SNK Neo Geo Pocket",
+  "neo-geo-pocket-color":"SNK Neo Geo Pocket Color",
+  // Atari
+  "atari-2600":"Atari 2600", "atari-5200":"Atari 5200",
+  "atari-7800":"Atari 7800", "atari-lynx":"Atari Lynx",
+  "atari-jaguar":"Atari Jaguar",
+  // Bandai
+  "wonderswan":"Bandai WonderSwan", "wonderswan-color":"Bandai WonderSwan Color",
+  // Other home consoles
+  "colecovision":"ColecoVision", "intellivision":"Mattel Intellivision",
+  "odyssey2":"Magnavox Odyssey 2", "vectrex":"GCE Vectrex",
+  "channel-f":"Fairchild Channel F", "3do":"3DO Interactive Multiplayer",
+  "cd-i":"Philips CD-i", "supervision":"Watara Supervision",
+  // Arcade
+  "atomiswave":"Sammy Atomiswave", "naomi":"Sega NAOMI",
+  "arcade":"Arcade", "fbneo":"FinalBurn Neo",
+};
+function consoleFullName(slug){
+  return CONSOLE_NAMES[String(slug||"").toLowerCase()] || "";
+}
+
+// ---- rendering ------------------------------------------------------------
+function render(){ renderConsoles(); renderGroups(); }
+
+function renderConsoles(){
+  const wrap = $("#tconsoles"); wrap.innerHTML="";
+  if(!state.tico.length){ wrap.innerHTML='<span class="muted">none yet</span>'; return; }
+  state.tico.forEach((c,i)=>{
+    const p = el("span","pill"); p.style.margin="0 6px 6px 0";
+    p.textContent=c+" ";
+    const x=el("a"); x.href="#"; x.textContent="✕"; x.style.marginLeft="4px";
+    x.onclick=e=>{e.preventDefault(); state.tico.splice(i,1); render();};
+    p.appendChild(x); wrap.appendChild(p);
+  });
+}
+
+function consoleOptions(sel){
+  const opts = state.tico.slice();
+  if(sel && !opts.includes(sel)) opts.unshift(sel);
+  return opts.map(c=>`<option${c===sel?" selected":""}>${c}</option>`).join("");
+}
+
+// null = card overview; a number = that group's repo detail view.
+let openGroup = null;
+
+function renderGroups(){
+  if(openGroup!=null && !state.groups[openGroup]) openGroup=null;
+  if(openGroup==null) renderCards(); else renderDetail(openGroup);
+}
+
+function renderCards(){
+  const box = $("#groups"); box.innerHTML="";
+  $("#groupsTitle").textContent = "Console groups";
+  $("#btnAddGroup").style.display = "";
+  $("#btnBack").style.display = "none";
+  $("#groupCtl").innerHTML = "";
+
+  if(!state.groups.length){
+    box.innerHTML='<div class="empty">No console groups. Import a file or add one.</div>';
+    return;
+  }
+
+  const grid = el("div","cards");
+  // Display-only sort: keep the real index so edits/deletes still hit the right group.
+  state.groups.map((g,gi)=>({g,gi}))
+    .sort((a,b)=>String(a.g.console||"").localeCompare(String(b.g.console||""),
+      undefined,{sensitivity:"base",numeric:true}))
+    .forEach(({g,gi})=>{
+      const live = g.repos.filter(r=>r.active).length;
+      const c = el("div","card"+(g.shown?"":" hidden-group"));
+      const full = consoleFullName(g.console);
+      c.innerHTML = `
+        <div class="card-title">${esc(g.console||"(no console)")}</div>
+        ${full?`<div class="card-sub">${esc(full)}</div>`:""}
+        <div class="card-foot">
+          <span class="pill">${g.repos.length} repo${g.repos.length===1?"":"s"}</span>
+          <span class="tag ${live?"on":"off"}">${live} active</span>
+          ${g.shown?"":'<span class="tag off">hidden</span>'}
+        </div>`;
+      c.onclick = ()=>{ openGroup=gi; renderGroups(); window.scrollTo({top:0,behavior:"smooth"}); };
+      grid.appendChild(c);
+    });
+
+  const add = el("div","card add");
+  add.textContent = "+ Add console group";
+  add.onclick = ()=>$("#btnAddGroup").click();
+  grid.appendChild(add);
+  box.appendChild(grid);
+}
+
+function renderDetail(gi){
+  const g = state.groups[gi];
+  const box = $("#groups"); box.innerHTML="";
+  $("#groupsTitle").textContent = "Console group — "+(g.console||"(no console)");
+  $("#btnAddGroup").style.display = "none";
+  $("#btnBack").style.display = "";   // sits above the title
+
+  // group controls live on the title row, right-aligned
+  $("#groupCtl").innerHTML = `
+    <select data-g="${gi}" data-f="console" title="Console">${consoleOptions(g.console)}</select>
+    <input data-g="${gi}" data-f="target" value="${esc(g.target)}"
+      title="Target folder under sdmc:/roms/" placeholder="target folder">
+    <label class="chk"><input type="checkbox" data-g="${gi}" data-f="shown" ${g.shown?"checked":""}> shown</label>
+    <button class="sm" data-add-repo="${gi}">+ repo</button>
+    <button class="sm danger" data-del-group="${gi}">Delete group</button>`;
+
+  const rs = el("div","repos");
+  if(!g.repos.length) rs.innerHTML='<div class="empty" style="padding:12px">No repos in this console.</div>';
+  g.repos.forEach((r,ri)=>rs.appendChild(renderRepo(g,gi,r,ri)));
+  box.appendChild(rs);
+}
+
+function renderRepo(g,gi,r,ri){
+  const R = el("div","repo");
+  R.innerHTML = `
+    <div class="row">
+      <div class="grow"><label class="fld">Label</label>
+        <input data-g="${gi}" data-r="${ri}" data-f="label" value="${esc(r.label)}" placeholder="e.g. No-Intro"></div>
+      <div class="grow"><label class="fld">archive.org item id (a_id)</label>
+        <input data-g="${gi}" data-r="${ri}" data-f="a_id" value="${esc(r.a_id)}" placeholder="item id or paste a details URL"></div>
+    </div>
+    <div class="row">
+      <div class="grow"><label class="fld">URL override (blank = archive.org/download/&lt;id&gt;)</label>
+        <input data-g="${gi}" data-r="${ri}" data-f="URL" value="${esc(r.URL)}" placeholder="optional custom download base"></div>
+      <label class="chk"><input type="checkbox" data-g="${gi}" data-r="${ri}" data-f="active" ${r.active?"checked":""}> active</label>
+      <label class="chk"><input type="checkbox" data-g="${gi}" data-r="${ri}" data-f="pinned" ${r.pinned?"checked":""}> pinned</label>
+    </div>
+    <div class="row" style="margin-bottom:0">
+      <button class="sm primary" data-view="${gi}.${ri}">View files &amp; test</button>
+      <div class="sp" style="flex:1"></div>
+      <button class="sm danger" data-del-repo="${gi}.${ri}">Delete repo</button>
+    </div>`;
+  return R;
+}
+function esc(s){ return String(s==null?"":s).replace(/"/g,"&quot;").replace(/</g,"&lt;"); }
+
+// ---- edits (event delegation, no re-render on keystroke) ------------------
+// #groupCtl (title-row controls) and #groups (repo tiles) share these handlers.
+function onEditInput(e){
+  const t=e.target, gi=t.dataset.g, ri=t.dataset.r, f=t.dataset.f;
+  if(gi==null||!f) return;
+  const val = t.type==="checkbox" ? t.checked : t.value;
+  if(ri==null) state.groups[+gi][f]=val;   // keep target as-is when console changes
+  else state.groups[+gi].repos[+ri][f]=val;
+}
+function onEditChange(e){
+  if(e.target.dataset.f==="console") render();  // title + card order follow the rename
+}
+function onEditClick(e){
+  const t=e.target;
+  if(t.dataset.addRepo!=null){ state.groups[+t.dataset.addRepo].repos.push(
+      {label:"",a_id:"",URL:"",active:true,pinned:false}); renderGroups(); }
+  else if(t.dataset.delGroup!=null){ if(confirm("Delete this whole console group?")){
+      state.groups.splice(+t.dataset.delGroup,1); openGroup=null; render(); } }
+  else if(t.dataset.delRepo!=null){ const [gi,ri]=t.dataset.delRepo.split(".").map(Number);
+      state.groups[gi].repos.splice(ri,1); renderGroups(); }
+  else if(t.dataset.view!=null){ const [gi,ri]=t.dataset.view.split(".").map(Number);
+      const r=state.groups[gi].repos[ri]; openFiles(r.a_id, downloadBase(r), r.label); }
+}
+["#groups","#groupCtl"].forEach(sel=>{
+  $(sel).addEventListener("input", onEditInput);
+  $(sel).addEventListener("change", onEditChange);
+  $(sel).addEventListener("click", onEditClick);
+});
+
+$("#btnAddGroup").onclick=()=>{ const c=state.tico[0]||"";
+  state.groups.push({console:c,target:c,shown:true,repos:[]});
+  openGroup = state.groups.length - 1;   // drop straight into the new group
+  render();
+};
+$("#btnBack").onclick=()=>{ openGroup=null; renderGroups(); };
+$("#btnAddConsole").onclick=()=>{ const v=$("#newConsole").value.trim();
+  if(v&&!state.tico.includes(v)){ state.tico.push(v); $("#newConsole").value=""; render(); } };
+
+// ---- credentials dialog (header ⚙) ---------------------------------------
+$("#ak").oninput=e=>state.creds.accessKey=e.target.value;
+$("#sk").oninput=e=>state.creds.secret=e.target.value;
+$("#btnCredsOpen").onclick=()=>{
+  $("#ak").value = state.creds.accessKey||"";
+  $("#sk").value = state.creds.secret||"";
+  $("#credModal").classList.add("on");
+};
+$("#credClose").onclick=()=>$("#credModal").classList.remove("on");
+$("#credModal").onclick=e=>{ if(e.target.id==="credModal") $("#credModal").classList.remove("on"); };
+document.addEventListener("keydown", e=>{ if(e.key==="Escape"){
+  $("#credModal").classList.remove("on"); $("#modal").classList.remove("on");
+  $("#sendModal").classList.remove("on"); } });
+
+// ---- files modal / download test -----------------------------------------
+let lastFiles=[];
+async function openFiles(id, base, label){
+  id = extractId(id);
+  if(!id){ alert("Enter an archive.org item id first."); return; }
+  $("#mTitle").textContent = label||id;
+  $("#mSub").textContent = "  ·  "+id;
+  $("#mFiles").innerHTML=""; $("#mFilter").value=""; lastFiles=[];
+  $("#mStatus").textContent="Fetching metadata…";
+  $("#modal").classList.add("on");
+  try{
+    const res = await fetch("https://archive.org/metadata/"+encodeURIComponent(id));
+    if(!res.ok){ $("#mStatus").innerHTML=`<span class="amber">HTTP ${res.status} — item not found or not public.</span>`; return; }
+    const j = await res.json();
+    let files = (j.files||[]).filter(f=>f.name);
+    if(!files.length){ $("#mStatus").innerHTML='<span class="amber">No files in this item.</span>'; return; }
+    // A base that points into a subfolder lists only that subfolder's files.
+    const prefix = basePrefix(base);
+    let note = "";
+    if(prefix){
+      const sub = files.filter(f=>f.name.startsWith(prefix+"/"));
+      if(sub.length) { files = sub; note = ` &nbsp; subfolder: <code>${esc(prefix+"/")}</code>`; }
+      else note = ` &nbsp; <span class="amber">subfolder "${esc(prefix)}" matched no files — showing the whole item.</span>`;
+    }
+    lastFiles = files.map(f=>({name:f.name, size:+f.size||0, format:f.format||"", md5:f.md5||"", url:fileUrl(base,f.name)}));
+    let tot=lastFiles.reduce((a,f)=>a+f.size,0);
+    $("#mStatus").innerHTML=`<span class="green">${lastFiles.length} files · ${human(tot)}</span> &nbsp; base: <code>${esc(base)}</code>${note}`;
+    drawFiles();
+  }catch(err){
+    $("#mStatus").innerHTML=`<span class="amber">Fetch failed (CORS or network). ${esc(err.message)}</span>`;
+  }
+}
+function drawFiles(){
+  const q=$("#mFilter").value.toLowerCase();
+  const rows = lastFiles.filter(f=>!q||f.name.toLowerCase().includes(q));
+  const t=el("table","files");   // header row lives in .sheet-hd; same colgroup keeps them aligned
+  t.innerHTML='<colgroup><col><col class="c-size"><col class="c-md5"><col class="c-act"></colgroup>';
+  const tb=el("tbody");
+  rows.forEach(f=>{
+    const tr=el("tr");
+    tr.innerHTML=`<td class="fname">${esc(f.name)} ${isArchive(f.name)?'<span class="tag on">archive</span>':''}
+        ${f.md5?'':'<span class="tag off">no md5</span>'}</td>
+      <td class="num">${human(f.size)}</td>
+      <td class="num" style="overflow:hidden;text-overflow:ellipsis">${esc(f.md5)}</td>
+      <td style="white-space:nowrap"></td>`;
+    const td=tr.lastChild;
+    const dl=el("button","sm primary"); dl.textContent="Download";
+    dl.onclick=()=>triggerDownload(f.url, f.name);
+    const cp=el("button","sm ghost"); cp.textContent="URL"; cp.title="Copy download URL";
+    cp.onclick=()=>navigator.clipboard.writeText(f.url).then(()=>{cp.textContent="✓";setTimeout(()=>cp.textContent="URL",900);});
+    td.append(dl," ",cp);
+    tb.appendChild(tr);
+  });
+  $("#mFiles").innerHTML=""; $("#mFiles").appendChild(t); t.appendChild(tb);
+}
+$("#mFilter").oninput=drawFiles;
+$("#mClose").onclick=()=>$("#modal").classList.remove("on");
+$("#modal").onclick=e=>{ if(e.target.id==="modal") $("#modal").classList.remove("on"); };
+function triggerDownload(url,name){
+  const a=el("a"); a.href=url; a.target="_blank"; a.rel="noopener";
+  a.download=name; document.body.appendChild(a); a.click(); a.remove();
+}
+$("#qtGo").onclick=()=>{ const v=$("#qtId").value.trim(); if(!v){return;}
+  const id=extractId(v);
+  // Keep a pasted /download/<id>/<subfolder>/ URL as the base so we list that folder.
+  const base = /^https?:\/\/[^\/]*archive\.org\/download\//i.test(v)
+    ? v.replace(/[?#].*$/,"").replace(/\/+$/,"")
+    : "https://archive.org/download/"+encodeURIComponent(id);
+  const pre = basePrefix(base);
+  $("#qtStatus").textContent = "id → "+id + (pre ? "   ·   subfolder → "+pre+"/" : "");
+  openFiles(id, base, id); };
+
+// ---- import / export ------------------------------------------------------
+function loadModel(obj){
+  // "consoles" is current; fall back to the legacy "tico_consoles" key.
+  const consoles = Array.isArray(obj.consoles)? obj.consoles
+                 : Array.isArray(obj.tico_consoles)? obj.tico_consoles : [];
+  state.tico = consoles.slice();
+  state.groups = [];
+  openGroup = null; // always land on the card overview after a load
+  const gs = obj.console_list_groups;
+  if(Array.isArray(gs)){
+    gs.forEach(g=>{
+      const target = g.target||g.console||"";
+      const console_ = g.console||g.target||"";
+      state.groups.push({
+        console:console_, target, shown: g.shown!==false,
+        repos:(Array.isArray(g.repos)?g.repos:[]).map(r=>({
+          label:r.label||"", a_id:r.a_id||"", URL:r.URL||"",
+          active:r.active!==false, pinned:!!r.pinned }))
+      });
+      if(console_ && !state.tico.includes(console_)) state.tico.push(console_);
+    });
+  }
+  render();
+}
+function buildJson(){
+  return {
+    console_list_groups: state.groups.map(g=>({
+      console:g.console, target:g.target||g.console, shown:!!g.shown,
+      repos:g.repos.map(r=>({label:r.label||r.a_id, a_id:r.a_id, URL:r.URL||"",
+        active:!!r.active, pinned:!!r.pinned}))
+    })),
+    consoles: state.tico.slice()
+  };
+}
+function validate(){
+  const w=[];
+  state.groups.forEach((g,i)=>{
+    if(!g.console) w.push(`Group ${i+1}: no console selected.`);
+    if(!g.target) w.push(`Group "${g.console||i+1}": empty target folder.`);
+    if(g.console && !state.tico.includes(g.console))
+      w.push(`Console "${g.console}" is not in consoles (the app may not offer it in-app).`);
+    g.repos.forEach((r,j)=>{ if(!r.a_id.trim())
+      w.push(`Group "${g.console}", repo ${j+1}: empty archive.org id.`); });
+  });
+  return w;
+}
+function showWarnings(){
+  const w=validate(), box=$("#warnBox");
+  box.innerHTML = w.length ? '<div class="warn">⚠ '+w.join("\n⚠ ")+"</div>" : "";
+}
+
+$("#btnImport").onclick=async()=>{
+  if(window.showOpenFilePicker){
+    try{
+      const [h]=await window.showOpenFilePicker({types:[{description:"JSON",accept:{"application/json":[".json"]}}]});
+      fileHandle=h; const f=await h.getFile(); loadModel(JSON.parse(await f.text())); showWarnings(); return;
+    }catch(e){ if(e.name==="AbortError") return; }
+  }
+  $("#fileInput").click();
+};
+$("#fileInput").onchange=e=>{ const f=e.target.files[0]; if(!f) return;
+  const rd=new FileReader(); rd.onload=()=>{ try{ loadModel(JSON.parse(rd.result)); showWarnings(); }
+    catch(err){ alert("Invalid JSON: "+err.message); } }; rd.readAsText(f); };
+
+$("#btnExport").onclick=async()=>{
+  showWarnings();
+  const txt=JSON.stringify(buildJson(),null,2);
+  if(fileHandle && window.showSaveFilePicker){
+    try{ const w=await fileHandle.createWritable(); await w.write(txt); await w.close();
+      flash($("#btnExport"),"Saved ✓"); return; }catch(e){}
+  }
+  if(window.showSaveFilePicker){
+    try{ const h=await window.showSaveFilePicker({suggestedName:"dl_sources.json",
+        types:[{description:"JSON",accept:{"application/json":[".json"]}}]});
+      fileHandle=h; const w=await h.createWritable(); await w.write(txt); await w.close();
+      flash($("#btnExport"),"Saved ✓"); return; }catch(e){ if(e.name==="AbortError") return; }
+  }
+  downloadText("dl_sources.json", txt);
+};
+// ---- send to a Switch on the LAN -----------------------------------------
+// The app serves a tiny HTTP receiver while its Import collection screen is open.
+// Post the same document Export writes, as multipart/form-data: it is the exact
+// request the app's own upload page makes, and it is a CORS-simple request, so no
+// preflight is needed (the receiver answers OPTIONS without allow-headers).
+$("#btnSend").onclick=()=>{
+  $("#sendMsg").textContent="";
+  $("#sendIp").value=localStorage.getItem("switchIp")||"";
+  $("#sendModal").classList.add("on");
+  $("#sendIp").focus();
+};
+$("#sendClose").onclick=()=>$("#sendModal").classList.remove("on");
+$("#sendModal").onclick=e=>{ if(e.target.id==="sendModal") $("#sendModal").classList.remove("on"); };
+$("#sendIp").onkeydown=e=>{ if(e.key==="Enter") $("#sendGo").click(); };
+
+// Two things can go over the wire: the collection being edited, or a built
+// .nro to install (for testing new builds without a USB cable). Same receiver
+// on the Switch either way — it tells them apart by content.
+function sendTab(nro){
+  $("#sendTabCol").classList.toggle("act",!nro);
+  $("#sendTabNro").classList.toggle("act",nro);
+  $("#sendPaneCol").style.display = nro?"none":"";
+  $("#sendPaneNro").style.display = nro?"":"none";
+  $("#sendMsg").textContent="";
+}
+$("#sendTabCol").onclick=()=>sendTab(false);
+$("#sendTabNro").onclick=()=>sendTab(true);
+
+$("#sendGo").onclick=async()=>{
+  // Accept a bare IP, or the whole "http://ip:8080" the Switch puts on screen.
+  const raw=$("#sendIp").value.trim().replace(/^https?:\/\//,"").replace(/\/+$/,"");
+  const host=raw.split(":")[0];
+  if(!/^\d{1,3}(\.\d{1,3}){3}$/.test(host)){
+    $("#sendMsg").innerHTML='<div class="warn">Enter the IP shown on the Switch, e.g. 192.168.1.42.</div>';
+    return;
+  }
+  localStorage.setItem("switchIp",host);
+
+  const nroTab = $("#sendTabNro").classList.contains("act");
+  let body, what;
+  if(nroTab){
+    const f = $("#nroFile").files[0];
+    if(!f){
+      $("#sendMsg").innerHTML='<div class="warn">Choose the .nro to send first.</div>';
+      return;
+    }
+    // Fail fast on the wrong file: a real NRO has "NRO0" at offset 0x10.
+    const head = new Uint8Array(await f.slice(0,0x14).arrayBuffer());
+    if(head.length<0x14 || head[0x10]!==0x4E||head[0x11]!==0x52||head[0x12]!==0x4F||head[0x13]!==0x30){
+      $("#sendMsg").innerHTML='<div class="warn">That file isn\'t an NRO.</div>';
+      return;
+    }
+    // Same multipart envelope as the collection: it stays a CORS-simple
+    // request (no preflight), and the receiver slices binary parts safely.
+    const fd=new FormData();
+    fd.append("file",f,f.name);
+    body = fd; what = "install";
+  }else{
+    showWarnings();
+    const txt=JSON.stringify(buildJson(),null,2);
+    const fd=new FormData();
+    fd.append("file",new Blob([txt],{type:"application/json"}),"dl_sources.json");
+    body = fd; what = "import";
+  }
+  $("#sendMsg").textContent="Sending…";
+  try{
+    // XHR instead of fetch for the one thing fetch can't do: upload progress.
+    // Matters for the .nro (several MB) — the collection JSON is instant.
+    // No timeout of our own: an unreachable host fails on the browser's own
+    // connect timeout, and a reachable one answers in milliseconds on a LAN.
+    const res=await new Promise((resolve,reject)=>{
+      const x=new XMLHttpRequest();
+      x.open("POST","http://"+host+":8080/");
+      x.upload.onprogress=e=>{ if(e.lengthComputable)
+        $("#sendMsg").textContent="Sending… "+Math.round(e.loaded*100/e.total)+"%"; };
+      x.onload=()=>resolve({ok:x.status>=200&&x.status<400,status:x.status});
+      x.onerror=()=>reject(new Error("network"));
+      x.send(body);
+    });
+    if(!res.ok){
+      // It answered, so the address is right and only the upload was refused —
+      // 413 means the file is over the receiver's 16 MB limit.
+      $("#sendMsg").innerHTML='<div class="warn">The Switch refused it (HTTP '+res.status+
+        (res.status===413?" — the file is over the 16 MB limit":"")+").</div>";
+      return;
+    }
+    $("#sendMsg").innerHTML='<b class="green">Sent ✓</b> &nbsp;Confirm the '+what+' on your Switch.';
+    flash($("#btnSend"),"Sent ✓");
+  }catch(e){
+    // fetch hides the cause of a network-level failure, so cover the likely ones
+    // rather than repeat a message that says nothing.
+    $("#sendMsg").innerHTML='<div class="warn">Couldn\'t reach the Switch. Check the IP, '+
+      'and that <b>Import collection</b> is open and still waiting.</div>';
+  }
+};
+
+$("#btnCreds").onclick=()=>{
+  downloadText("credentials.json", JSON.stringify(
+    {accessKey:state.creds.accessKey, secret:state.creds.secret}, null, 2));
+};
+function downloadText(name, txt){
+  const b=new Blob([txt],{type:"application/json"});
+  const a=el("a"); a.href=URL.createObjectURL(b); a.download=name;
+  document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+}
+function flash(btn,msg){ const o=btn.textContent; btn.textContent=msg; setTimeout(()=>btn.textContent=o,1200); }
+
+// ---- boot: start with an empty doc ---------------------------------------
+loadModel({console_list_groups:[], consoles:[]});
+</script>
+</body>
+</html>

@@ -41,7 +41,7 @@ static volatile int g_active_dl = 0;
 #define RATE_FLOOR_BPS 4096
 static Thread g_ex_thread;
 static volatile bool g_run = false;
-static const char *g_roms_root = "sdmc:/tico/roms";
+static const char *g_roms_root = "sdmc:/roms"; /* overwritten by queue_init() */
 
 /* Cores this process may use OTHER than core 0 (where the UI/render thread
  * lives). The CPU-heavy workers (extraction, md5) are pinned here so they run

@@ -55,7 +55,7 @@ typedef struct {
 } QueueView;
 
 /* Start/stop the background worker threads. Call after net_init / before net_exit.
- * roms_root is the base ROM directory (e.g. "sdmc:/tico/roms"); the pointer must
+ * roms_root is the base ROM directory (e.g. "sdmc:/roms"); the pointer must
  * remain valid for the lifetime of the queue. max_dl is the number of concurrent
  * download threads (1–10, clamped). */
 void queue_init(const char *roms_root, int max_dl);

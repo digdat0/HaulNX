@@ -183,9 +183,6 @@ enum {
     S_UPDATE_FAIL,
     S_UPDATE_OK,
 
-    /* ---- tico detection ---- */
-    S_TICO_NOT_FOUND,
-    S_TICO_NOT_FOUND_MSG,
     S_CONTINUE,
 
     /* ---- controls dialog ---- */
@@ -327,13 +324,29 @@ enum {
     S_TITLE_IMPORT,
     S_SUB_IMPORT,
     S_IMPORT_STEPS,
-    S_IMPORT_REPO_NOTE,  /* accent chip: push straight from the repo editor */
+    S_IMPORT_REPO_NOTE,  /* accent chip: push straight from the app utility */
     S_IMPORT_NO_NET,
     S_IMPORT_SRV_FAIL,
     S_IMPORT_BAD_FILE,
+    S_RECV_PROGRESS, /* live subtitle while an upload is arriving */
     S_IMPORT_CONFIRM,
     S_IMPORT_DONE,
     S_IMPORT_SAVE_FAIL,
+
+    /* ---- update source prompt + update-over-Wi-Fi receive screen ---- */
+    S_UPDATE_HOW,
+    S_UPDATE_SRC_GITHUB,
+    S_UPDATE_SRC_WIFI,
+    S_UPDATE_WIFI_TITLE,
+    S_UPDATE_WIFI_STEPS,
+
+    /* ---- an .nro build pushed over the same receiver ---- */
+    S_NRO_CONFIRM,
+    S_NRO_STAGE_FAIL,
+    S_NRO_STAGED,
+    S_NRO_RESTART_NOW,
+    S_NRO_LATER,
+
     S_XFER_LOG,
     S_TITLE_XFER_LOG,
     S_CLEAR_XFER_CONFIRM,

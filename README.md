@@ -1,14 +1,15 @@
-# <img width="34" height="34" alt="icon" src="https://github.com/user-attachments/assets/0c0cbe7e-3e2e-4068-9518-44179f6406d3" /> ticodl+
+# <img width="34" height="34" alt="icon" src="https://github.com/user-attachments/assets/0c0cbe7e-3e2e-4068-9518-44179f6406d3" /> HaulNX
 
-> Please report issues on the [GitHub Issues](https://github.com/digdat0/ticodlplus/issues) page.
+> Please report issues on the [GitHub Issues](https://github.com/digdat0/HaulNX/issues) page.
 
 A Nintendo Switch homebrew that browses and downloads game files from
-[archive.org](https://archive.org) and drops them straight into the folder
-layout used by **TICO**, decompressing archives along the way. Built for the
-devkitPro / libnx toolchain using Claude Code. **Yes, this is 100% AI created, 
-but it works.**
+[archive.org](https://archive.org) into its own centralized ROM library at
+`sdmc:/roms/<console>/`, decompressing archives along the way. Point your
+emulators at that folder and your games show up. Built for the devkitPro /
+libnx toolchain using Claude Code. **Yes, this is 100% AI created, but it
+works.**
 
-> ticodl+ ships **no ROMs, no collections, and no
+> HaulNX ships **no ROMs, no collections, and no
 > credentials** — it's an empty downloader. **You provide your own** archive.org
 > item ids (and optionally your own archive.org keys for restricted items). No
 > links to any content are bundled.
@@ -22,16 +23,17 @@ but it works.**
 
 ## What it does
 
-At its core ticodl+ is a background download manager for archive.org game files
-that installs them into TICO's layout for you:
+At its core HaulNX is a background download manager for archive.org game files
+that installs them into its own ROM library for you:
 
 - **Browse** archive.org collections by console and search across all of them
 - **Queue** downloads that run in the background — parallel, resumable, and saved
   across restarts
 - **Extract & verify** archives automatically, then drop the files into
-  `sdmc:/tico/roms/<console>/`
+  `sdmc:/roms/<console>/` — the folder you point your emulators at
 - **Manage** your installed library — search, sort, rename, delete
-- **Update itself** in one tap from GitHub releases
+- **Update itself** in one tap from GitHub releases — or take a build pushed
+  over Wi-Fi from the App Utility, no USB cable needed
 
 Everything else below — card view, touch, languages, themes — is polish on top.
 
@@ -93,10 +95,14 @@ Everything else below — card view, touch, languages, themes — is polish on t
     with **X**
 
 - **In-app self-update**
-  - One-tap update from GitHub releases — the version check runs in the
-    background with a retry counter; **B** dismisses the check or cancels the
-    download. Installs are validated and staged so a power loss can't corrupt
-    the app
+  - **Settings → Check for updates** asks where the update comes from:
+    **From GitHub** (one-tap release check on a background thread, with a
+    retry counter; **B** dismisses or cancels) or **Over Wi-Fi** — the console
+    shows an address, and you drop a HaulNX `.nro` on the served page or push
+    one from the App Utility (the same version as installed is fine, so new
+    builds can be tested without a USB cable)
+  - Either way the build is validated and staged so a power loss can't corrupt
+    the app, and a **Restart now** option relaunches straight into it
 
 ### Also included
 
@@ -115,16 +121,16 @@ Everything else below — card view, touch, languages, themes — is polish on t
 - **25 languages & themes**
   - Full UI translation (English, Español, Français, Deutsch, 日本語, 中文, and
     20 more) from **Settings → Language** (if you speak a native language and can
-    improve, log an issue or drop a PR. Lang files here: https://github.com/digdat0/ticodlplus/tree/main/romfs/lang
+    improve, log an issue or drop a PR. Lang files here: https://github.com/digdat0/HaulNX/tree/main/romfs/lang
   - Light and dark themes (**Settings → Theme**)
 
-- **TICO integration**
-  - Auto-detects TICO and reads its ROM folder path
-  - Falls back to the default path with a warning if TICO isn't found
+- **Centralized ROM library**
+  - Downloads land in HaulNX's own ROM folder — `sdmc:/roms/<console>/` by
+    default. Point your emulators there and your games show up
   - **Override the ROM folder** from **Settings → Advanced settings → ROM
-    folder** if you don't use `tico/roms` (e.g. a plain `roms/` on your SD root):
-    an on-screen SD-card browser lets you navigate to the folder and pick it
-    (**X** to use the current folder, **Y** to reset to automatic detection)
+    Download Folder** if you want it elsewhere: an on-screen SD-card browser lets
+    you navigate to the folder and pick it (**X** to use the current folder,
+    **Y** to reset to the default)
 
 - **Status header**
   - Live network indicator (Wi-Fi signal bars, full bars when docked on wired
@@ -137,9 +143,10 @@ Everything else below — card view, touch, languages, themes — is polish on t
   - **Refresh all metadata** in one go (with live progress) — useful before a
     global search, which covers cached repos; per-repo hard refresh lives on
     the repo edit screen
-  - **Import a collection over Wi-Fi** — the console shows an address; open it in
-    a browser on the same network to send your `dl_sources.json` across, no SD
-    swapping required
+  - **Import a collection over Wi-Fi** — the console shows an address; open it
+    in a browser on the same network (or use the App Utility's **Send to
+    Switch**) to send your `dl_sources.json` across, no SD swapping required —
+    with live transfer progress on both ends
   - Unresumable leftover `.part` files are cleaned up automatically at startup
 
 ---
@@ -211,19 +218,25 @@ Options list view
 
 ## Prerequisites
 
-1. Download TICO from https://ticoverse.com/
+A Nintendo Switch running custom firmware (Atmosphère) with the homebrew menu.
+HaulNX downloads into `sdmc:/roms/` — point whichever emulators you use at that
+folder. Per-emulator setup lives in the wiki.
 
 ---
 
 ## Install
 
-1. Download `TicoDLplus.nro` from the
-   [latest release](https://github.com/digdat0/ticodlplus/releases/latest).
+1. Download `HaulNX.nro` from the
+   [latest release](https://github.com/digdat0/HaulNX/releases/latest).
 2. Copy it to your SD card at:
    ```
-   sdmc:/switch/TicoDLplus/TicoDLplus.nro
+   sdmc:/switch/HaulNX/HaulNX.nro
    ```
 3. Launch it from the homebrew menu.
+
+Each release also attaches **`appUtility-<version>.html`** — the companion
+[App Utility](#app-utility) you open in a browser on your computer to build
+collections and push files to the console.
 
 On first run it seeds an **empty** `dl_sources.json` containing only the list of
 supported console folders — **no collections or links are included**. Add your
@@ -234,7 +247,7 @@ editing `dl_sources.json` on your SD card.
 
 ## Quick start
 
-ticodl+ starts **empty** — you add your own collections before anything shows up.
+HaulNX starts **empty** — you add your own collections before anything shows up.
 
 ### 1. Add a collection
 
@@ -244,8 +257,8 @@ Each item has an **item id** — the last part of its URL, e.g. for
 
 1. On the **Browse** tab, press **Y** (add).
 2. Choose the **console** the files belong to — this is the
-   `sdmc:/tico/roms/<console>` folder TICO reads from. (The selectable list comes
-   from `tico_consoles`; you can't pick an unsupported folder.)
+   `sdmc:/roms/<console>` folder your emulators read from. (The selectable list
+   comes from `consoles`; you can't pick an unsupported folder.)
 3. Enter a **name** for the repo — any label, e.g. `My SNES set`.
 4. Enter the archive.org **item id** (the `<id>` from `archive.org/details/<id>`).
 
@@ -262,12 +275,12 @@ for **restricted** items that require an archive.org account.
 1. On a computer, sign in at [archive.org](https://archive.org) and open your S3
    keys page: <https://archive.org/account/s3.php>. You'll get an **access key**
    and a **secret key**.
-2. In ticodl+, switch to the **Settings** tab (**L/R**).
+2. In HaulNX, switch to the **Settings** tab (**L/R**).
 3. Open **Advanced → Archive.org credentials**.
 4. Edit the **Access key** and **Secret** — the edit field is pre-filled with the
    current value so it's easy to change.
 
-Keys live only on your SD card (`sdmc:/switch/ticodlplus/credentials.json`) and
+Keys live only on your SD card (`sdmc:/switch/HaulNX/credentials.json`) and
 are sent only to archive.org hosts, and only over HTTPS.
 
 ### 3. Download
@@ -277,25 +290,25 @@ are sent only to archive.org hosts, and only over HTTPS.
 2. Highlight a file and press **A** to add it to the download queue — or press
    **−** to queue the whole (filtered) list at once.
 3. Switch to the **Queue** tab (**L/R**) to watch progress. Completed downloads
-   extract/move into `sdmc:/tico/roms/<console>/` automatically.
+   extract/move into `sdmc:/roms/<console>/` automatically.
 
 ---
 
 ## Console groups & supported consoles
 
-A **console** is a folder under `sdmc:/tico/roms/` (e.g. `snes`). Each console
+A **console** is a folder under `sdmc:/roms/` (e.g. `snes`). Each console
 groups one or more **repos** — archive.org collections to download from.
 
-The consoles you can use come from a fixed **supported list** (`tico_consoles`)
-so files always land in a folder TICO understands. When you add a repo you pick
+The consoles you can use come from a fixed **supported list** (`consoles`)
+so files always land in a recognized console folder. When you add a repo you pick
 its console from that list; you can't create arbitrary/unsupported folders in
-the app. To change the supported set, edit `tico_consoles` in `dl_sources.json`.
+the app. To change the supported set, edit `consoles` in `dl_sources.json`.
 
 ---
 
 ## Configuration
 
-All config lives under `sdmc:/switch/ticodlplus/`.
+All config lives under `sdmc:/switch/HaulNX/`.
 
 ### `dl_sources.json`
 
@@ -318,15 +331,16 @@ placeholders — substitute the archive.org item ids you choose to use):
       ]
     }
   ],
-  "tico_consoles": ["nes", "snes", "n64", "genesis", "psx", "psp"]
+  "consoles": ["nes", "snes", "n64", "genesis", "psx", "psp"]
 }
 ```
 
-- `console` / `target` — display name and the `tico/roms` folder (usually the same).
+- `console` / `target` — display name and the ROM subfolder (usually the same).
 - `a_id` — the archive.org item id.
 - `URL` — download base; defaults to `https://archive.org/download/<a_id>` if omitted.
 - `active` — include this repo.
-- `tico_consoles` — the master list of selectable consoles.
+- `consoles` — the master list of selectable consoles (legacy files using
+  `tico_consoles` are still read).
 
 ### `credentials.json`
 
@@ -343,50 +357,90 @@ collections download anonymously and need no keys.
 
 | Path | Purpose |
 |------|---------|
-| `sdmc:/switch/ticodlplus/dl_sources.json` | console groups + repos + supported list |
-| `sdmc:/switch/ticodlplus/credentials.json` | archive.org S3 keys (optional) |
-| `sdmc:/switch/ticodlplus/prefs.json` | settings (theme, language, pins, download limit, …) |
-| `sdmc:/switch/ticodlplus/queue.json` | saved download queue |
-| `sdmc:/switch/ticodlplus/cache/<id>.json` | cached metadata |
-| `sdmc:/switch/ticodlplus/downloads/` | temporary `.part` files |
-| `sdmc:/switch/ticodlplus/downloads.log` | download history (text) |
-| `sdmc:/switch/ticodlplus/downloads.jsonl` | download history (structured, powers re-download from the log) |
-| `sdmc:/switch/ticodlplus/lang/<code>.json` | optional language overrides (built-in translations ship in the app) |
-| `sdmc:/switch/ticodlplus/debug.log` | network/extraction diagnostics (viewable + clearable in Settings → View logs) |
-| `sdmc:/tico/roms/<console>/` | default ROM destination (or custom path from TICO's config) |
+| `sdmc:/switch/HaulNX/dl_sources.json` | console groups + repos + supported list |
+| `sdmc:/switch/HaulNX/credentials.json` | archive.org S3 keys (optional) |
+| `sdmc:/switch/HaulNX/prefs.json` | settings (theme, language, pins, download limit, …) |
+| `sdmc:/switch/HaulNX/queue.json` | saved download queue |
+| `sdmc:/switch/HaulNX/cache/<id>.json` | cached metadata |
+| `sdmc:/switch/HaulNX/downloads/` | temporary `.part` files |
+| `sdmc:/switch/HaulNX/downloads.log` | download history (text) |
+| `sdmc:/switch/HaulNX/downloads.jsonl` | download history (structured, powers re-download from the log) |
+| `sdmc:/switch/HaulNX/lang/<code>.json` | optional language overrides (built-in translations ship in the app) |
+| `sdmc:/switch/HaulNX/debug.log` | network/extraction diagnostics (viewable + clearable in Settings → View logs) |
+| `sdmc:/roms/<console>/` | default ROM destination (or your custom override) |
 
 ---
 
 ## Updating (in-app)
 
-Open **Settings → Check for updates**. ticodl+ checks the GitHub releases on a
-background thread — the UI stays responsive and shows the attempt counter
-(`(1/3)`) while transient errors are retried; press **B** to dismiss the check
-and keep using the app. If a newer version is found, it downloads the new
-`.nro` (with a live progress indicator), validates it's a real NRO, and
-replaces itself using a staged copy-then-rename (keeping a `.previous`
-backup), so an interrupted install can't corrupt the app. Press **B** to
-cancel the download at any time — the partial file is discarded and you're
-returned to Settings. Close and relaunch to run the new build.
+Open **Settings → Check for updates** and pick where the update comes from:
+
+- **From GitHub** — HaulNX checks the GitHub releases on a background thread —
+  the UI stays responsive and shows the attempt counter (`(1/3)`) while
+  transient errors are retried; press **B** to dismiss the check and keep
+  using the app. If a newer version is found, it downloads the new `.nro`
+  (with a live progress indicator).
+- **Over Wi-Fi (push a build)** — the console shows an address on your
+  network. Open it in a browser and drop a HaulNX `.nro` on the page, or push
+  one from the [App Utility](#app-utility) (**Send to Switch → App update**).
+  The same version as installed is accepted — this path exists so new builds
+  can be tested without plugging in a USB cable. A live progress line shows
+  the transfer as it arrives.
+
+Either way the received build is validated (real-NRO check), you confirm the
+install — the dialog shows the incoming build's version next to the installed
+one — and it's staged with a copy-then-rename (keeping a `.previous` backup),
+so an interrupted install can't corrupt the app. Finish with **Restart now**
+(the app relaunches itself straight into the new build) or **Later** (the
+Settings chip flips to *Restart to update* and the swap happens on the next
+launch).
+
+---
+
+## App Utility
+
+Every release ships **`appUtility-<version>.html`** — a single self-contained
+HTML file (no install, no server, works offline) you open in any browser on
+your computer. It's the comfortable way to build and maintain collections, and
+it talks to the console directly:
+
+- **Edit collections** — build `dl_sources.json` visually: console groups,
+  repos, the supported-console list. Import an existing file (including the
+  one your console is running — the import screen serves it for download) or
+  start fresh, then export.
+- **Quick test** — paste any archive.org item id or URL to preview its file
+  list before committing it to a collection.
+- **Send to Switch → Collection** — push the collection straight to the
+  console over the LAN while its **Import collection** screen is open; you
+  confirm the import on the Switch. No SD card swapping.
+- **Send to Switch → App update (.nro)** — push a HaulNX build to the console
+  while **Settings → Check for updates → Over Wi-Fi** is open. The utility
+  validates the file is a real NRO before sending and shows send progress;
+  you confirm the install (and restart) on the Switch.
+- **Export credentials** — write your archive.org S3 keys to a
+  `credentials.json` for the SD card.
+
+Both devices must be on the same network; the console shows the address to
+enter. Nothing leaves your LAN and no third-party service is involved.
 
 ---
 
 ## Translations
 
-ticodl+ ships 25 languages. All translation files live in the repo as plain
+HaulNX ships 25 languages. All translation files live in the repo as plain
 JSON — one file per language, keyed by English, in
 [`romfs/lang/`](romfs/lang/). These are bundled into the app and loaded at
 runtime; there is a single source of truth, so edit here.
 
 Spotted a wrong or awkward translation? Please
-[open an issue](https://github.com/digdat0/ticodlplus/issues) naming the
+[open an issue](https://github.com/digdat0/HaulNX/issues) naming the
 language, the key (or the on-screen text), and your suggested wording — or send
 a PR updating the file in `romfs/lang/`. For English (`en.json`) changes,
 `tools/gen_i18n.py` must be re-run afterwards (it regenerates the strings baked
 into the binary).
 
 You can also override any language locally without rebuilding: copy the file to
-`sdmc:/switch/ticodlplus/lang/<code>.json` and edit it — the SD copy takes
+`sdmc:/switch/HaulNX/lang/<code>.json` and edit it — the SD copy takes
 priority over the bundled one.
 
 ---
@@ -403,7 +457,7 @@ the debug log (**Settings → View logs → View debug log**) for the exact reas
 
 ## Overwrite behaviour
 
-When a downloaded file lands in `sdmc:/tico/roms/<console>/` and a file of the
+When a downloaded file lands in `sdmc:/roms/<console>/` and a file of the
 **same name already exists there, it is overwritten in place.** This is intended
 — it's how you re-download or refresh a file. There is **no prompt and no
 separate backup**: the previous file is replaced (a single file via a move, or,
@@ -438,7 +492,7 @@ request's result is logged to `debug.log`.
 
 ## Building from source
 
-ticodl+ 2.x is a **graphical app** built on the
+HaulNX is a **graphical app** built on the
 [Plutonium](https://github.com/XorTroll/Plutonium) UI library (SDL2), with the
 **devkitPro** toolchain (devkitA64 + libnx). Plutonium is included as a git
 submodule and built automatically.
@@ -459,9 +513,9 @@ submodule and built automatically.
 ### Build
 
 ```sh
-git clone --recursive https://github.com/digdat0/ticodlplus
-cd ticodlplus
-make            # builds the Plutonium lib (submodule), then TicoDLplus.nro
+git clone --recursive https://github.com/digdat0/HaulNX
+cd HaulNX
+make            # builds the Plutonium lib (submodule), then HaulNX.nro
 make clean
 ```
 
@@ -469,10 +523,10 @@ If you cloned without `--recursive`, run `git submodule update --init` first.
 On Windows, build inside the devkitPro MSYS2 shell:
 
 ```sh
-/c/devkitPro/msys2/usr/bin/bash.exe -lc "cd /c/path/to/ticodlplus && make"
+/c/devkitPro/msys2/usr/bin/bash.exe -lc "cd /c/path/to/HaulNX && make"
 ```
 
-Output is **`TicoDLplus.nro`**. The version lives in `VERSION` (the single source
+Output is **`HaulNX.nro`**. The version lives in `VERSION` (the single source
 of truth) and is baked into the build and `include/version.h` automatically. To
 publish a release: `sh release.sh` — it tags a GitHub release with that version,
 attaches the `.nro`, and uses the matching `CHANGELOG.md` section as the notes.
@@ -493,9 +547,11 @@ attaches the `.nro`, and uses the matching `CHANGELOG.md` section as the notes.
 | `config.*` | `dl_sources.json` / credentials / prefs load + save |
 | `fsutil.*` | mkdir-p, move, recursive delete, free-space |
 | `update.*` | GitHub release check + in-app self-update |
+| `httpsrv.*` | tiny LAN HTTP receiver behind Import collection and update-over-Wi-Fi |
 | `md5.*` | MD5 for download verification |
 | `jsonutil.*`, `jsmn.*` | JSON parsing (vendored jsmn) |
 | `i18n.*`, `romfs/lang/`, `tools/gen_i18n.py` | translations — English strings are generated into the binary from `romfs/lang/en.json`; the other 24 languages load from romfs |
+| `tools/app-utility/` | the App Utility — self-contained HTML collection editor + LAN push tool, attached to every release |
 | `Plutonium/` | UI library (git submodule) |
 
 The backend (`net`/`archive`/`queue`/`extract`/`config`/`fsutil`/`md5`/`json`/
@@ -509,7 +565,7 @@ Released under the [MIT License](LICENSE) — free to use, modify and
 redistribute. The only condition is that the copyright notice and license stay
 included, so **please keep the credit**.
 
-ticodl+'s own code and the [Plutonium](https://github.com/XorTroll/Plutonium) UI
+HaulNX's own code and the [Plutonium](https://github.com/XorTroll/Plutonium) UI
 library it builds on are both MIT-licensed, so the project is cleanly permissive.
 Third-party license notices (Plutonium © XorTroll, jsmn, and the bundled Noto
 Sans font subset under the SIL Open Font License) are collected in
@@ -527,6 +583,5 @@ distribution.
   [jsmn](https://github.com/zserge/jsmn) tokenizer (MIT).
 - Graphical UI powered by [Plutonium](https://github.com/XorTroll/Plutonium) by
   [XorTroll](https://github.com/XorTroll).
-- Kudos to the creator of TICO https://ticoverse.com/
 - Inspired by [TicoBro](https://github.com/StonedModder/Ticobro) — I wanted a
   simple downloader whose only job was to download, with some enhancements.
