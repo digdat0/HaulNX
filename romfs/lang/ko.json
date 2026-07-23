@@ -237,7 +237,7 @@
   "welcome_import": "PC에서 보내기",
   "welcome_manual": "리포 직접 추가",
   "welcome_later": "나중에",
-  "roms_override": "ROM 폴더: %s",
+  "roms_override": "ROM 폴더",
   "roms_auto": "기본값 (sd:/roms)",
   "roms_override_title": "사용자 지정 ROM 폴더",
   "roms_override_warn": "앞으로 ROM은 이 폴더에 다운로드되고 여기에서 탐색됩니다. 게임이 표시되도록 에뮬레이터가 이 폴더를 가리키게 하세요. 에뮬레이터별 설정은 위키를 참고하세요.",

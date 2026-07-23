@@ -237,7 +237,7 @@
   "welcome_import": "Lähetä tietokoneelta",
   "welcome_manual": "Lisää repo käsin",
   "welcome_later": "Ei nyt",
-  "roms_override": "ROM-kansio: %s",
+  "roms_override": "ROM-kansio",
   "roms_auto": "Oletus (sd:/roms)",
   "roms_override_title": "Mukautettu ROM-kansio",
   "roms_override_warn": "Tästä tulee kansio, johon ROMit ladataan ja josta niitä selataan. Osoita emulaattorisi tähän kansioon, jotta pelisi näkyvät. Katso wikistä emulaattorikohtaiset asetukset.",

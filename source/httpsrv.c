@@ -20,8 +20,12 @@
 /* Requests are read incrementally, a slice per poll, so the UI thread keeps
  * rendering during a large upload and can show its progress. Responses are
  * still written on a briefly-blocking socket (they are small pages); this
- * timeout bounds a peer that stops draining them. */
+ * timeout bounds a peer that stops draining them. Sends get a tighter budget
+ * than reads: every response fits the socket buffer in one go, so a send that
+ * stalls at all is a peer deliberately not reading — and each stalled send
+ * blocks the UI thread for its full timeout. */
 #define RECV_TIMEOUT_MS 2000
+#define SEND_TIMEOUT_MS 1000
 /* Watchdog for a client that connects and then goes quiet mid-request. */
 #define CLIENT_IDLE_NS  5000000000ULL /* ~5s without a byte drops the client */
 
@@ -114,8 +118,14 @@ static const char PAGE[] =
     "</form>"
     "<div class=alt>"
     "<p>Want to start from what this console is already using?</p>"
-    "<a href=\"/dl_sources.json\" download>Download current dl_sources.json</a>"
-    "</div>" UPLOAD_SCRIPT "</div>";
+    "<a href=\"dl_sources.json\" download>Download current dl_sources.json</a>"
+    "</div>" UPLOAD_SCRIPT
+    /* The export lives under this page's one-time path; the page is static, so
+     * point the link there at load time instead of baking the code in. */
+    "<script>var xa=document.querySelector('.alt a');"
+    "if(xa)xa.setAttribute('href',"
+    "location.pathname.replace(/\\/+$/,'')+'/dl_sources.json');</script>"
+    "</div>";
 
 /* The app-update page, shown while Settings' update-over-Wi-Fi screen is
  * open. Same receiver either way — this only changes the instructions. */
@@ -164,6 +174,19 @@ static const char PAGE_OK[] =
     "page.</p>"
     "<a href=\"/\">Reload</a></div>";
 
+/* Served for any path that lacks the one-time code: tells a person what to do
+ * without confirming anything about the code to a probing script. */
+static const char PAGE_HINT[] =
+    "<!doctype html><meta charset=utf-8>"
+    "<meta name=viewport content=\"width=device-width,initial-scale=1\">"
+    "<title>HaulNX</title>" PAGE_CSS
+    "<div class=card>"
+    "<header><img src=\"/logo.png\" alt=\"\">"
+    "<div><h1>Haul<span>NX</span></h1><p>Nothing here</p></div></header>"
+    "<p>Open the <b>exact address shown on your Switch</b> &mdash; it ends "
+    "with a one-time code that changes every time the receive screen opens.</p>"
+    "</div>";
+
 /* Write every byte or fail. A short write here is not cosmetic: the response
  * has already promised a Content-Length, so giving up early hands the browser a
  * truncated body (ERR_CONTENT_LENGTH_MISMATCH) rather than a clean error. */
@@ -180,9 +203,9 @@ static bool send_all(int fd, const char *p, size_t n) {
         if (w < 0 && errno == EINTR) {
             continue;
         }
-        /* Send window full for a whole SO_SNDTIMEO: let the peer drain a couple
-         * more times before abandoning a half-written response. */
-        if (w < 0 && (errno == EAGAIN || errno == EWOULDBLOCK) && ++stalls < 3) {
+        /* Send window full for a whole SO_SNDTIMEO: allow one more drain, then
+         * abandon the response — each stall here has the UI thread hostage. */
+        if (w < 0 && (errno == EAGAIN || errno == EWOULDBLOCK) && ++stalls < 2) {
             continue;
         }
         return false;
@@ -378,10 +401,67 @@ static void make_blocking(int fd) {
     if (fl >= 0) {
         fcntl(fd, F_SETFL, fl & ~O_NONBLOCK);
     }
-    struct timeval tv = {RECV_TIMEOUT_MS / 1000,
-                         (RECV_TIMEOUT_MS % 1000) * 1000};
-    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+    struct timeval rtv = {RECV_TIMEOUT_MS / 1000,
+                          (RECV_TIMEOUT_MS % 1000) * 1000};
+    struct timeval stv = {SEND_TIMEOUT_MS / 1000,
+                          (SEND_TIMEOUT_MS % 1000) * 1000};
+    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &rtv, sizeof(rtv));
+    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &stv, sizeof(stv));
+}
+
+/* The request line's path: after the method, up to the next space/EOL. */
+static size_t req_path(const char *head, const char **out) {
+    const char *sp = strchr(head, ' ');
+    if (!sp) {
+        *out = head;
+        return 0;
+    }
+    sp++;
+    size_t n = 0;
+    while (sp[n] && sp[n] != ' ' && sp[n] != '\r' && sp[n] != '\n') {
+        n++;
+    }
+    *out = sp;
+    return n;
+}
+
+/* True if the path is exactly "/<token>" (an optional trailing slash is fine —
+ * that's a human retyping the address, not a different resource). */
+static bool path_is_token(const HttpSrv *s, const char *p, size_t pl) {
+    size_t tl = strlen(s->token);
+    if (pl == tl + 2 && p[pl - 1] == '/') {
+        pl--;
+    }
+    return pl == tl + 1 && p[0] == '/' && strncmp(p + 1, s->token, tl) == 0;
+}
+
+/* Reject a request whose Host header names anyone but this console. A browser
+ * lured to a DNS-rebinding page reaches this IP with the attacker's hostname
+ * still in Host: — refusing it cuts that class off wholesale. A missing Host
+ * (plain HTTP/1.0 tools) is allowed: rebinding always goes through a real
+ * browser, and real browsers always send it. */
+static bool host_ok(const HttpSrv *s, const char *head) {
+    if (!s->ip[0]) {
+        return true; /* own address unknown: nothing to compare against */
+    }
+    const char *h = hdr_val(head, "host:");
+    if (!h) {
+        return true;
+    }
+    size_t n = 0;
+    while (h[n] && h[n] != '\r' && h[n] != '\n') {
+        n++;
+    }
+    while (n > 0 && (h[n - 1] == ' ' || h[n - 1] == '\t')) {
+        n--;
+    }
+    char want[64];
+    int wl = snprintf(want, sizeof(want), "%s:%d", s->ip, HTTPSRV_PORT);
+    if ((size_t)wl == n && strncasecmp(h, want, n) == 0) {
+        return true;
+    }
+    size_t il = strlen(s->ip);
+    return il == n && strncasecmp(h, s->ip, n) == 0;
 }
 
 /* Nothing finished this poll: keep the connection if it made progress (or is
@@ -400,29 +480,44 @@ static int client_idle(HttpSrv *s, bool got_data) {
 static int respond_simple(HttpSrv *s, int fd, const char *head) {
     int ret = 0;
     make_blocking(fd);
+    const char *p;
+    size_t pl = req_path(head, &p);
+    size_t tl = strlen(s->token) + 1; /* "/<token>" */
     if (strncmp(head, "OPTIONS ", 8) == 0) {
         send_resp(fd, "204 No Content", "text/plain", NULL);
-    } else if (strncmp(head + 4, "/logo.png", 9) == 0) {
+    } else if (!host_ok(s, head)) {
+        send_resp(fd, "403 Forbidden", "text/plain", "wrong host");
+    } else if (pl == 9 && strncmp(p, "/logo.png", 9) == 0) {
+        /* Tokenless on purpose: every page (the hint page included) shows it,
+         * and it is the app's public badge — there is nothing to protect. */
         if (!send_file(fd, LOGO_PATH, "image/png", NULL)) {
             send_resp(fd, "404 Not Found", "text/plain", "no logo");
         }
-    } else if (strncmp(head + 4, "/dl_sources.json", 16) == 0) {
-        /* Export: hand back the collection file the console is running on,
-         * so it can be edited and sent straight back. */
+    } else if (pl == 5 && strncmp(p, "/sent", 5) == 0) {
+        send_resp(fd, "200 OK", "text/html; charset=utf-8", PAGE_OK);
+        ret = 2; /* the upload landed safely; nothing is pending */
+    } else if (path_is_token(s, p, pl)) {
+        /* The one-time address from the console's screen: the upload form.
+         * Which form depends on the screen that opened the server. */
+        send_resp(fd, "200 OK", "text/html; charset=utf-8",
+                  s->nro_page ? PAGE_NRO : PAGE);
+    } else if (!s->nro_page && pl == tl + 16 && p[0] == '/' &&
+               strncmp(p + 1, s->token, tl - 1) == 0 &&
+               strncmp(p + tl, "/dl_sources.json", 16) == 0) {
+        /* Export, at "/<token>/dl_sources.json": hand back the collection the
+         * console is running on, so it can be edited and sent straight back.
+         * Token-gated (it lists the user's repos) and only while the IMPORT
+         * screen is open — the update screen has no business exporting. */
         bool sent = send_file(fd, SOURCES_PATH, "application/json",
                               "dl_sources.json");
         if (!sent) {
             send_resp(fd, "404 Not Found", "text/plain", "no config");
         }
         ret = sent ? 3 : 0;
-    } else if (strncmp(head + 4, "/sent", 5) == 0) {
-        send_resp(fd, "200 OK", "text/html; charset=utf-8", PAGE_OK);
-        ret = 2; /* the upload landed safely; nothing is pending */
     } else {
-        /* Any other path is the upload form: there is one thing to do here.
-         * Which form depends on the screen that opened the server. */
-        send_resp(fd, "200 OK", "text/html; charset=utf-8",
-                  s->nro_page ? PAGE_NRO : PAGE);
+        /* No (or a wrong) one-time code: explain, without echoing anything a
+         * probing script could learn from. */
+        send_resp(fd, "404 Not Found", "text/html; charset=utf-8", PAGE_HINT);
     }
     client_reset(s);
     return ret;
@@ -478,6 +573,20 @@ static int client_step(HttpSrv *s) {
             send_resp(fd, "405 Method Not Allowed", "text/plain", "no");
             client_reset(s);
             return 0;
+        }
+        /* Uploads only land on the one-time path from the console's screen.
+         * Checked before the body is read: an unauthorized POST is refused
+         * for the cost of its headers, not 16 MB of its payload. */
+        {
+            const char *p;
+            size_t pl = req_path(s->head, &p);
+            if (!path_is_token(s, p, pl) || !host_ok(s, s->head)) {
+                make_blocking(fd);
+                send_resp(fd, "403 Forbidden", "text/plain",
+                          "use the address shown on the console");
+                client_reset(s);
+                return 0;
+            }
         }
 
         const char *cl = hdr_val(s->head, "content-length:");
@@ -606,6 +715,22 @@ bool httpsrv_open(HttpSrv *s) {
     /* accept() is called from the render loop and must never block it. */
     fcntl(fd, F_SETFL, fcntl(fd, F_GETFL, 0) | O_NONBLOCK);
     s->listen_fd = fd;
+
+    /* The one-time code for this session's URL, from the console's CSPRNG.
+     * Lowercase hex keeps it easy to read off a TV and type on a phone. */
+    unsigned char rnd[HTTPSRV_TOKEN_LEN];
+    randomGet(rnd, sizeof(rnd));
+    static const char hexd[] = "0123456789abcdef";
+    for (int i = 0; i < HTTPSRV_TOKEN_LEN; i++) {
+        s->token[i] = hexd[rnd[i] & 0xf];
+    }
+    s->token[HTTPSRV_TOKEN_LEN] = '\0';
+
+    /* Our own address, for the Host-header check. Best-effort: the caller has
+     * already required a connection to show the URL at all. */
+    if (!httpsrv_local_ip(s->ip, sizeof(s->ip))) {
+        s->ip[0] = '\0';
+    }
     return true;
 }
 

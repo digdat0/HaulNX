@@ -237,7 +237,7 @@
   "welcome_import": "Vanaf een computer sturen",
   "welcome_manual": "Handmatig een repo toevoegen",
   "welcome_later": "Niet nu",
-  "roms_override": "ROM-map: %s",
+  "roms_override": "ROM-map",
   "roms_auto": "Standaard (sd:/roms)",
   "roms_override_title": "Aangepaste ROM-map",
   "roms_override_warn": "Dit wordt de map waarin ROM's worden gedownload en bekeken. Richt je emulators op deze map zodat je games verschijnen. Zie de wiki voor de instellingen per emulator.",

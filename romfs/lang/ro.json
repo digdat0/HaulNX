@@ -237,7 +237,7 @@
   "welcome_import": "Trimite de pe un computer",
   "welcome_manual": "Adaugă un repo manual",
   "welcome_later": "Nu acum",
-  "roms_override": "Folder ROM: %s",
+  "roms_override": "Folder ROM",
   "roms_auto": "Implicit (sd:/roms)",
   "roms_override_title": "Folder ROM personalizat",
   "roms_override_warn": "Acesta devine folderul în care ROM-urile sunt descărcate și răsfoite. Îndreaptă-ți emulatoarele către acest folder pentru ca jocurile tale să apară. Consultă wiki-ul pentru configurarea fiecărui emulator.",

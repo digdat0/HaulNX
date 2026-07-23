@@ -237,7 +237,7 @@
   "welcome_import": "Von einem Computer senden",
   "welcome_manual": "Repo von Hand hinzufügen",
   "welcome_later": "Später",
-  "roms_override": "ROM-Ordner: %s",
+  "roms_override": "ROM-Ordner",
   "roms_auto": "Standard (sd:/roms)",
   "roms_override_title": "Eigener ROM-Ordner",
   "roms_override_warn": "Dies wird der Ordner, in den ROMs heruntergeladen und in dem sie durchsucht werden. Richte deine Emulatoren auf diesen Ordner, damit deine Spiele erscheinen. Anleitungen für einzelne Emulatoren findest du im Wiki.",

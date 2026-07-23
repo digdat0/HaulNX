@@ -237,7 +237,7 @@
   "welcome_import": "Bilgisayardan gönder",
   "welcome_manual": "Elle repo ekle",
   "welcome_later": "Şimdi değil",
-  "roms_override": "ROM klasörü: %s",
+  "roms_override": "ROM klasörü",
   "roms_auto": "Varsayılan (sd:/roms)",
   "roms_override_title": "Özel ROM klasörü",
   "roms_override_warn": "Bundan sonra ROM'lar bu klasöre indirilir ve buradan görüntülenir. Oyunlarınızın görünmesi için emülatörlerinizi bu klasöre yönlendirin. Her emülatörün ayarları için wiki'ye bakın.",

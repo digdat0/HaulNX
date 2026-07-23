@@ -237,7 +237,7 @@
   "welcome_import": "从电脑发送",
   "welcome_manual": "手动添加仓库",
   "welcome_later": "以后再说",
-  "roms_override": "ROM 文件夹：%s",
+  "roms_override": "ROM 文件夹",
   "roms_auto": "默认 (sd:/roms)",
   "roms_override_title": "自定义 ROM 文件夹",
   "roms_override_warn": "以后 ROM 将下载到此文件夹，并从这里浏览。将你的模拟器指向此文件夹，游戏才会出现。各模拟器的设置请参见 wiki。",

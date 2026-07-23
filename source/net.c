@@ -80,6 +80,12 @@ static void apply_tls(CURL *c) {
     net_log("TLS: libnx ssl backend (console cert store)");
 }
 
+/* Ceiling for an in-memory GET. The biggest legitimate response is an
+ * archive.org /metadata/ listing for a huge item — single-digit MB. Anything
+ * beyond this is a broken or hostile server, and letting it realloc without
+ * bound would take the whole app down on a console with this little RAM. */
+#define HTTP_GET_MAX (32u * 1024 * 1024)
+
 struct mem_buf {
     char *data;
     size_t len;
@@ -88,6 +94,9 @@ struct mem_buf {
 static size_t mem_write(void *ptr, size_t size, size_t nmemb, void *ud) {
     size_t add = size * nmemb;
     struct mem_buf *m = (struct mem_buf *)ud;
+    if (add > HTTP_GET_MAX - m->len) {
+        return 0; /* over budget: short write makes curl abort the transfer */
+    }
     char *np = (char *)realloc(m->data, m->len + add + 1);
     if (!np) {
         return 0;
@@ -307,6 +316,10 @@ bool http_download(const char *url, const char *dest_path,
          * archive.org HTTPS URLs; archive.org only redirects within
          * *.archive.org, so the secret is never sent off-domain. */
         curl_easy_setopt(c, CURLOPT_UNRESTRICTED_AUTH, 1L);
+        /* And since the header now rides every hop, every hop must be TLS:
+         * refuse any redirect that would downgrade to plain http (the initial
+         * URL is already gated to https:// by the caller). */
+        curl_easy_setopt(c, CURLOPT_REDIR_PROTOCOLS, CURLPROTO_HTTPS);
     }
     apply_tls(c);
 

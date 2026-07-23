@@ -22,6 +22,50 @@ const char *tr(int id) {
 
 /* ---- JSON language file loader ----------------------------------------- */
 
+/* Collect a string's printf conversions, in order, as one letter each ('*'
+ * widths count as their own entry — they consume an argument too). Many of
+ * these strings are fed straight to snprintf as the FORMAT, and lang files
+ * can come off the SD card: a translation with a stray or reordered %spec
+ * must never reach varargs. False if the signature is malformed or too long. */
+static bool fmt_signature(const char *s, char *out, size_t out_sz) {
+    size_t o = 0;
+    for (const char *p = s; *p; p++) {
+        if (*p != '%') {
+            continue;
+        }
+        p++;
+        if (*p == '%') {
+            continue; /* literal percent */
+        }
+        while (*p && strchr("-+ #0123456789.*", *p)) {
+            if (*p == '*') {
+                if (o + 1 >= out_sz) {
+                    return false;
+                }
+                out[o++] = '*';
+            }
+            p++;
+        }
+        while (*p && strchr("hljztL", *p)) {
+            p++;
+        }
+        if (!*p || o + 1 >= out_sz) {
+            return false; /* trailing lone '%', or too many conversions */
+        }
+        out[o++] = *p;
+    }
+    out[o] = '\0';
+    return true;
+}
+
+/* A translation is only usable if it consumes exactly the arguments the
+ * built-in English string does, in the same order. */
+static bool fmt_matches(const char *ref, const char *loc) {
+    char rs[24], ls[24];
+    return fmt_signature(ref ? ref : "", rs, sizeof(rs)) &&
+           fmt_signature(loc, ls, sizeof(ls)) && strcmp(rs, ls) == 0;
+}
+
 static void i18n_free_overrides(void) {
     for (int i = 0; i < S__COUNT; i++) {
         free(g_override[i]);
@@ -74,6 +118,13 @@ void i18n_load(const char *path) {
             /* Decode \n, \", \uXXXX etc.; decoded text never exceeds the raw. */
             json_unescape(js + tok[idx].start, (size_t)slen, g_override[i],
                           (size_t)slen + 1);
+            /* A translation whose %-conversions don't mirror the English
+             * string would corrupt or crash the snprintf it's used in: drop
+             * just that string and let English show through. */
+            if (!fmt_matches(g_en[i], g_override[i])) {
+                free(g_override[i]);
+                g_override[i] = NULL;
+            }
         }
     }
 

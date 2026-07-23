@@ -237,7 +237,7 @@
   "welcome_import": "Odeslat z počítače",
   "welcome_manual": "Přidat repozitář ručně",
   "welcome_later": "Teď ne",
-  "roms_override": "Složka ROM: %s",
+  "roms_override": "Složka ROM",
   "roms_auto": "Výchozí (sd:/roms)",
   "roms_override_title": "Vlastní složka ROM",
   "roms_override_warn": "Sem se budou ROM stahovat a odtud se budou procházet. Nasměrujte své emulátory na tuto složku, aby se vaše hry zobrazily. Nastavení pro jednotlivé emulátory najdete na wiki.",

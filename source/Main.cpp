@@ -2,56 +2,20 @@
 #include <cstdio>
 #include <cstring>
 #include <cerrno>
-#include <sys/stat.h>
 
 extern "C" {
 #include "config.h"
-#include "fsutil.h"
 }
 
-// SDL_ttf streams glyphs from its font file for the app's whole lifetime.
-// Loading the fallback font straight from romfs therefore keeps our own NRO
-// open — and the self-updater can't replace a locked file. Stage the font on
-// the SD card and load it from there; romfs is only the copy source.
-static const char *stage_viet_font(void) {
-    static const char *sd = "sdmc:/switch/HaulNX/viet-fallback.ttf";
-    static const char *rom = "romfs:/fonts/viet-fallback.ttf";
-    FILE *in = fopen(rom, "rb");
-    if (!in) {
-        return sd; // romfs copy missing: hope for a previously staged one
-    }
-    fseek(in, 0, SEEK_END);
-    long rsz = ftell(in);
-    fseek(in, 0, SEEK_SET);
-    struct stat st;
-    if (stat(sd, &st) == 0 && (long)st.st_size == rsz) {
-        fclose(in);
-        return sd; // already staged and current
-    }
-    fs_mkdir_p(CONFIG_DIR);
-    FILE *out = fopen(sd, "wb");
-    if (!out) {
-        fclose(in);
-        return rom; // can't stage: romfs fallback (self-update stays locked)
-    }
-    static char buf[8192];
-    size_t r;
-    bool ok = true;
-    while ((r = fread(buf, 1, sizeof(buf), in)) > 0) {
-        if (fwrite(buf, 1, r, out) != r) {
-            ok = false;
-            break;
-        }
-    }
-    fclose(in);
-    if (fclose(out) != 0) {
-        ok = false;
-    }
-    if (!ok) {
-        remove(sd);
-        return rom;
-    }
-    return sd;
+// Builds up to 1.0.0 staged a copy of the Vietnamese fallback font on the SD
+// card, believing a romfs-loaded font would hold our NRO open and break the
+// self-updater. Neither concern holds: Plutonium reads font files fully into
+// RAM and closes them at once, and the update swap runs at next launch before
+// romfs is even mounted. The font now loads straight from romfs; this just
+// sweeps up the copy those older builds left behind.
+static void remove_staged_viet_font(void) {
+    remove("sdmc:/switch/HaulNX/viet-fallback.ttf");
+    remove("sdmc:/switch/ticodlplus/viet-fallback.ttf"); // pre-rebrand path
 }
 
 // Finish a self-update staged by the previous run. The updater can't replace
@@ -138,9 +102,9 @@ int main(int argc, char **argv) {
     // Vietnamese fallback: the Switch shared fonts lack Latin Extended
     // Additional (ế, ệ, ợ...). This subset contains ONLY those glyphs, so the
     // system font still renders everything it can (font paths are consulted
-    // before shared fonts, hence the aggressive subsetting). Served from the
-    // SD card so the font handle doesn't pin our own NRO (see stage_viet_font).
-    opts.AddDefaultFontPath(stage_viet_font());
+    // before shared fonts, hence the aggressive subsetting).
+    remove_staged_viet_font();
+    opts.AddDefaultFontPath("romfs:/fonts/viet-fallback.ttf");
     opts.AddDefaultAllSharedFonts();
     // Tiny size for the queue cards' chip/filename (defaults start at 27).
     opts.AddExtraDefaultFontSize(21);

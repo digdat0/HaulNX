@@ -7,6 +7,45 @@ Notes for each release. `release.sh` pulls the section matching the version in
 `VERSION` and attaches it to the GitHub release. Add a `## <version>` section
 here before running a release.
 
+## 1.0.1
+
+**Maintenance and hardening release.** No new features on the console — this
+tightens security around the Wi-Fi receiver, fixes a translation bug, and makes
+the App Utility easier to use.
+
+**Wi-Fi receiver hardening**
+- The receive screen's address now carries a **one-time code** (e.g.
+  `http://192.168.4.96:8080/a1b2c3`). Uploads and the config export require it,
+  so a stray request on your network can't push a file or read your sources. A
+  new code is generated every time the screen opens, and a Host-header check
+  closes DNS-rebinding attempts.
+- Unauthorized uploads are refused before the file body is read, and a peer that
+  stops reading a response can no longer stall the console's UI for as long.
+
+**App Utility**
+- Bumped to **`appUtility-v1.0.1.html`**.
+- Send to Switch now splits the address into **IP / Port / Code** fields: the IP
+  and port are remembered between runs, the port defaults to `8080`, and only the
+  one-time code needs re-typing each session (pasting the whole `IP:PORT/CODE`
+  string into the IP box still auto-fills all three).
+
+**Fixes**
+- Translations are now validated against the built-in English format before use,
+  and 24 languages had a stray `%s` repaired that showed a literal "%s" in the
+  ROM-folder setting.
+- Credentialed archive.org downloads can no longer be redirected to plaintext
+  (HTTPS-only), and oversized metadata responses are capped so a hostile source
+  can't exhaust memory.
+- A resumed archive download now correctly picks back up at extraction instead
+  of re-downloading after a restart.
+
+**Wiki**
+- Expanded the emulator wiki: added **Flycast** (Dreamcast/NAOMI/Atomiswave),
+  **DuckStation** (PS1), **Yaba Sanshiro** (Saturn), an **Experimental**
+  GC/Wii/PS2 page, and four reference guides — **BIOS Files**, **Overclocking**,
+  **Disc Images & Multi-Disc Games**, and **Troubleshooting** — with the wiki
+  home page reworked into a full landing hub.
+
 ## 1.0.0
 
 **HaulNX — first release under the new name.** Formerly TicoDL+; the version

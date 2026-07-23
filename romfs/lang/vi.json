@@ -237,7 +237,7 @@
   "welcome_import": "Gửi từ máy tính",
   "welcome_manual": "Thêm repo thủ công",
   "welcome_later": "Để sau",
-  "roms_override": "Thư mục ROM: %s",
+  "roms_override": "Thư mục ROM",
   "roms_auto": "Mặc định (sd:/roms)",
   "roms_override_title": "Thư mục ROM tùy chỉnh",
   "roms_override_warn": "Đây sẽ là thư mục nơi ROM được tải về và duyệt. Trỏ trình giả lập của bạn vào thư mục này để game hiển thị. Xem wiki để biết cách thiết lập từng trình giả lập.",

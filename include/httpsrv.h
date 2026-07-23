@@ -21,12 +21,19 @@ extern "C" {
 #define HTTPSRV_PORT     8080
 /* Big enough for an app build, small enough to refuse runaway uploads. */
 #define HTTPSRV_MAX_BODY (16 * 1024 * 1024)
+/* One-time code carried in the URL path (e.g. http://ip:8080/a1b2c3). It only
+ * ever appears on the console's screen, so anything that knows it was shown
+ * the address by the user — a web page loaded on some other LAN device can
+ * neither POST a file nor fetch the config export without it. */
+#define HTTPSRV_TOKEN_LEN 6
 
 typedef struct {
     int listen_fd;   /* -1 when closed */
     bool nro_page;   /* serve the app-update page instead of the collection
                         one (set by the caller after open; transport-neutral —
                         either kind of file is still accepted on POST) */
+    char token[HTTPSRV_TOKEN_LEN + 1]; /* set by open; caller shows it in the URL */
+    char ip[46];     /* our own address, for the Host-header check (may be "") */
     /* One in-flight connection, read a slice per poll so the UI thread never
      * blocks and can show receive progress. All owned/reset internally. */
     int client_fd;      /* -1 when idle */

@@ -2511,8 +2511,11 @@ void MainApplication::ImportStart(bool onboarding) {
     this->imp_prog = false;
     this->screen = Screen::Import;
 
+    // The path is this session's one-time code: without it the receiver
+    // refuses uploads, so only someone shown this screen can send anything.
     char url[96];
-    snprintf(url, sizeof(url), "http://%s:%d", ip, HTTPSRV_PORT);
+    snprintf(url, sizeof(url), "http://%s:%d/%s", ip, HTTPSRV_PORT,
+             this->imp_srv.token);
 
     xfer_log("listening  %s", url);
 
@@ -2551,7 +2554,8 @@ void MainApplication::UpdateWifiStart() {
     this->screen = Screen::Import;
 
     char url[96];
-    snprintf(url, sizeof(url), "http://%s:%d", ip, HTTPSRV_PORT);
+    snprintf(url, sizeof(url), "http://%s:%d/%s", ip, HTTPSRV_PORT,
+             this->imp_srv.token);
 
     xfer_log("listening  %s (app update)", url);
 

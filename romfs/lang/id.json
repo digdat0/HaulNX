@@ -237,7 +237,7 @@
   "welcome_import": "Kirim dari komputer",
   "welcome_manual": "Tambah repo manual",
   "welcome_later": "Nanti saja",
-  "roms_override": "Folder ROM: %s",
+  "roms_override": "Folder ROM",
   "roms_auto": "Bawaan (sd:/roms)",
   "roms_override_title": "Folder ROM khusus",
   "roms_override_warn": "Ini menjadi folder tempat ROM diunduh dan dijelajahi. Arahkan emulatormu ke folder ini agar gamemu muncul. Lihat wiki untuk pengaturan tiap emulator.",

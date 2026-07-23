@@ -237,7 +237,7 @@
   "welcome_import": "Invia da un computer",
   "welcome_manual": "Aggiungi un repo a mano",
   "welcome_later": "Non ora",
-  "roms_override": "Cartella ROM: %s",
+  "roms_override": "Cartella ROM",
   "roms_auto": "Predefinito (sd:/roms)",
   "roms_override_title": "Cartella ROM personalizzata",
   "roms_override_warn": "Questa diventa la cartella in cui le ROM vengono scaricate e sfogliate. Imposta i tuoi emulatori su questa cartella per far apparire i tuoi giochi. Consulta la wiki per la configurazione dei singoli emulatori.",

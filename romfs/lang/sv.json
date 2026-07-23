@@ -237,7 +237,7 @@
   "welcome_import": "Skicka från en dator",
   "welcome_manual": "Lägg till ett repo för hand",
   "welcome_later": "Inte nu",
-  "roms_override": "ROM-mapp: %s",
+  "roms_override": "ROM-mapp",
   "roms_auto": "Standard (sd:/roms)",
   "roms_override_title": "Anpassad ROM-mapp",
   "roms_override_warn": "Detta blir mappen där ROM-filer laddas ner och visas från. Peka dina emulatorer mot den här mappen så att dina spel dyker upp. Se wikin för inställningar per emulator.",

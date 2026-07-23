@@ -237,7 +237,7 @@
   "welcome_import": "Küldés számítógépről",
   "welcome_manual": "Repo hozzáadása kézzel",
   "welcome_later": "Most nem",
-  "roms_override": "ROM mappa: %s",
+  "roms_override": "ROM mappa",
   "roms_auto": "Alapértelmezett (sd:/roms)",
   "roms_override_title": "Egyéni ROM mappa",
   "roms_override_warn": "Ez lesz a mappa, ahová a ROM-ok letöltődnek és ahonnan böngészhetők. Állítsd az emulátoraidat erre a mappára, hogy a játékaid megjelenjenek. Az egyes emulátorok beállításához lásd a wikit.",

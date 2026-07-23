@@ -237,7 +237,7 @@
   "welcome_import": "Αποστολή από υπολογιστή",
   "welcome_manual": "Προσθήκη repo με το χέρι",
   "welcome_later": "Όχι τώρα",
-  "roms_override": "Φάκελος ROM: %s",
+  "roms_override": "Φάκελος ROM",
   "roms_auto": "Προεπιλογή (sd:/roms)",
   "roms_override_title": "Προσαρμοσμένος φάκελος ROM",
   "roms_override_warn": "Αυτός γίνεται ο φάκελος όπου γίνεται η λήψη και η περιήγηση των ROM. Στρέψτε τους emulator σας σε αυτόν τον φάκελο για να εμφανιστούν τα παιχνίδια σας. Δείτε το wiki για ρυθμίσεις ανά emulator.",

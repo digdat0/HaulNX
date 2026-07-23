@@ -237,7 +237,7 @@
   "welcome_import": "Send fra en computer",
   "welcome_manual": "Tilføj et repo manuelt",
   "welcome_later": "Ikke nu",
-  "roms_override": "ROM-mappe: %s",
+  "roms_override": "ROM-mappe",
   "roms_auto": "Standard (sd:/roms)",
   "roms_override_title": "Brugerdefineret ROM-mappe",
   "roms_override_warn": "Dette bliver mappen, hvor ROM-filer downloades og vises fra. Peg dine emulatorer mod denne mappe, så dine spil dukker op. Se wikien for opsætning af de enkelte emulatorer.",

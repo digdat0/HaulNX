@@ -237,7 +237,7 @@
   "welcome_import": "Envoyer depuis un ordinateur",
   "welcome_manual": "Ajouter un repo à la main",
   "welcome_later": "Plus tard",
-  "roms_override": "Dossier ROMs : %s",
+  "roms_override": "Dossier ROMs",
   "roms_auto": "Par défaut (sd:/roms)",
   "roms_override_title": "Dossier ROMs personnalisé",
   "roms_override_warn": "Ce dossier devient l'endroit où les ROMs sont téléchargées et parcourues. Dirige tes émulateurs vers ce dossier pour que tes jeux apparaissent. Consulte le wiki pour la configuration de chaque émulateur.",

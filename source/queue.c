@@ -375,8 +375,15 @@ static bool part_is_complete(const QueueItem *it) {
     if (!safe_rel(it->name, safe, sizeof(safe))) {
         return false;
     }
+    /* Sanitize the target exactly like process_item does when it names the
+     * .part — with the raw target the two paths diverge whenever sanitizing
+     * changes it, and a finished download would be fetched all over again. */
+    char safet[80];
+    if (!safe_rel(it->target, safet, sizeof(safet))) {
+        return false;
+    }
     char tmp[1200];
-    snprintf(tmp, sizeof(tmp), "%s/%s_%s.part", DL_TMP_DIR, it->target, safe);
+    snprintf(tmp, sizeof(tmp), "%s/%s_%s.part", DL_TMP_DIR, safet, safe);
     struct stat st;
     if (stat(tmp, &st) != 0 || st.st_size <= 0) {
         return false;

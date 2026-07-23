@@ -237,7 +237,7 @@
   "welcome_import": "Enviar de um computador",
   "welcome_manual": "Adicionar um repo manualmente",
   "welcome_later": "Agora não",
-  "roms_override": "Pasta de ROMs: %s",
+  "roms_override": "Pasta de ROMs",
   "roms_auto": "Padrão (sd:/roms)",
   "roms_override_title": "Pasta de ROMs personalizada",
   "roms_override_warn": "Esta passa a ser a pasta onde as ROMs são baixadas e exploradas. Aponte seus emuladores para esta pasta para que seus jogos apareçam. Consulte a wiki para a configuração de cada emulador.",
