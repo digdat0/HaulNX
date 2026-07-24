@@ -23,168 +23,149 @@ works.**
 
 ## What it does
 
-At its core HaulNX is a background download manager for archive.org game files
-that installs them into its own ROM library for you:
-
-- **Browse** archive.org collections by console and search across all of them
-- **Queue** downloads that run in the background — parallel, resumable, and saved
-  across restarts
-- **Extract & verify** archives automatically, then drop the files into
-  `sdmc:/roms/<console>/` — the folder you point your emulators at
-- **Manage** your installed library — search, sort, rename, delete
-- **Update itself** in one tap from GitHub releases — or take a build pushed
-  over Wi-Fi from the App Utility, no USB cable needed
-
-Everything else below — card view, touch, languages, themes — is polish on top.
+HaulNX is a background download manager for archive.org game files that installs
+them into one central ROM library — `sdmc:/roms/<console>/` — across **53
+supported console folders**. You point your emulators at that folder once, and
+everything you download from then on just appears.
 
 ---
 
 ## Features
 
-### Core
+**Browse & search**
+- Archive.org collections grouped by console, with full console names; a console
+  can hold several repos when one set is incomplete
+- **Global search** across every cached repo — results tagged with their console,
+  marked `*` if you already have the file, and queueable straight from the results
+- Filter and sort any file list, pin favourites to the top, and show or hide
+  consoles you don't collect for
 
-- **Browse & download from archive.org**
-  - Consoles shown with their full names (e.g. "Super Nintendo Entertainment
-    System (SNES)"), grouped by console — or a flat repo list (Advanced toggle)
-  - Multiple repos per console — add extra archive.org collections when one set
-    is incomplete
-  - **Global search** with **−** across every cached repo — results tagged with
-    their console (and a `*` if already installed), downloadable straight from
-    the results
-  - On-screen name filter (**Y**), sort by name/size (**X**), `*` markers for
-    already-installed files, ZL/ZR paging
-  - **Pin favorites** to the top (★) with **D-pad Right** — consoles, repos, and
-    installed folders alike
-  - Show/hide consoles from **Settings → Advanced settings → Manage consoles**
+**Bulk downloads**
+- **Mark files with Y**, then queue the whole set with **A**. The selection is
+  keyed to the file rather than the row, so you can filter, mark, change the
+  filter and mark again to build one set across several passes
+- Before anything starts you get the totals: **how many files, how many bytes,
+  free space, what the queue already owes, and how many were skipped as already
+  installed.** If the set doesn't fit you can take only what fits, or queue it
+  anyway
+- **Skip installed** (default on) drops files you already have from a marked
+  selection — a single deliberate **A** on one file is never filtered
 
-- **Download queue**
-  - Queue files and keep browsing — downloads run in the background
-  - Up to **5 simultaneous downloads** — change the limit in Advanced and it
-    applies immediately: raising it starts more queued items, lowering it
-    **pauses** the excess downloads, which auto-resume (from where they stopped)
-    as slots free up
-  - **Pre-flight space check** — before a download is queued you're warned if it,
-    plus everything already waiting, won't fit on your SD card (you can still
-    queue it anyway)
-  - Transient server errors (HTTP 5xx / throttling) are retried automatically
-    with backoff, resuming the partial file; stalled transfers time out instead
-    of hanging
-  - Pipelined extraction — the next download starts while the previous archive unpacks
-  - Progress bar, speed, ETA, cancel, retry (resumes in place); reorder one row
-    (ZL/ZR) or jump to top/bottom (D-pad ◀/▶) — the active download stays put
-  - Queue actions menu (**Y**): retry every failed item or clear finished ones
-    at once; a summary toast reports the tally when a batch finishes
-  - Queue the entire file list at once with **−**
-  - **Queue persists across app restarts**; interrupted downloads resume automatically
-  - **Network-loss aware** — if the connection drops, active downloads pause
-    (keeping their partial files) and the rest stay queued; everything resumes
-    automatically, in order, when the network comes back
-  - Download history with one-press **re-download from the log**
+**Download queue**
+- Holds **256 items** and runs **5 at once** by default; change the limit and it
+  applies immediately — lowering it pauses the excess, which resume where they
+  stopped as slots free up
+- Resumable, and **persists across app restarts** — interrupted downloads pick up
+  automatically on the next launch
+- **Network-loss aware**: if the connection drops, active downloads pause keeping
+  their partial files, and everything resumes in order when it comes back
+- **Waits for free space** instead of failing item after item as the card fills,
+  and retries transient server errors with backoff
+- Pipelined extraction — the next download starts while the previous archive unpacks
+- Progress, speed, ETA, cancel, reorder; a **Y** menu to retry every failed item
+  or clear the finished ones at once
+- Download history with one-press **re-download from the log**
 
-- **Automatic extraction & verification**
-  - `.zip` / `.7z` / `.rar` / `.tar.*` unpacked into the console folder; plain files moved as-is
-  - Integrity verified by size and MD5 — corrupt files are rejected
+**Extraction & verification**
+- `.zip` / `.7z` / `.rar` / `.tar.*` unpacked into the console folder; plain files
+  moved as-is
+- Verified by size and MD5 where the source publishes them, so a corrupt or
+  truncated download is rejected rather than installed
 
-- **Installed library**
-  - Sorted alphabetically by full console name, pinned folders first
-  - Re-sort with **D-pad Left** (name A–Z / Z–A / size); folders stay grouped
-    and pinned ones stay on top
-  - **Search installed games** with **−** — a recursive scan of the ROM
-    folders; open a result to jump straight to its folder
-  - Multi-select with **Y**, then **−** to delete the marked items; rename
-    with **X**
+**Installed library**
+- Browse what you have by console, sorted by name or size with pinned folders on top
+- **Search installed games** across every ROM folder; open a result to jump to it
+- Multi-select to delete, or rename in place
 
-- **In-app self-update**
-  - **Settings → Check for updates** asks where the update comes from:
-    **From GitHub** (one-tap release check on a background thread, with a
-    retry counter; **B** dismisses or cancels) or **Over Wi-Fi** — the console
-    shows an address, and you drop a HaulNX `.nro` on the served page or push
-    one from the App Utility (the same version as installed is fine, so new
-    builds can be tested without a USB cable)
-  - Either way the build is validated and staged so a power loss can't corrupt
-    the app, and a **Restart now** option relaunches straight into it
+**In-app self-update**
+- **Settings → Check for updates** pulls the newest release from GitHub in one tap
+- Or push a build **over Wi-Fi** from the [App Utility](#app-utility) — no USB
+  cable, and the same version as installed is accepted so you can test new builds
+- Either way the build is validated and staged, so an interrupted install can't
+  corrupt the app
 
-### Also included
+**Also** — an optional card view, full touch control, 25 languages, light and dark
+themes, a live network/space/battery header, and a configurable ROM folder.
+**Settings → Manage data** refreshes or clears cached metadata, cleans up the
+temporary downloads folder, and takes a collection sent over Wi-Fi from the
+[App Utility](#app-utility).
 
-- **Card view** (optional)
-  - Toggle **Advanced settings → Card view** to browse consoles as a 4-wide
-    grid of cards (icon, name, repo/app counts) on the Browse tab and the
-    Installed root — file lists stay as tables
-  - D-pad/stick moves in all four directions; **A** opens, **X** pins,
-    **−** searches; tap/drag works too
+### Controls
 
-- **Touch support**
-  - Tap a tab to switch to it; tap a list row to select it, tap it again to
-    activate; drag up/down to scroll — the whole app works in handheld mode
-    without buttons
-
-- **25 languages & themes**
-  - Full UI translation (English, Español, Français, Deutsch, 日本語, 中文, and
-    20 more) from **Settings → Language** (if you speak a native language and can
-    improve, log an issue or drop a PR. Lang files here: https://github.com/digdat0/HaulNX/tree/main/romfs/lang
-  - Light and dark themes (**Settings → Theme**)
-
-- **Centralized ROM library**
-  - Downloads land in HaulNX's own ROM folder — `sdmc:/roms/<console>/` by
-    default. Point your emulators there and your games show up
-  - **Override the ROM folder** from **Settings → Advanced settings → ROM
-    Download Folder** if you want it elsewhere: an on-screen SD-card browser lets
-    you navigate to the folder and pick it (**X** to use the current folder,
-    **Y** to reset to the default)
-
-- **Status header**
-  - Live network indicator (Wi-Fi signal bars, full bars when docked on wired
-    LAN, red when offline), free SD space, battery level (+ while charging)
-  - Optional no-network warning at startup (Advanced toggle)
-
-- **Data management**
-  - **Settings → Manage data**: clean up the temporary downloads folder and the
-    metadata cache (entries tagged by console), singly or all at once
-  - **Refresh all metadata** in one go (with live progress) — useful before a
-    global search, which covers cached repos; per-repo hard refresh lives on
-    the repo edit screen
-  - **Import a collection over Wi-Fi** — the console shows an address; open it
-    in a browser on the same network (or use the App Utility's **Switch
-    transfer**) to send your `dl_sources.json` across, no SD swapping required —
-    with live transfer progress on both ends. The same screen hands the
-    console's current collection back, so you can fetch it, edit it and send it
-    on again
-  - Unresumable leftover `.part` files are cleaned up automatically at startup
+| Button | Browse / file lists | Queue | Installed |
+|---|---|---|---|
+| **A** | open · queue the marked set | — | open |
+| **Y** | mark file · add repo | actions menu | mark for delete |
+| **X** | view menu (filter, sort, select all) | — | rename |
+| **−** | global search | — | search · delete marked |
+| **D-pad ▶ / ◀** | pin · re-sort | jump to top/bottom | pin · re-sort |
+| **ZL / ZR** | page up/down | reorder an item | page up/down |
+| **L / R** | switch tab | switch tab | switch tab |
 
 ---
 
-## Screenshots - coming soon
+## Using it with your emulators
 
-Console list with repo's underneath, card view
+HaulNX doesn't play anything — it fills a library that your emulators read from.
+Every download lands in `sdmc:/roms/<console>/`:
 
-Browse Repo List per Console,
+```
+sd:/roms/snes/    sd:/roms/psx/    sd:/roms/gba/    sd:/roms/nds/  ...
+```
 
-Installed app console view, filesize and number of files, card view
+**Point each emulator at `sd:/roms` rather than moving downloads to suit one
+emulator** — that way a single library is shared by all of them.
 
-Installed apps list view
+The **[HaulNX wiki](https://github.com/digdat0/HaulNX/wiki)** has a setup page per
+emulator: install steps, where it expects ROMs, and how to line that up with
+HaulNX's folder names.
 
-Download Queue - Progress, Speed, File size, time remaining, card view
+| System(s) | Emulator | Setup |
+|---|---|---|
+| Nearly everything — NES through PS1, arcade, handhelds | **RetroArch** | [guide](https://github.com/digdat0/HaulNX/wiki/Emulator-RetroArch) — scan `sd:/roms` once and it builds a playlist per system |
+| Multi-system frontends | TICO, Lakka, SCCM-Retro | [TICO](https://github.com/digdat0/HaulNX/wiki/Emulator-TICO) · [Lakka](https://github.com/digdat0/HaulNX/wiki/Emulator-Lakka) · [SCCM-Retro](https://github.com/digdat0/HaulNX/wiki/Emulator-SCCM-Retro) |
+| PlayStation | DuckStation | [guide](https://github.com/digdat0/HaulNX/wiki/Emulator-DuckStation) |
+| PSP | PPSSPP | [guide](https://github.com/digdat0/HaulNX/wiki/Emulator-PPSSPP) |
+| GBA / GB / GBC | mGBA | [guide](https://github.com/digdat0/HaulNX/wiki/Emulator-mGBA) |
+| Nintendo DS | melonDS or DraStic | [melonDS](https://github.com/digdat0/HaulNX/wiki/Emulator-melonDS) · [DraStic](https://github.com/digdat0/HaulNX/wiki/Emulator-DraStic) |
+| Nintendo 3DS | Raikopon or Dekopon | [Raikopon](https://github.com/digdat0/HaulNX/wiki/Emulator-Raikopon) · [Dekopon](https://github.com/digdat0/HaulNX/wiki/Emulator-Dekopon) |
+| Dreamcast / NAOMI / Atomiswave | Flycast | [guide](https://github.com/digdat0/HaulNX/wiki/Emulator-Flycast) |
+| Saturn | Yaba Sanshiro | [guide](https://github.com/digdat0/HaulNX/wiki/Emulator-YabaSanshiro) |
+| PlayStation 2 | NetherSX2 | [guide](https://github.com/digdat0/HaulNX/wiki/Emulator-NetherSX2) — lighter titles only |
+| Wii U | Cemu | [guide](https://github.com/digdat0/HaulNX/wiki/Emulator-Cemu) — brand new, expect rough edges |
+| Arcade / Neo Geo | MAME, pFBN | [MAME](https://github.com/digdat0/HaulNX/wiki/Emulator-MAME) · [pFBN](https://github.com/digdat0/HaulNX/wiki/Emulator-pFBN) |
+| SNES / NES standalones | pSNES / pNES | [guide](https://github.com/digdat0/HaulNX/wiki/Emulator-pSNES-pNES) |
+| GameCube, Wii | — | [not realistically playable](https://github.com/digdat0/HaulNX/wiki/Emulator-Experimental) — the folders exist for organization |
 
-Download Queue - Progress, Speed, File size, time remaining, list view
+The wiki also covers the cross-cutting things:
+**[BIOS files](https://github.com/digdat0/HaulNX/wiki/Reference-BIOS-Files)** (which
+systems need firmware and the exact filenames),
+**[disc images](https://github.com/digdat0/HaulNX/wiki/Reference-Disc-Images)**
+(`.cue`/`.bin`/`.chd` and multi-disc `.m3u`),
+**[overclocking](https://github.com/digdat0/HaulNX/wiki/Reference-Overclocking)**,
+and **[troubleshooting](https://github.com/digdat0/HaulNX/wiki/Reference-Troubleshooting)**.
 
-Console list with repo's underneath, list view
+Two things trip up almost everyone:
 
-Installed games by console, list view
+- **RetroArch doesn't notice new files by itself** — rescan `sd:/roms` after a
+  HaulNX session or the playlists won't show what you just downloaded.
+- **NetherSX2, DraStic and Cemu won't launch from the homebrew menu normally.**
+  They need the full memory of a game override: hold **R** while opening an
+  installed game, then start the emulator from the menu that appears.
 
-Installed games, list view
+---
 
-Options card view
+## Screenshots
 
-Options list view
-
+Coming soon.
 
 ---
 
 ## Prerequisites
 
-A Nintendo Switch running custom firmware (Atmosphère) with the homebrew menu.
-HaulNX downloads into `sdmc:/roms/` — point whichever emulators you use at that
-folder. Per-emulator setup lives in the wiki.
+A Nintendo Switch running custom firmware (Atmosphère) with the homebrew menu,
+and an emulator or two — see
+**[using it with your emulators](#using-it-with-your-emulators)** above.
 
 ---
 
@@ -251,10 +232,19 @@ are sent only to archive.org hosts, and only over HTTPS.
 
 1. On **Browse**, open a console (**A**) and pick a repo to browse its files.
    (Repo metadata loads in the background with a brief "Loading…" indicator.)
-2. Highlight a file and press **A** to add it to the download queue — or press
-   **−** to queue the whole (filtered) list at once.
+2. Highlight a file and press **A** to queue it. For more than one, mark files
+   with **Y** and then press **A** — you'll get the totals (files, bytes, free
+   space) before anything starts. **X** opens the filter, sort, and *select all
+   shown*.
 3. Switch to the **Queue** tab (**L/R**) to watch progress. Completed downloads
    extract/move into `sdmc:/roms/<console>/` automatically.
+
+### 4. Point an emulator at the library
+
+Downloads are now in `sdmc:/roms/<console>/`. Set your emulator's ROM folder to
+`sd:/roms` (or the per-system subfolder it wants) and your games appear — see
+**[using it with your emulators](#using-it-with-your-emulators)** for the per-app
+steps.
 
 ---
 
@@ -263,10 +253,16 @@ are sent only to archive.org hosts, and only over HTTPS.
 A **console** is a folder under `sdmc:/roms/` (e.g. `snes`). Each console
 groups one or more **repos** — archive.org collections to download from.
 
-The consoles you can use come from a fixed **supported list** (`consoles`)
-so files always land in a recognized console folder. When you add a repo you pick
-its console from that list; you can't create arbitrary/unsupported folders in
+The consoles you can use come from a fixed **supported list** (`consoles`) of 53
+folders, so files always land somewhere your emulators will look. When you add a
+repo you pick its console from that list; you can't create arbitrary folders in
 the app. To change the supported set, edit `consoles` in `dl_sources.json`.
+
+The wiki has the
+**[full slug table](https://github.com/digdat0/HaulNX/wiki#haulnx-folder-names)** —
+every folder name with the system it holds. A few ship **hidden** (Wii U, for
+instance, since playing those depends on an unofficial emulator port); turn them
+on in **Settings → User interface settings → Manage consoles**.
 
 ---
 

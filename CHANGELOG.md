@@ -37,9 +37,10 @@ here before running a release.
 **Wii U**
 - Added **Nintendo Wii U** (`wiiu`) as a supported console, with its own icon.
   Existing installs pick it up automatically on update — nothing to re-import.
-- It ships **hidden** in **Settings → Manage data → Manage consoles**: playing
-  Wii U titles on a Switch depends on an unofficial emulator port, so it stays
-  opt-in rather than implying first-class support. Turn it on there to use it.
+- It ships **hidden** in **Settings → User interface settings → Manage
+  consoles**: playing Wii U titles on a Switch depends on an unofficial emulator
+  port, so it stays opt-in rather than implying first-class support. Turn it on
+  there to use it.
 
 **App Utility**
 - Bumped to **`appUtility-v1.0.2.html`**.
