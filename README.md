@@ -79,7 +79,7 @@ everything you download from then on just appears.
 
 **In-app self-update**
 - **Settings → Check for updates** pulls the newest release from GitHub in one tap
-- Or push a build **over Wi-Fi** from the [App Utility](#app-utility) — no USB
+- Or push a build **over Wi-Fi** from the [App Utility](#collections-config--the-app-utility) — no USB
   cable, and the same version as installed is accepted so you can test new builds
 - Either way the build is validated and staged, so an interrupted install can't
   corrupt the app
@@ -88,7 +88,7 @@ everything you download from then on just appears.
 themes, a live network/space/battery header, and a configurable ROM folder.
 **Settings → Manage data** refreshes or clears cached metadata, cleans up the
 temporary downloads folder, and takes a collection sent over Wi-Fi from the
-[App Utility](#app-utility).
+[App Utility](#collections-config--the-app-utility).
 
 ---
 
@@ -168,8 +168,8 @@ and an emulator or two — see
 3. Launch it from the homebrew menu.
 
 Each release also attaches **`appUtility-<version>.html`** — the companion
-[App Utility](#app-utility) you open in a browser on your computer to build
-collections and push files to the console.
+[App Utility](#collections-config--the-app-utility) you open in a browser on your
+computer to build collections and push files to the console.
 
 On first run it seeds an **empty** `dl_sources.json` containing only the list of
 supported console folders — **no collections or links are included**. Add your
@@ -199,17 +199,19 @@ The console now appears on the Browse tab. Open it with **A**, pick the repo, an
 you'll see its file list. Repeat **Y** to add more collections — a console can
 hold several.
 
-**Building more than a couple of these? Use the [App Utility](#app-utility)
-instead.** Typing item ids on the Switch's on-screen keyboard gets old fast. The
-utility is a single HTML file that ships with every release — open it in a
-browser on your PC, build the whole collection with a real keyboard, preview any
-item's file list before you commit to it, and send the result straight to the
-console over your network. No SD card swapping, and no re-typing. It can also
-pull the collection the console is currently running back into the editor, so
-you can fetch, edit and send it on again.
+**Building more than a couple of these? Use the
+[App Utility](#collections-config--the-app-utility) instead.** Typing item ids on
+the Switch's on-screen keyboard gets old fast. The utility is a single HTML file
+that ships with every release — open it in a browser on your PC, build the whole
+collection with a real keyboard, preview any item's file list before you commit to
+it, and send the result straight to the console over your network. No SD card
+swapping, and no re-typing. It can also pull the collection the console is
+currently running back into the editor, so you can fetch, edit and send it on
+again.
 
 (You can also edit `dl_sources.json` on the SD card by hand — see
-[Configuration](#configuration).)
+[Configuration](https://github.com/digdat0/HaulNX/wiki/Reference-Configuration) on
+the wiki.)
 
 ### 2. Add your archive.org keys (optional)
 
@@ -247,279 +249,67 @@ steps.
 
 ---
 
-## Console groups & supported consoles
+## Collections, config & the App Utility
 
-A **console** is a folder under `sdmc:/roms/` (e.g. `snes`). Each console
-groups one or more **repos** — archive.org collections to download from.
+You add collections in-app (**Y** on the Browse tab), but the easy way is the
+**App Utility** — a self-contained HTML file, attached to every release, that you
+open in a browser on your PC to build collections with a real keyboard and send
+them to the console over Wi-Fi.
 
-The consoles you can use come from a fixed **supported list** (`consoles`) of 53
-folders, so files always land somewhere your emulators will look. When you add a
-repo you pick its console from that list; you can't create arbitrary folders in
-the app. To change the supported set, edit `consoles` in `dl_sources.json`.
+The wiki has the details:
 
-The wiki has the
-**[full slug table](https://github.com/digdat0/HaulNX/wiki#haulnx-folder-names)** —
-every folder name with the system it holds. A few ship **hidden** (Wii U, for
-instance, since playing those depends on an unofficial emulator port); turn them
-on in **Settings → User interface settings → Manage consoles**.
+- **[App Utility](https://github.com/digdat0/HaulNX/wiki/Reference-App-Utility)** —
+  building collections on a PC, sending them across, and updating the app.
+- **[Configuration](https://github.com/digdat0/HaulNX/wiki/Reference-Configuration)** —
+  the `dl_sources.json` schema, `credentials.json`, the 53 supported console
+  folders, and every file HaulNX keeps on the card.
 
----
-
-## Configuration
-
-All config lives under `sdmc:/switch/HaulNX/`.
-
-### `dl_sources.json`
-
-Seeded empty on first run; you fill it in. Schema (the `a_id` values shown are
-placeholders — substitute the archive.org item ids you choose to use):
-
-```json
-{
-  "console_list_groups": [
-    {
-      "console": "snes",
-      "target": "snes",
-      "repos": [
-        {
-          "label": "My SNES set",
-          "a_id": "<your-archive.org-item-id>",
-          "URL": "",
-          "active": true
-        }
-      ]
-    }
-  ],
-  "consoles": ["nes", "snes", "n64", "genesis", "psx", "psp"]
-}
-```
-
-- `console` / `target` — display name and the ROM subfolder (usually the same).
-- `a_id` — the archive.org item id.
-- `URL` — download base; defaults to `https://archive.org/download/<a_id>` if omitted.
-- `active` — include this repo.
-- `consoles` — the master list of selectable consoles (legacy files using
-  `tico_consoles` are still read).
-
-### `credentials.json`
-
-```json
-{ "accessKey": "YOURKEY", "secret": "YOURSECRET" }
-```
-
-Optional archive.org S3 keys, sent as `authorization: LOW <access>:<secret>` for
-restricted items — only to archive.org hosts and only over HTTPS. Public
-collections download anonymously and need no keys.
-**Use your own keys — none are bundled.**
-
-### Files on the SD card
-
-| Path | Purpose |
-|------|---------|
-| `sdmc:/switch/HaulNX/dl_sources.json` | console groups + repos + supported list |
-| `sdmc:/switch/HaulNX/credentials.json` | archive.org S3 keys (optional) |
-| `sdmc:/switch/HaulNX/prefs.json` | settings (theme, language, pins, download limit, …) |
-| `sdmc:/switch/HaulNX/queue.json` | saved download queue |
-| `sdmc:/switch/HaulNX/cache/<id>.json` | cached metadata |
-| `sdmc:/switch/HaulNX/downloads/` | temporary `.part` files |
-| `sdmc:/switch/HaulNX/downloads.log` | download history (text) |
-| `sdmc:/switch/HaulNX/downloads.jsonl` | download history (structured, powers re-download from the log) |
-| `sdmc:/switch/HaulNX/lang/<code>.json` | optional language overrides (built-in translations ship in the app) |
-| `sdmc:/switch/HaulNX/debug.log` | network/extraction diagnostics (viewable + clearable in Settings → View logs) |
-| `sdmc:/roms/<console>/` | default ROM destination (or your custom override) |
-
-Every log has a size ceiling. Once one is reached the file is moved aside as
-`<name>.1` (replacing any previous `.1`) and a fresh one starts, so a long-lived
-install keeps at most two generations of each instead of growing forever.
+Restricted archive.org items need your own S3 keys
+(<https://archive.org/account/s3.php>); public collections need none. Keys live
+only on your SD card and are sent only to archive.org, only over HTTPS — **none
+are bundled.**
 
 ---
 
-## Updating (in-app)
+## Updating
 
-Open **Settings → Check for updates** and pick where the update comes from:
-
-- **From GitHub** — HaulNX checks the GitHub releases on a background thread —
-  the UI stays responsive and shows the attempt counter (`(1/3)`) while
-  transient errors are retried; press **B** to dismiss the check and keep
-  using the app. If a newer version is found, it downloads the new `.nro`
-  (with a live progress indicator).
-- **Over Wi-Fi (push a build)** — the console shows an address on your
-  network. Open it in a browser and drop a HaulNX `.nro` on the page, or push
-  one from the [App Utility](#app-utility) (**Send to Switch → App update**).
-  The same version as installed is accepted — this path exists so new builds
-  can be tested without plugging in a USB cable. A live progress line shows
-  the transfer as it arrives.
-
-Either way the received build is validated (real-NRO check), you confirm the
-install — the dialog shows the incoming build's version next to the installed
-one — and it's staged with a copy-then-rename (keeping a `.previous` backup),
-so an interrupted install can't corrupt the app. Finish with **Restart now**
-(the app relaunches itself straight into the new build) or **Later** (the
-Settings chip flips to *Restart to update* and the swap happens on the next
-launch).
-
----
-
-## App Utility
-
-Every release ships **`appUtility-<version>.html`** — a single self-contained
-HTML file (no install, no server, works offline) you open in any browser on
-your computer. It's the comfortable way to build and maintain collections, and
-it talks to the console directly:
-
-- **Edit collections** — build `dl_sources.json` visually: console groups,
-  repos, the supported-console list. Import an existing file (including the one
-  your console is running — fetch it with **Get from Switch**, or download it
-  from the import screen in a browser) or start fresh, then export.
-- **Quick test** — paste any archive.org item id or URL to preview its file
-  list before committing it to a collection.
-- **Switch transfer → Collection** — a round trip over the LAN while the
-  console's **Import collection** screen is open. **Get from Switch** pulls the
-  collection the console is running on into the editor; **Send** pushes it back,
-  and you confirm the import on the Switch. No SD card swapping.
-- **Switch transfer → App update (.nro)** — push a HaulNX build to the console
-  while **Settings → Check for updates → Over Wi-Fi** is open. The utility
-  validates the file is a real NRO before sending and shows send progress;
-  you confirm the install (and restart) on the Switch.
-- **Export credentials** — write your archive.org S3 keys to a
-  `credentials.json` for the SD card.
-
-Both devices must be on the same network; the console shows the address to
-enter. Nothing leaves your LAN and no third-party service is involved.
-
----
-
-## Translations
-
-HaulNX ships 25 languages. All translation files live in the repo as plain
-JSON — one file per language, keyed by English, in
-[`romfs/lang/`](romfs/lang/). These are bundled into the app and loaded at
-runtime; there is a single source of truth, so edit here.
-
-Spotted a wrong or awkward translation? Please
-[open an issue](https://github.com/digdat0/HaulNX/issues) naming the
-language, the key (or the on-screen text), and your suggested wording — or send
-a PR updating the file in `romfs/lang/`. For English (`en.json`) changes,
-`tools/gen_i18n.py` must be re-run afterwards (it regenerates the strings baked
-into the binary).
-
-You can also override any language locally without rebuilding: copy the file to
-`sdmc:/switch/HaulNX/lang/<code>.json` and edit it — the SD copy takes
-priority over the bundled one.
-
----
-
-## Archive extraction notes
-
-Most archives extract automatically. A known limitation: some **RAR3-compressed
-`.rar` files that use RAR's programmable filters cannot be decompressed** by the
-bundled library — for those, the raw `.rar` is saved into the console folder and
-you'll need to extract it on a PC. If a specific archive won't unpack, check
-the debug log (**Settings → View logs → View debug log**) for the exact reason.
-
----
-
-## Overwrite behaviour
-
-When a downloaded file lands in `sdmc:/roms/<console>/` and a file of the
-**same name already exists there, it is overwritten in place.** This is intended
-— it's how you re-download or refresh a file. There is **no prompt and no
-separate backup**: the previous file is replaced (a single file via a move, or,
-for archives, each extracted file as it's written). The `*` "installed" marker
-in a file list is informational only — it does **not** block re-downloading.
-
-It is never hidden, though:
-
-- **Logged for audit.** Every completed download is recorded in the download
-  history (`downloads.log`, viewable in Settings → View logs), and the
-  entry notes when it **`(overwrote existing)`** or `(overwrote N files)` for an
-  archive.
-- **Shown in the queue.** A finished item's result column shows a colour-coded
-  tag: **`(repl)` in orange** = an existing file was replaced (with a count, e.g.
-  `(repl 12)`, for multi-file archives); **`(new)` in green** = a brand-new file.
-  No prompt; it never interrupts the queue.
-
-If you want to keep an old copy, move or rename it before downloading the new
-one.
-
----
-
-## Networking
-
-devkitPro's libcurl uses the libnx **`ssl` system-service** backend, verifying
-against the console's own certificate store. This works on **real hardware**.
-Emulators that stub the `ssl` service (e.g. Ryujinx) will fail HTTPS regardless
-of the app — metadata browsing and downloads should be tested on hardware. Every
-request's result is logged to `debug.log`.
+**Settings → Check for updates** pulls the newest release from GitHub in one tap,
+or accepts a build pushed **over Wi-Fi** from the App Utility (no USB cable). The
+build is validated and staged with a backup, so an interrupted install can't
+corrupt the app; you get a **Restart now** option to relaunch straight into it.
+Full walkthrough on the
+[App Utility wiki page](https://github.com/digdat0/HaulNX/wiki/Reference-App-Utility#updating-the-app).
 
 ---
 
 ## Building from source
 
-HaulNX is a **graphical app** built on the
-[Plutonium](https://github.com/XorTroll/Plutonium) UI library (SDL2), with the
-**devkitPro** toolchain (devkitA64 + libnx). Plutonium is included as a git
-submodule and built automatically.
-
-### Prerequisites
-
-1. Install **devkitPro** and the `switch-dev` group — see the
-   [Getting Started guide](https://devkitpro.org/wiki/Getting_Started). Ensure
-   `DEVKITPRO` is set (on Windows use the **MSYS2** shell that ships with devkitPro).
-2. Install the portlibs the app links against (codec deps are pulled in
-   automatically):
-   ```sh
-   dkp-pacman -S switch-curl switch-libarchive switch-zlib \
-                 switch-sdl2 switch-sdl2_ttf switch-sdl2_image \
-                 switch-sdl2_gfx switch-sdl2_mixer
-   ```
-
-### Build
+Most people just want `HaulNX.nro` from the
+[latest release](https://github.com/digdat0/HaulNX/releases/latest). To compile it
+yourself you need the **devkitPro** toolchain (devkitA64 + libnx) and a handful of
+portlibs; Plutonium is a submodule and builds automatically:
 
 ```sh
 git clone --recursive https://github.com/digdat0/HaulNX
 cd HaulNX
-make            # builds the Plutonium lib (submodule), then HaulNX.nro
-make clean
+make            # builds the Plutonium submodule, then HaulNX.nro
 ```
 
-If you cloned without `--recursive`, run `git submodule update --init` first.
-On Windows, build inside the devkitPro MSYS2 shell:
+The prerequisites, the Windows/MSYS2 shell invocation, a note on why networking
+only works on real hardware, and a map of the source tree are on the
+**[Building from Source](https://github.com/digdat0/HaulNX/wiki/Building-from-Source)**
+wiki page.
 
-```sh
-/c/devkitPro/msys2/usr/bin/bash.exe -lc "cd /c/path/to/HaulNX && make"
-```
+---
 
-Output is **`HaulNX.nro`**. The version lives in `VERSION` (the single source
-of truth) and is baked into the build and `include/version.h` automatically. To
-publish a release: `sh release.sh` — it tags a GitHub release with that version,
-attaches the `.nro`, and uses the matching `CHANGELOG.md` section as the notes.
+## Contributing
 
-> Networking (metadata + downloads) only works on **real hardware** — the libnx
-> `ssl` backend isn't stubbed there. Emulators like Ryujinx will fail HTTPS.
-
-### Source layout
-
-| Path | Responsibility |
-|------|----------------|
-| `source/Main.cpp`, `source/MainApplication.cpp` | Plutonium GUI (screens, tabs, navigation, input) |
-| `include/MainApplication.hpp`, `include/TableList.hpp` | UI layout + custom table-list element |
-| `net.*` | libnx sockets + libcurl (downloads, HTTP GET, logging) |
-| `archive.c` / `iarchive.h` | archive.org metadata + download URLs |
-| `queue.*` | pipelined download + extract workers (resume, verify, persist, reorder) |
-| `extract.*` | libarchive zip/7z/rar/tar extraction |
-| `config.*` | `dl_sources.json` / credentials / prefs load + save |
-| `fsutil.*` | mkdir-p, move, recursive delete, free-space |
-| `update.*` | GitHub release check + in-app self-update |
-| `httpsrv.*` | tiny LAN HTTP receiver behind Import collection and update-over-Wi-Fi |
-| `md5.*` | MD5 for download verification |
-| `jsonutil.*`, `jsmn.*` | JSON parsing (vendored jsmn) |
-| `i18n.*`, `romfs/lang/`, `tools/gen_i18n.py` | translations — English strings are generated into the binary from `romfs/lang/en.json`; the other 24 languages load from romfs |
-| `tools/app-utility/` | the App Utility — self-contained HTML collection editor + LAN push tool, attached to every release |
-| `Plutonium/` | UI library (git submodule) |
-
-The backend (`net`/`archive`/`queue`/`extract`/`config`/`fsutil`/`md5`/`json`/
-`i18n`) is plain C; only the UI layer is Plutonium C++.
+Translations are the most useful contribution — HaulNX ships 25 languages, all
+plain JSON in [`romfs/lang/`](romfs/lang/). See
+**[Contributing](https://github.com/digdat0/HaulNX/wiki/Contributing)** for how to
+fix a string or add a language (and how to test one on the console without
+rebuilding). Bug reports and PRs go to
+[Issues](https://github.com/digdat0/HaulNX/issues).
 
 ---
 
