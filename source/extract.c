@@ -13,6 +13,12 @@
 /* Append a line to the shared debug log so extraction problems are diagnosable
  * on-device (e.g. an unsupported RAR compression method). */
 static void ex_log(const char *fmt, ...) {
+    /* Sampled, not per-line: a pathological archive can log per entry, and the
+     * stat is the expensive half on an SD card that is also being written to. */
+    static unsigned tick = 0;
+    if ((tick++ & 63u) == 0) {
+        fs_log_rotate(LOG_PATH, LOG_ROTATE_DEBUG);
+    }
     fs_mkdir_p(CONFIG_DIR);
     FILE *f = fopen(LOG_PATH, "a");
     if (!f) {
@@ -25,6 +31,11 @@ static void ex_log(const char *fmt, ...) {
     fputc('\n', f);
     fclose(f);
 }
+
+/* Room for the destination directory + '/' + a full-length sanitized entry
+ * path. Anything longer is skipped rather than truncated, so this only needs to
+ * be big enough that no realistic archive entry gets dropped. */
+#define EX_PATH_MAX 2048
 
 static bool ends_with_ci(const char *s, const char *suffix) {
     size_t ls = strlen(s), lf = strlen(suffix);
@@ -106,8 +117,9 @@ int extract_archive(const char *src, const char *dest_dir, extract_cb cb,
 
     int count = 0;
     int overwrites = 0;
+    int skipped = 0;        /* entries the filesystem wouldn't take — see below */
     bool disk_fail = false; /* couldn't write to SD (full?) — don't claim done */
-    char last_dir[1280] = {0}; /* cache: skip mkdir_p when dir repeats */
+    char last_dir[EX_PATH_MAX] = {0}; /* cache: skip mkdir_p when dir repeats */
     struct archive_entry *entry;
     for (;;) {
         int rc = archive_read_next_header(a, &entry);
@@ -130,12 +142,20 @@ int extract_archive(const char *src, const char *dest_dir, extract_cb cb,
         if (!sanitize_rel(name, rel, sizeof(rel))) {
             continue;
         }
-        char out[1280];
-        snprintf(out, sizeof(out), "%s/%s", dest_dir, rel);
+        char out[EX_PATH_MAX];
+        int on = snprintf(out, sizeof(out), "%s/%s", dest_dir, rel);
+        if (on < 0 || (size_t)on >= sizeof(out)) {
+            /* Too long to represent. Silently truncating would map two entries
+             * onto one path and have the second overwrite the first, so drop
+             * this one and keep going. */
+            ex_log("extract: path too long, skipped '%s'", rel);
+            skipped++;
+            continue;
+        }
         bool existed = fs_exists(out);
 
         /* Only call mkdir_p when the directory actually changes. */
-        char dir[1280];
+        char dir[EX_PATH_MAX];
         snprintf(dir, sizeof(dir), "%s", out);
         char *sl = strrchr(dir, '/');
         if (sl) {
@@ -148,9 +168,15 @@ int extract_archive(const char *src, const char *dest_dir, extract_cb cb,
 
         FILE *f = fopen(out, "wb");
         if (!f) {
-            ex_log("extract: cannot write %s", out);
-            disk_fail = true;
-            break;
+            /* One entry the filesystem won't accept: a name FAT rejects, a path
+             * too deep for fs_mkdir_p, a reserved name. That is this entry's
+             * problem, not the card's — skip it and carry on, because treating
+             * it as a disk failure threw away every remaining file in an
+             * otherwise fine archive over one awkward name. A real card failure
+             * still stops the run: it shows up as the short fwrite below. */
+            ex_log("extract: cannot write %s (skipped)", out);
+            skipped++;
+            continue;
         }
         /* 128KB write buffer: batches small fwrite calls into fewer SD card
          * writes, which is the single biggest extraction bottleneck. */
@@ -158,6 +184,16 @@ int extract_archive(const char *src, const char *dest_dir, extract_cb cb,
         if (wbuf) {
             setvbuf(f, wbuf, _IOFBF, 128 * 1024);
         }
+        /* For a sparse entry libarchive reports each block's offset straight
+         * from the archive, so it is attacker-influenceable. Trust it only as
+         * far as the entry's own declared size: FAT has no sparse files, so an
+         * out-of-range offset would materialize the whole hole and fill the
+         * card. Only a positive size bounds anything: -1 is "not declared"
+         * (streamed tar) and 0 would wrongly reject a format that reports the
+         * size only after the data, so both mean "no bound available". */
+        la_int64_t emax = archive_entry_size_is_set(entry)
+                              ? (la_int64_t)archive_entry_size(entry)
+                              : -1;
         const void *buff;
         size_t size;
         la_int64_t offset;
@@ -176,8 +212,23 @@ int extract_archive(const char *src, const char *dest_dir, extract_cb cb,
                 break;
             }
             if (size > 0) {
+                if (offset < 0 ||
+                    (emax > 0 && ((la_int64_t)size > emax ||
+                                  offset > emax - (la_int64_t)size))) {
+                    ex_log("extract: '%s' block outside declared size, dropped",
+                           rel);
+                    write_ok = false; /* bad archive, not a bad card */
+                    break;
+                }
                 if (offset != pos) {
-                    fseeko(f, (off_t)offset, SEEK_SET);
+                    /* An unchecked seek leaves the position where it was and
+                     * puts the block at the wrong place — a silently
+                     * mis-assembled file that still counts as extracted. */
+                    if (fseeko(f, (off_t)offset, SEEK_SET) != 0) {
+                        write_ok = false;
+                        disk_fail = true;
+                        break;
+                    }
                 }
                 if (fwrite(buff, 1, size, f) != size) {
                     write_ok = false;
@@ -195,7 +246,12 @@ int extract_archive(const char *src, const char *dest_dir, extract_cb cb,
                 break;
             }
         }
-        fclose(f);
+        /* 128KB of this entry can still be unwritten, so a full card shows up
+         * at fclose rather than at any fwrite above. */
+        if (fclose(f) != 0 && write_ok) {
+            write_ok = false;
+            disk_fail = true;
+        }
         free(wbuf);
         if (!write_ok) {
             remove(out);
@@ -217,8 +273,9 @@ int extract_archive(const char *src, const char *dest_dir, extract_cb cb,
     if (out_overwrites) {
         *out_overwrites = overwrites;
     }
-    ex_log("extract: %s -> %d file(s) (%d overwritten) into %s%s", src, count,
-           overwrites, dest_dir, disk_fail ? " [DISK WRITE FAILED]" : "");
+    ex_log("extract: %s -> %d file(s) (%d overwritten, %d skipped) into %s%s",
+           src, count, overwrites, skipped, dest_dir,
+           disk_fail ? " [DISK WRITE FAILED]" : "");
     archive_read_free(a);
     /* A disk write failure means the extraction is incomplete even if some
      * files landed: report failure so the caller keeps the archive instead of

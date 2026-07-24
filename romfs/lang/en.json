@@ -5,6 +5,7 @@
   "delete": "Delete",
   "deleted": "Deleted",
   "saved": "Saved",
+  "save_failed": "Could not save. Check free space on the SD card.",
   "added": "Added",
   "cleared": "Cleared",
   "renamed": "Renamed",
@@ -28,7 +29,7 @@
   "no_collections": "(no collections - press Y to add)",
   "no_repos": "(no repos - press Y to add)",
 
-  "sub_files": "A get  - search  Y filter  X sort  ◀▶ repo  L/R tabs  B back",
+  "sub_files": "A get  Y select  X view  - search  ◀▶ repo  L/R tabs  B back",
   "no_files_match": "(no files match)",
   "meta_failed": "(metadata fetch failed - B back)",
   "loading_meta": "Loading metadata ...",
@@ -168,7 +169,7 @@
 
   "continue": "Continue",
 
-  "controls_body": "Tabs: L / R  (Browse | Installed | Queue | Settings)\nNavigate: D-pad (hold to repeat)   ZL/ZR: page\n+: exit   B: back\nBrowse: A open  Y add  X edit/del  - search\nFiles: A get  - search  Y filter  X sort  ◀/▶: repo\nQueue: A cancel  X retry  ZL/ZR move  Y clear  - log",
+  "controls_body": "Tabs: L / R  (Browse | Installed | Queue | Settings)\nNavigate: D-pad (hold to repeat)   ZL/ZR: page\n+: exit   B: back\nBrowse: A open  Y add  X edit/del  - search\nFiles: A get/queue selection  Y select  X view (filter/sort)  - search  ◀/▶: repo\nQueue: A cancel  X retry  ZL/ZR move  Y clear  - log",
 
   "exit_confirm": "%d download(s) active. Exit anyway?",
 
@@ -308,5 +309,25 @@
   "chk_updates_startup": "Check for updates on startup: %s",
   "hint_name": "Give this repo a name",
   "hint_archive_id": "Archive.org ID",
-  "hint_download_url": "Download URL"
+  "hint_download_url": "Download URL",
+
+  "view": "View",
+  "filter": "Filter",
+  "sort": "Sort",
+  "select_all_shown": "Select all shown (%d)",
+  "clear_selection": "Clear selection",
+  "n_selected": "%d selected",
+  "queue_selected": "Queue selected",
+  "n_files": "%d files",
+  "free_space": "Free space",
+  "queue_pending": "Already queued",
+  "n_skipped_installed": "%d skipped - already installed",
+  "only_n_slots": "Queue has room for %d more",
+  "archives_expand": "Archives expand when unpacked, so the real total is higher.",
+  "queue_n": "Queue %d",
+  "queue_n_that_fit": "Queue the %d that fit",
+  "queue_n_anyway": "Queue all %d anyway",
+  "all_already_installed": "Everything selected is already installed",
+  "skip_installed": "Skip installed on bulk add: %s",
+  "space_hold": "Waiting for free space"
 }

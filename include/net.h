@@ -39,8 +39,21 @@ void net_conn_free(void *conn);
 char *http_get_on(void *conn, const char *url, long *http_code, size_t *out_len);
 
 /*
+ * True if a URL's host is archive.org or a *.archive.org subdomain. The one
+ * gate on where the archive.org S3 credential may travel, so it lives here
+ * rather than in a caller: http_download enforces it on the initial URL and on
+ * every redirect, and queue.c uses it to decide whether to attach the header at
+ * all. Parses the authority the way curl does — userinfo before the last '@' is
+ * discarded, and '\' terminates the authority — so a URL like
+ * "https://archive.org@evil.com/" is correctly seen as evil.com.
+ */
+bool net_is_archive_org_url(const char *url);
+
+/*
  * Stream an HTTP GET to a file on disk. Returns true on a 2xx download.
- * Set extra_header (e.g. "authorization: LOW key:secret") or NULL.
+ * Set extra_header (e.g. "authorization: LOW key:secret") or NULL. A header is
+ * only ever sent to archive.org over HTTPS: the initial URL is re-checked here,
+ * and any redirect that would carry it elsewhere aborts the transfer.
  * If resume_from > 0, the file is opened for append and a Range request is made
  * to continue from that byte offset (the progress callback's now/total include
  * the offset). A 416 reply with resume_from > 0 is treated as success (the file

@@ -6,6 +6,11 @@
 *.lst
 *.map
 
+# The wiki pages live in their own repo (HaulNX.wiki.git), which is what GitHub
+# serves. Keeping a working copy here is convenient; committing it into this
+# repo would fork the same pages into two histories.
+/wiki/
+
 # local scratch (icon work, backups)
 /icon_prev.jpg
 /icon_full_src.jpg

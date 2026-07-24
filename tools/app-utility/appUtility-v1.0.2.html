@@ -167,7 +167,7 @@
     style="font-size:16px; padding:4px 8px;">⚙️</button>
   <button id="btnTheme" class="ghost" title="Toggle theme" style="font-size:16px; padding:4px 8px;">☀️</button>
   <button id="btnImport">Import JSON…</button>
-  <button id="btnSend" title="Send straight to a Switch running HaulNX">Send to Switch…</button>
+  <button id="btnSend" title="Send to, or fetch from, a Switch running HaulNX">Switch transfer…</button>
   <button id="btnExport" class="primary">Export dl_sources.json</button>
 </header>
 
@@ -175,7 +175,7 @@
   <div class="sheet" style="max-width:520px">
     <div class="sheet-hd">
       <div class="hd-row">
-        <b>Send to Switch</b>
+        <b>Switch transfer</b>
         <span class="muted">·&nbsp; both devices on the same network</span>
       </div>
     </div>
@@ -195,10 +195,12 @@
       <div class="hint">Shown on the Switch as <code>IP:PORT/CODE</code>. The IP and
         port are remembered; the code changes each time you open the receive screen.</div>
       <div id="sendPaneCol">
-        <div class="hint">Sends the collection you're editing here. On the Switch,
-          open <b>Settings &rsaquo; Manage data &rsaquo; Import collection</b>. It
-          shows the address to type above. Leave that screen open — it stops
-          listening once a file arrives, and you confirm the import there.</div>
+        <div class="hint">Both directions use the same screen on the Switch: open
+          <b>Settings &rsaquo; Manage data &rsaquo; Import collection</b>, which
+          shows the address to type above. <b>Get</b> loads the collection the
+          console is running on into this editor; <b>Send</b> pushes what you're
+          editing back to it. Leave that screen open — it stops listening once a
+          file arrives, and you confirm the import there.</div>
       </div>
       <div id="sendPaneNro" style="display:none">
         <div class="row" style="margin-top:10px">
@@ -214,6 +216,7 @@
     </div>
     <div class="sheet-ft">
       <div class="sp" style="flex:1"></div>
+      <button id="sendGet" class="sm" title="Load the collection this console is running on">Get from Switch</button>
       <button id="sendGo" class="primary">Send</button>
       <button id="sendClose" class="sm">Close</button>
     </div>
@@ -412,7 +415,7 @@ const CONSOLE_NAMES = {
   "snes":"Super Nintendo Entertainment System", "n64":"Nintendo 64",
   "gb":"Game Boy", "gbc":"Game Boy Color", "gba":"Game Boy Advance",
   "nds":"Nintendo DS", "3ds":"Nintendo 3DS", "gc":"Nintendo GameCube",
-  "wii":"Nintendo Wii", "virtual-boy":"Nintendo Virtual Boy",
+  "wii":"Nintendo Wii", "wiiu":"Nintendo Wii U", "virtual-boy":"Nintendo Virtual Boy",
   "pokemon-mini":"Pokemon Mini", "game-and-watch":"Nintendo Game & Watch",
   // Sega
   "sg-1000":"Sega SG-1000", "master-system":"Sega Master System",
@@ -765,11 +768,13 @@ $("#btnExport").onclick=async()=>{
   }
   downloadText("dl_sources.json", txt);
 };
-// ---- send to a Switch on the LAN -----------------------------------------
+// ---- transfer to/from a Switch on the LAN --------------------------------
 // The app serves a tiny HTTP receiver while its Import collection screen is open.
 // Post the same document Export writes, as multipart/form-data: it is the exact
 // request the app's own upload page makes, and it is a CORS-simple request, so no
-// preflight is needed (the receiver answers OPTIONS without allow-headers).
+// preflight is needed (the receiver answers OPTIONS without allow-headers). The
+// same receiver serves the console's live dl_sources.json back, which is the Get
+// direction below.
 $("#btnSend").onclick=()=>{
   $("#sendMsg").textContent="";
   const savedIp=localStorage.getItem("switchIp")||"";
@@ -807,28 +812,74 @@ function sendTab(nro){
   $("#sendTabNro").classList.toggle("act",nro);
   $("#sendPaneCol").style.display = nro?"none":"";
   $("#sendPaneNro").style.display = nro?"":"none";
+  // Only a collection can be fetched back: the console has no .nro to hand out.
+  $("#sendGet").style.display = nro?"none":"";
   $("#sendMsg").textContent="";
 }
 $("#sendTabCol").onclick=()=>sendTab(false);
 $("#sendTabNro").onclick=()=>sendTab(true);
 
-$("#sendGo").onclick=async()=>{
-  // Three separate fields now, matching the "IP : PORT / CODE" the Switch shows.
-  // The code is a one-time value the receiver requires in the URL path.
+// The three fields, read back as the one URL both directions hang off:
+// "IP : PORT / CODE", where the code is the one-time value the receiver
+// requires in the path. Null (having already said why) if it isn't usable.
+function switchAddr(){
   const host=$("#sendIp").value.trim().replace(/^https?:\/\//,"").replace(/[:\/].*$/,"");
   const port=($("#sendPort").value.trim()||"8080").replace(/\D/g,"")||"8080";
   const code=$("#sendCode").value.trim().replace(/[^0-9a-fA-F]/g,"").toLowerCase();
   if(!/^\d{1,3}(\.\d{1,3}){3}$/.test(host)){
     $("#sendMsg").innerHTML='<div class="warn">Enter the Switch\'s IP, e.g. 192.168.4.96.</div>';
-    return;
+    return null;
   }
   if(!code){
     $("#sendMsg").innerHTML='<div class="warn">Enter the code shown after the / on the Switch, e.g. 3d2f66.</div>';
-    return;
+    return null;
   }
-  const path="/"+code;
   localStorage.setItem("switchIp",host);
   localStorage.setItem("switchPort",port);
+  return "http://"+host+":"+port+"/"+code;
+}
+
+// Pull: the receiver serves the console's live dl_sources.json under the same
+// one-time path, so this is Send in reverse — get it, edit it here, send it
+// back. Plain GET, no author-set headers, so it stays preflight-free too.
+$("#sendGet").onclick=async()=>{
+  $("#sendMsg").textContent="";
+  const base=switchAddr();
+  if(!base) return;
+  // Loading replaces the whole document, so don't discard real work silently.
+  if((state.groups.length || state.tico.length) &&
+     !confirm("Replace what you're editing here with the collection currently on the Switch?")) return;
+  $("#sendMsg").textContent="Fetching…";
+  let res;
+  try{
+    res=await fetch(base+"/dl_sources.json");
+  }catch(e){
+    $("#sendMsg").innerHTML='<div class="warn">Couldn\'t reach the Switch. Check the IP, '+
+      'and that <b>Import collection</b> is open and still waiting.</div>';
+    return;
+  }
+  if(!res.ok){
+    // It answered, so the address reached the console and only the file was
+    // withheld: 404 is a wrong/stale code, or the app-update screen being open
+    // instead (that one deliberately exports nothing).
+    $("#sendMsg").innerHTML='<div class="warn">The Switch wouldn\'t hand it over (HTTP '+res.status+
+      (res.status===404?" — check the code, and that the open screen is <b>Import collection</b> "+
+                        "rather than the app-update one":"")+").</div>";
+    return;
+  }
+  let doc;
+  try{ doc=JSON.parse(await res.text()); }
+  catch(e){ $("#sendMsg").innerHTML='<div class="warn">That wasn\'t a collection file.</div>'; return; }
+  loadModel(doc);
+  showWarnings();
+  // Close, because the point of fetching is to edit what came back.
+  $("#sendModal").classList.remove("on");
+  flash($("#btnSend"),"Loaded ✓");
+};
+
+$("#sendGo").onclick=async()=>{
+  const base=switchAddr();
+  if(!base) return;
 
   const nroTab = $("#sendTabNro").classList.contains("act");
   let body, what;
@@ -864,7 +915,7 @@ $("#sendGo").onclick=async()=>{
     // connect timeout, and a reachable one answers in milliseconds on a LAN.
     const res=await new Promise((resolve,reject)=>{
       const x=new XMLHttpRequest();
-      x.open("POST","http://"+host+":"+port+path);
+      x.open("POST",base);
       x.upload.onprogress=e=>{ if(e.lengthComputable)
         $("#sendMsg").textContent="Sending… "+Math.round(e.loaded*100/e.total)+"%"; };
       x.onload=()=>resolve({ok:x.status>=200&&x.status<400,status:x.status});

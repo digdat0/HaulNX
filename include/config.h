@@ -29,6 +29,9 @@ extern "C" {
 #define SOURCES_TMP_PATH "sdmc:/switch/HaulNX/dl_sources.tmp.json"
 #define CREDS_PATH    "sdmc:/switch/HaulNX/credentials.json"
 #define PREFS_PATH    "sdmc:/switch/HaulNX/prefs.json"
+/* Staging files, same reasoning as SOURCES_TMP_PATH; never read back. */
+#define CREDS_TMP_PATH "sdmc:/switch/HaulNX/credentials.tmp.json"
+#define PREFS_TMP_PATH "sdmc:/switch/HaulNX/prefs.tmp.json"
 #define LANG_DIR      "sdmc:/switch/HaulNX/lang"
 #define CACHE_DIR     "sdmc:/switch/HaulNX/cache"
 #define LOG_PATH      "sdmc:/switch/HaulNX/debug.log"
@@ -114,6 +117,11 @@ typedef struct {
     bool filter_exts;
     FilterExt exclude_exts[MAX_FILTER_EXTS];
     int exclude_ext_count;
+    /* Bulk add only: drop files already present in the console's folder from a
+     * marked selection instead of re-downloading them (default true). A single
+     * deliberate A press is never filtered by this — asking for one file and
+     * being silently refused is worse than a duplicate. */
+    bool skip_installed;
 } Prefs;
 
 /* Load dl_sources.json; seeds from romfs:/dl_sources.json on first run if the

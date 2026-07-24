@@ -41,6 +41,9 @@ static volatile int g_active_dl = 0;
 #define RATE_FLOOR_BPS 4096
 static Thread g_ex_thread;
 static volatile bool g_run = false;
+/* Set while a worker has declined to start an item because the card is nearly
+ * full. The item stays queued — the hold clears by itself once space appears. */
+static volatile bool g_space_hold = false;
 static const char *g_roms_root = "sdmc:/roms"; /* overwritten by queue_init() */
 
 /* Cores this process may use OTHER than core 0 (where the UI/render thread
@@ -225,6 +228,13 @@ static void log_download(const QueueItem *it, const char *status) {
         strftime(ts, sizeof(ts), "%Y-%m-%d %H:%M", tm);
     }
 
+    /* Both history files are things the user reads (and re-downloads from), so
+     * they get a generous ceiling before the oldest generation is dropped —
+     * but a ceiling all the same, since nothing else ever trims them. One line
+     * per completed download makes this cheap to check every time. */
+    fs_log_rotate(DLLOG_PATH, LOG_ROTATE_HISTORY);
+    fs_log_rotate(DLLOG_JSON, LOG_ROTATE_HISTORY);
+
     /* Human-readable text log. */
     FILE *f = fopen(DLLOG_PATH, "a");
     if (f) {
@@ -293,40 +303,21 @@ static bool safe_rel(const char *in, char *out, size_t out_sz) {
     return o > 0;
 }
 
-/* True if a URL's host is archive.org or a *.archive.org subdomain. Used to
- * avoid sending archive.org S3 credentials to any other host. */
-static bool is_archive_org_url(const char *url) {
-    const char *p = strstr(url, "://");
-    if (!p) {
-        return false;
-    }
-    p += 3;
-    char host[256];
-    size_t i = 0;
-    for (; p[i] && p[i] != '/' && p[i] != ':' && i + 1 < sizeof(host); i++) {
-        host[i] = p[i];
-    }
-    host[i] = '\0';
-    size_t hl = strlen(host);
-    static const char dom[] = "archive.org";
-    size_t dl = sizeof(dom) - 1;
-    if (hl == dl && strcasecmp(host, dom) == 0) {
-        return true;
-    }
-    if (hl > dl && host[hl - dl - 1] == '.' &&
-        strcasecmp(host + hl - dl, dom) == 0) {
-        return true;
-    }
-    return false;
-}
-
 /* ---- persistence ----------------------------------------------------- */
 
 /* Write the still-pending items to disk so the queue survives an app restart.
  * Assumes g_mtx is held. Credentials (it->auth) are deliberately NOT persisted;
  * they're re-derived from credentials.json on load so the S3 secret lives in
  * only one place. */
+/* Batch depth and "a save was skipped" flag, both guarded by g_mtx. */
+static int g_batch_depth = 0;
+static bool g_batch_dirty = false;
+
 static void save_locked(void) {
+    if (g_batch_depth > 0) {
+        g_batch_dirty = true; /* one write when the batch closes */
+        return;
+    }
     fs_mkdir_p(CONFIG_DIR);
     FILE *f = fopen(QUEUE_STATE_PATH, "wb");
     if (!f) {
@@ -365,6 +356,36 @@ static void save_locked(void) {
     }
     fputs("]}", f);
     fclose(f);
+}
+
+/* Bytes of this item already staged in its .part file (0 if there is none).
+ * Same naming rules as process_item, so the two always agree on the path. */
+static uint64_t part_size(const QueueItem *it) {
+    char safe[600], safet[80];
+    if (!safe_rel(it->name, safe, sizeof(safe)) ||
+        !safe_rel(it->target, safet, sizeof(safet))) {
+        return 0;
+    }
+    char tmp[1200];
+    snprintf(tmp, sizeof(tmp), "%s/%s_%s.part", DL_TMP_DIR, safet, safe);
+    struct stat st;
+    if (stat(tmp, &st) != 0 || st.st_size <= 0) {
+        return 0;
+    }
+    return (uint64_t)st.st_size;
+}
+
+/* What this item still has to download. Unknown size (0) reports 0 — callers
+ * treat the total as a lower bound. */
+static uint64_t item_remaining(const QueueItem *it) {
+    if (it->size == 0) {
+        return 0;
+    }
+    uint64_t have = it->now;
+    if (have == 0) {
+        have = part_size(it);
+    }
+    return it->size > have ? it->size - have : 0;
 }
 
 /* True if this item's .part is on disk and complete (matches the expected
@@ -446,8 +467,11 @@ static void queue_load(void) {
                           it->target, sizeof(it->target));
                 json_copy(body, tok, json_obj_get(body, tok, child, "md5"),
                           it->md5, sizeof(it->md5));
-                it->size =
-                    json_u64(body, tok, json_obj_get(body, tok, child, "size"));
+                /* queue.json is ours, but the size in it originally came off the
+                 * network — a restored queue must not reintroduce a value the
+                 * space guard can't handle. */
+                it->size = json_u64_size(body, tok,
+                                         json_obj_get(body, tok, child, "size"));
                 it->is_archive = json_bool(
                     body, tok, json_obj_get(body, tok, child, "is_archive"));
                 it->seq = (uint32_t)json_u64(
@@ -550,7 +574,7 @@ static void process_item(QueueItem *it) {
      * when the server demands it — never leaked, never wasted on public files. */
     const char *cred_auth =
         (it->auth[0] && strncasecmp(it->url, "https://", 8) == 0 &&
-         is_archive_org_url(it->url))
+         net_is_archive_org_url(it->url))
             ? it->auth
             : NULL;
     const char *auth = NULL; /* unauthenticated first, like a browser */
@@ -689,11 +713,16 @@ static void process_item(QueueItem *it) {
         bool md5ok = md5_file(tmp, got, &it->cancel);
         boost_release();
         if (!md5ok) {
-            remove(tmp);
             if (it->cancel) {
+                remove(tmp);
                 it->status = Q_CANCELLED;
                 log_download(it, "cancelled");
             } else {
+                /* We couldn't read the file back to hash it — an SD hiccup,
+                 * not a verdict on the bytes, which already passed the size
+                 * check above. Keep the .part: a retry re-verifies in seconds
+                 * (the resumed transfer 416s immediately) instead of pulling
+                 * gigabytes down again. Only a real mismatch below deletes. */
                 set_fail(it, "md5 error");
             }
             return;
@@ -797,34 +826,90 @@ static void dl_worker(void *arg) {
         mutexLock(&g_mtx);
         /* Respect the (live) concurrent-download limit: only pick new work
          * while fewer than g_max_dl items are being downloaded/verified. */
-        int active = 0;
+        int active = 0, blocked = 0;
         for (int i = 0; i < QUEUE_MAX; i++) {
             QStatus s = g_items[i].status;
             if (s == Q_DOWNLOADING || s == Q_VERIFYING) {
                 active++;
+            } else if ((s == Q_QUEUED || s == Q_PAUSED) &&
+                       g_items[i].no_space) {
+                blocked++;
             }
         }
         if (online && active < g_max_dl) {
             for (int i = 0; i < QUEUE_MAX; i++) {
                 QStatus s = g_items[i].status;
-                if ((s == Q_QUEUED || s == Q_PAUSED) && g_items[i].seq < best) {
+                /* Items parked for want of space are skipped, not blocking:
+                 * one 40 GB file at the head of the queue must not stop the
+                 * 200 small ones behind it. They're retried below. */
+                if ((s == Q_QUEUED || s == Q_PAUSED) && !g_items[i].no_space &&
+                    g_items[i].seq < best) {
                     best = g_items[i].seq;
                     pick = i;
                 }
             }
         }
+        QStatus prev = Q_QUEUED;
         if (pick >= 0) {
+            prev = g_items[pick].status;
             g_items[pick].pause = false;
             g_items[pick].status = Q_DOWNLOADING;
         }
         mutexUnlock(&g_mtx);
 
         if (pick < 0) {
-            svcSleepThread(150000000ULL); /* 150 ms idle */
+            if (blocked > 0) {
+                /* Everything left is waiting on space. Pause, then clear the
+                 * flags so the next pass re-measures — a finished download or
+                 * a deletion may have freed room. */
+                g_space_hold = true;
+                svcSleepThread(3000000000ULL);
+                mutexLock(&g_mtx);
+                for (int i = 0; i < QUEUE_MAX; i++) {
+                    g_items[i].no_space = false;
+                }
+                mutexUnlock(&g_mtx);
+            } else {
+                g_space_hold = false;
+                svcSleepThread(150000000ULL); /* 150 ms idle */
+            }
             continue;
         }
+        /* Don't start a download the card can't hold. Failing item after item
+         * as the disk fills would burn through a big queue in seconds and leave
+         * the user a screen of errors; instead park this one and move on. The
+         * stat/statvfs happen outside the mutex — they touch the SD card.
+         * Concurrent downloads each re-check as free space actually shrinks,
+         * so the reserve is the only headroom that has to be guessed. */
+        uint64_t need = item_remaining(&g_items[pick]);
+        uint64_t freeb = fs_free_bytes("sdmc:/");
+        /* Subtraction, not addition: `need` comes from the size declared in
+         * dl_sources.json, which arrives over the LAN receiver and is not ours
+         * to trust. A declared size within QUEUE_SPACE_RESERVE of UINT64_MAX
+         * made `need + QUEUE_SPACE_RESERVE` wrap to something tiny, the test
+         * read as "plenty of room", and the guard let the download start. */
+        if (need > 0 && freeb != UINT64_MAX &&
+            (freeb < QUEUE_SPACE_RESERVE ||
+             freeb - QUEUE_SPACE_RESERVE < need)) {
+            mutexLock(&g_mtx);
+            g_items[pick].no_space = true;
+            /* Only un-claim it if we still own it: a cancel that landed while
+             * we were statting sets .cancel, and other states aren't ours. */
+            if (g_items[pick].status == Q_DOWNLOADING) {
+                g_items[pick].status = prev; /* still waiting, not failed */
+            }
+            mutexUnlock(&g_mtx);
+            g_space_hold = true;
+            continue; /* try the next candidate immediately */
+        }
+        g_space_hold = false;
         process_item(&g_items[pick]);
         mutexLock(&g_mtx);
+        /* This download either consumed or released space, so anything parked
+         * deserves a fresh look. */
+        for (int i = 0; i < QUEUE_MAX; i++) {
+            g_items[i].no_space = false;
+        }
         save_locked();
         mutexUnlock(&g_mtx);
     }
@@ -1013,7 +1098,9 @@ bool queue_add(const char *url, const char *name, const char *target,
     snprintf(it->target, sizeof(it->target), "%s", target);
     snprintf(it->auth, sizeof(it->auth), "%s", auth ? auth : "");
     snprintf(it->md5, sizeof(it->md5), "%s", md5 ? md5 : "");
-    it->size = size;
+    /* Backstop: every download enters here, whatever route the caller took to
+     * find a size, so the space guard's arithmetic is bounded at one place. */
+    it->size = size > JSON_SIZE_MAX ? JSON_SIZE_MAX : size;
     it->is_archive = is_archive;
     it->seq = g_seq++;
     it->status = Q_QUEUED;
@@ -1021,6 +1108,57 @@ bool queue_add(const char *url, const char *name, const char *target,
     mutexUnlock(&g_mtx);
     return true;
 }
+
+void queue_batch_begin(void) {
+    mutexLock(&g_mtx);
+    g_batch_depth++;
+    mutexUnlock(&g_mtx);
+}
+
+void queue_batch_end(void) {
+    mutexLock(&g_mtx);
+    if (g_batch_depth > 0 && --g_batch_depth == 0 && g_batch_dirty) {
+        g_batch_dirty = false;
+        save_locked(); /* depth is 0 again, so this really writes */
+    }
+    mutexUnlock(&g_mtx);
+}
+
+int queue_free_slots(void) {
+    int n = 0;
+    mutexLock(&g_mtx);
+    for (int i = 0; i < QUEUE_MAX; i++) {
+        if (g_items[i].status == Q_FREE) {
+            n++;
+        }
+    }
+    mutexUnlock(&g_mtx);
+    return n;
+}
+
+uint64_t queue_pending_bytes(void) {
+    /* Deliberately memory-only: the UI calls this while composing a dialog, and
+     * statting up to QUEUE_MAX .part files would hitch the render thread. An
+     * item that hasn't started yet counts its full size even when a resumable
+     * .part exists, so the total can overshoot — the safe direction for a
+     * "will this fit?" question. The workers do the exact check per item. */
+    uint64_t total = 0;
+    mutexLock(&g_mtx);
+    for (int i = 0; i < QUEUE_MAX; i++) {
+        QStatus s = g_items[i].status;
+        if (s == Q_FREE || s == Q_DONE || s == Q_SAVED || s == Q_FAILED ||
+            s == Q_CANCELLED) {
+            continue; /* finished or failed: no longer needs space */
+        }
+        if (g_items[i].size > g_items[i].now) {
+            total += g_items[i].size - g_items[i].now;
+        }
+    }
+    mutexUnlock(&g_mtx);
+    return total;
+}
+
+bool queue_space_hold(void) { return g_space_hold; }
 
 static int cmp_view(const void *a, const void *b) {
     const QueueView *x = (const QueueView *)a;
@@ -1325,11 +1463,19 @@ int queue_cancel_by_part(const char *partname, bool do_cancel) {
         if (s == Q_FREE || s == Q_DONE || s == Q_SAVED ||
             s == Q_FAILED || s == Q_CANCELLED)
             continue;
+        /* Rebuild the .part name exactly as process_item does — BOTH halves
+         * sanitized. Using the raw target here made the two disagree for any
+         * target safe_rel rewrites (a ':' becomes '_', leading slashes go), so
+         * the caller saw an orphan, skipped the "still queued" warning, and
+         * deleted the file out from under a running download. */
         char safe[600];
         if (!safe_rel(g_items[i].name, safe, sizeof(safe)))
             continue;
+        char safet[80];
+        if (!safe_rel(g_items[i].target, safet, sizeof(safet)))
+            continue;
         char expect[700];
-        snprintf(expect, sizeof(expect), "%s_%s.part", g_items[i].target, safe);
+        snprintf(expect, sizeof(expect), "%s_%s.part", safet, safe);
         if (strcasecmp(expect, partname) == 0) {
             hits++;
             if (do_cancel) {

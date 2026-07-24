@@ -13,6 +13,7 @@ enum {
     S_DELETE,
     S_DELETED,
     S_SAVED,
+    S_SAVE_FAILED,
     S_ADDED,
     S_CLEARED,
     S_RENAMED,
@@ -379,6 +380,27 @@ enum {
     S_HINT_NAME,
     S_HINT_ARCHIVE_ID,
     S_HINT_DOWNLOAD_URL,
+
+    /* ---- Browse multi-select + bulk enqueue ---- */
+    S_VIEW,                  /* X menu title in the file list */
+    S_FILTER,                /* menu entry: set the name filter */
+    S_SORT,                  /* menu entry: open the sort picker */
+    S_SELECT_ALL_SHOWN,      /* "Select all shown (%d)" */
+    S_CLEAR_SELECTION,
+    S_N_SELECTED,            /* "%d selected" — info line under the list */
+    S_QUEUE_SELECTED,        /* confirm-dialog title */
+    S_N_FILES,               /* "%d files" — first line of the summary */
+    S_FREE_SPACE,
+    S_QUEUE_PENDING,         /* bytes the queue still owes before this batch */
+    S_N_SKIPPED_INSTALLED,   /* "%d skipped — already installed" */
+    S_ONLY_N_SLOTS,          /* "Queue has room for %d more" */
+    S_ARCHIVES_EXPAND,       /* caveat: extracted archives use more than this */
+    S_QUEUE_N,               /* "Queue %d" */
+    S_QUEUE_N_THAT_FIT,      /* "Queue the %d that fit" */
+    S_QUEUE_N_ANYWAY,        /* "Queue all %d anyway" */
+    S_ALL_ALREADY_INSTALLED,
+    S_SKIP_INSTALLED,        /* advanced toggle */
+    S_SPACE_HOLD,            /* queue status: waiting for space, nothing failed */
 
     S__COUNT
 };

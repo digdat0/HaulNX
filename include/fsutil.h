@@ -25,12 +25,31 @@ bool fs_ensure_parent(const char *file_path);
 /* Move/rename a file, falling back to copy+unlink across mount points. */
 bool fs_move(const char *src, const char *dst);
 
+/* Copy src over dst, removing a partial dst if anything goes wrong. The caller
+ * ensures dst's parent exists (fs_move does this before calling). Reentrant: the
+ * transfer buffer is heap, so two threads may copy at once. */
+bool fs_copy_file(const char *src, const char *dst);
+
 /* true if path exists. */
 bool fs_exists(const char *path);
 
 /* Recursively delete a file or directory (rm -rf). Returns true if the path is
  * gone afterwards. */
 bool fs_rm_rf(const char *path);
+
+/* Keep an append-only log from growing without bound. Once `path` is larger
+ * than max_bytes it is moved aside as "<path>.1" (replacing any previous one)
+ * and the live file starts empty, so at most two generations are ever on the
+ * card. Returns true if a rotation happened. Costs one stat, so a per-request
+ * logger should sample rather than call it on every line. */
+bool fs_log_rotate(const char *path, uint64_t max_bytes);
+
+/* Size ceilings for the app's logs, applied by their writers. Diagnostics churn
+ * fast and are disposable; the download history is something the user reads (and
+ * re-downloads from), so it gets a lot more room before the oldest is dropped. */
+#define LOG_ROTATE_DEBUG   (1024ull * 1024)      /* debug.log     */
+#define LOG_ROTATE_XFER    (256ull * 1024)       /* transfers.log */
+#define LOG_ROTATE_HISTORY (4ull * 1024 * 1024)  /* downloads.log / .jsonl */
 
 #ifdef __cplusplus
 }

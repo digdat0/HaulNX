@@ -28,6 +28,13 @@
 #define SEND_TIMEOUT_MS 1000
 /* Watchdog for a client that connects and then goes quiet mid-request. */
 #define CLIENT_IDLE_NS  5000000000ULL /* ~5s without a byte drops the client */
+/* The idle watchdog resets on every byte, so it alone doesn't bound a peer that
+ * dribbles one byte every few seconds — that peer holds the single connection
+ * slot indefinitely and the real upload can never get in. A request head is a
+ * few hundred bytes off the LAN, so give the whole of phase 1 a hard ceiling
+ * regardless of progress. The body phase keeps only the idle watchdog: a 16 MB
+ * upload legitimately takes a while. */
+#define HEAD_DEADLINE_NS 10000000000ULL /* ~10s to finish sending a request head */
 
 /* The app badge, served to the page from romfs at GET /logo.png. The console is
  * already serving the page, so it may as well serve this rather than carry a
@@ -213,6 +220,15 @@ static bool send_all(int fd, const char *p, size_t n) {
     return true;
 }
 
+/* snprintf reports the length it WOULD have written, so its return can exceed
+ * the buffer. Handing that straight to send_all would stream whatever follows
+ * the buffer on the stack to the client — so every response head is checked
+ * before it goes out. No caller can truncate today (each field is a literal),
+ * which is exactly why this needs to be enforced rather than assumed. */
+static bool head_ok(int n, size_t cap) {
+    return n > 0 && (size_t)n < cap;
+}
+
 /* Send a complete response. `body` may be NULL for a bodiless status.
  * Access-Control-Allow-Origin is set so the app utility, opened from disk (and
  * therefore a "null" origin), can POST here directly later on. */
@@ -226,6 +242,9 @@ static void send_resp(int fd, const char *status, const char *ctype,
                      "Access-Control-Allow-Origin: *\r\n"
                      "Connection: close\r\n\r\n",
                      status, ctype, body ? strlen(body) : 0);
+    if (!head_ok(n, sizeof(head))) {
+        return; /* nothing sendable; the connection is closed either way */
+    }
     send_all(fd, head, (size_t)n);
     if (body) {
         send_all(fd, body, strlen(body));
@@ -243,6 +262,9 @@ static void send_redirect(int fd, const char *loc) {
                      "Access-Control-Allow-Origin: *\r\n"
                      "Connection: close\r\n\r\n",
                      loc);
+    if (!head_ok(n, sizeof(head))) {
+        return;
+    }
     send_all(fd, head, (size_t)n);
 }
 
@@ -287,6 +309,10 @@ static bool send_file(int fd, const char *path, const char *ctype,
         ctype, got, dl_name ? "Content-Disposition: attachment; filename=\"" : "",
         dl_name ? dl_name : "", dl_name ? "\"\r\n" : "",
         dl_name ? "no-store" : "max-age=300");
+    if (!head_ok(hn, sizeof(head))) {
+        free(buf);
+        return false; /* caller sends an error instead of a truncated head */
+    }
     send_all(fd, head, (size_t)hn);
     send_all(fd, buf, got);
     free(buf);
@@ -560,6 +586,13 @@ static int client_step(HttpSrv *s) {
                 client_reset(s); /* head too big to be ours */
                 return 0;
             }
+            unsigned long long now = armTicksToNs(armGetSystemTick());
+            if (now - s->conn_start_ns > HEAD_DEADLINE_NS) {
+                /* Still no blank line after all that: a trickle, not a slow
+                 * network. Drop it so the slot is free for a real upload. */
+                client_reset(s);
+                return 0;
+            }
             return client_idle(s, got_data);
         }
         body_start += 4;
@@ -717,12 +750,16 @@ bool httpsrv_open(HttpSrv *s) {
     s->listen_fd = fd;
 
     /* The one-time code for this session's URL, from the console's CSPRNG.
-     * Lowercase hex keeps it easy to read off a TV and type on a phone. */
+     * A 32-symbol alphabet gets 5 bits out of each random byte instead of the
+     * 4 that hex threw away, and 256 is a whole multiple of 32 so the masking
+     * stays unbiased. '0'/'1' and 'i'/'l' are left out: the code is read off a
+     * screen and typed by hand, and those are the pairs people get wrong.
+     * Everything left is a bare URL path character needing no escaping. */
     unsigned char rnd[HTTPSRV_TOKEN_LEN];
     randomGet(rnd, sizeof(rnd));
-    static const char hexd[] = "0123456789abcdef";
+    static const char alpha[] = "23456789abcdefghjkmnopqrstuvwxyz";
     for (int i = 0; i < HTTPSRV_TOKEN_LEN; i++) {
-        s->token[i] = hexd[rnd[i] & 0xf];
+        s->token[i] = alpha[rnd[i] & 0x1f];
     }
     s->token[HTTPSRV_TOKEN_LEN] = '\0';
 
@@ -760,6 +797,7 @@ int httpsrv_poll(HttpSrv *s) {
         s->head_len = 0;
         s->head[0] = '\0';
         s->last_data_ns = armTicksToNs(armGetSystemTick());
+        s->conn_start_ns = s->last_data_ns;
     }
     return client_step(s);
 }

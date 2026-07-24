@@ -144,9 +144,11 @@ Everything else below — card view, touch, languages, themes — is polish on t
     global search, which covers cached repos; per-repo hard refresh lives on
     the repo edit screen
   - **Import a collection over Wi-Fi** — the console shows an address; open it
-    in a browser on the same network (or use the App Utility's **Send to
-    Switch**) to send your `dl_sources.json` across, no SD swapping required —
-    with live transfer progress on both ends
+    in a browser on the same network (or use the App Utility's **Switch
+    transfer**) to send your `dl_sources.json` across, no SD swapping required —
+    with live transfer progress on both ends. The same screen hands the
+    console's current collection back, so you can fetch it, edit it and send it
+    on again
   - Unresumable leftover `.part` files are cleaned up automatically at startup
 
 ---
@@ -331,6 +333,10 @@ collections download anonymously and need no keys.
 | `sdmc:/switch/HaulNX/debug.log` | network/extraction diagnostics (viewable + clearable in Settings → View logs) |
 | `sdmc:/roms/<console>/` | default ROM destination (or your custom override) |
 
+Every log has a size ceiling. Once one is reached the file is moved aside as
+`<name>.1` (replacing any previous `.1`) and a fresh one starts, so a long-lived
+install keeps at most two generations of each instead of growing forever.
+
 ---
 
 ## Updating (in-app)
@@ -367,15 +373,16 @@ your computer. It's the comfortable way to build and maintain collections, and
 it talks to the console directly:
 
 - **Edit collections** — build `dl_sources.json` visually: console groups,
-  repos, the supported-console list. Import an existing file (including the
-  one your console is running — the import screen serves it for download) or
-  start fresh, then export.
+  repos, the supported-console list. Import an existing file (including the one
+  your console is running — fetch it with **Get from Switch**, or download it
+  from the import screen in a browser) or start fresh, then export.
 - **Quick test** — paste any archive.org item id or URL to preview its file
   list before committing it to a collection.
-- **Send to Switch → Collection** — push the collection straight to the
-  console over the LAN while its **Import collection** screen is open; you
-  confirm the import on the Switch. No SD card swapping.
-- **Send to Switch → App update (.nro)** — push a HaulNX build to the console
+- **Switch transfer → Collection** — a round trip over the LAN while the
+  console's **Import collection** screen is open. **Get from Switch** pulls the
+  collection the console is running on into the editor; **Send** pushes it back,
+  and you confirm the import on the Switch. No SD card swapping.
+- **Switch transfer → App update (.nro)** — push a HaulNX build to the console
   while **Settings → Check for updates → Over Wi-Fi** is open. The utility
   validates the file is a real NRO before sending and shows send progress;
   you confirm the install (and restart) on the Switch.

@@ -87,9 +87,18 @@ void i18n_load(const char *path) {
 
     char *buf = (char *)malloc(len + 1);
     if (!buf) { fclose(f); return; }
-    fread(buf, 1, len, f);
-    buf[len] = '\0';
+    /* Terminate and measure at what was actually read. Discarding the count and
+     * handing jsmn `len` bytes meant a short read — a truncated file, a flaky
+     * card — left the tail of the buffer as uninitialized heap, and any string
+     * token jsmn found in there became a translated UI string: arbitrary bytes,
+     * possibly not even UTF-8, rendered on screen. Reading less now just means
+     * the keys past the cut fall back to English, which is what a missing key
+     * already does. */
+    size_t got = fread(buf, 1, (size_t)len, f);
+    buf[got] = '\0';
+    len = (long)got;
     fclose(f);
+    if (len <= 0) { free(buf); return; }
 
     /* Skip UTF-8 BOM if present (common on Windows-edited files). */
     char *js = buf;

@@ -7,6 +7,7 @@
 #include <cstdarg>
 #include <fstream>
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -38,6 +39,12 @@ static bool g_have_item = false;
 
 static std::vector<int> g_files; // filtered indices into g_item.files
 static std::vector<char> g_marks;
+// Browse multi-select, keyed by index into g_item.files rather than by row.
+// The list widget's own marks are row-indexed and dropped on every Clear(), so
+// a filter or sort change would silently lose the selection; keying to files
+// lets you filter, select, refilter and select again to build one set. Cleared
+// whenever a different repo's metadata is loaded.
+static std::set<int> g_sel;
 static std::string g_filter;
 static char g_files_id[256], g_files_base[512], g_files_target[64];
 // Per-repo "installed?" context: the folder index and the installed-md5 map.
@@ -137,6 +144,7 @@ static std::string icon_key(const char *s) {
 static void load_console_icons() {
     static const char *keys[] = {
         "nes", "snes", "n64", "gb", "gbc", "gba", "3ds", "nds", "gc", "wii",
+        "wiiu",
         "genesis", "master-system", "game-gear", "sega-cd", "saturn", "dc",
         "atomiswave", "naomi", "psx", "ps2", "psp", "default",
         // consoles added with the 52-console expansion
@@ -240,6 +248,7 @@ static const char *console_full_name(const char *abbr) {
         {"3ds", "Nintendo 3DS"},
         {"gc", "Nintendo GameCube"},
         {"wii", "Nintendo Wii"},
+        {"wiiu", "Nintendo Wii U"},
         {"virtual-boy", "Nintendo Virtual Boy"},
         {"pokemon-mini", "Pokemon Mini"},
         {"game-and-watch", "Nintendo Game & Watch"},
@@ -469,6 +478,12 @@ static std::string queue_summary(const QueueView *qv, int n) {
             s += (s.empty() ? "" : " · ") + std::string(buf);
         }
     }
+    // Nothing is starting because the card is nearly full. Say so here rather
+    // than letting the queue look mysteriously stalled — no item has failed and
+    // the hold lifts by itself once space is freed.
+    if (queue_space_hold()) {
+        s += (s.empty() ? "" : " · ") + std::string(tr(S_SPACE_HOLD));
+    }
     return s;
 }
 
@@ -663,6 +678,53 @@ static void load_dl_md5() {
     }
 }
 
+// How many rows the last rebuild flagged as updatable, kept so the info line can
+// be recomposed (on every selection change) without redoing the whole list.
+static int g_files_updates = 0;
+
+// Persistent indicator under the file list: selection, available updates, a
+// non-default sort and/or an active filter. The toast announcing sort/filter
+// vanishes, and an active filter is otherwise invisible ("where did my files
+// go?"). Cheap enough to call on every A/Y press — it touches no SD card.
+static void files_info_line(MainLayout *lay) {
+    std::string info;
+    // Selection first: while files are marked it's what you're acting on, and
+    // its running byte total is the whole point of selecting before queueing.
+    if (!g_sel.empty()) {
+        uint64_t bytes = 0;
+        for (int fi : g_sel) {
+            if (fi >= 0 && fi < g_item.file_count) {
+                bytes += g_item.files[fi].size;
+            }
+        }
+        char sb[96];
+        snprintf(sb, sizeof(sb), tr(S_N_SELECTED), (int)g_sel.size());
+        info = std::string(sb) + "  ·  " + human_size(bytes);
+    }
+    if (g_files_updates > 0) {
+        char ub[80]; // roomy: some localized forms are multi-byte
+        snprintf(ub, sizeof(ub), tr(S_UPDATES_AVAIL), g_files_updates);
+        if (!info.empty()) {
+            info += "  ·  ";
+        }
+        info += ub;
+    }
+    if (g_sort_mode != SORT_DEFAULT) {
+        if (!info.empty()) {
+            info += "  ·  ";
+        }
+        info += tr(g_sort_keys[g_sort_mode]);
+    }
+    if (!g_filter.empty()) {
+        char fb[120];
+        snprintf(fb, sizeof(fb), "%s\"%s\" (%d)",
+                 info.empty() ? "" : "  ·  ", g_filter.c_str(),
+                 (int)g_files.size());
+        info += fb;
+    }
+    lay->SetRomInfo(info);
+}
+
 // reload_ctx: rebuild the per-target install context (folder index + md5 map).
 // True when a repo opens; false for filter/sort rebuilds, which only re-slice the
 // already-loaded metadata and can reuse the cached context — no SD scan, no
@@ -730,33 +792,18 @@ static void rebuild_files(MainLayout *lay, const char *target,
                  mark == 2 ? "↑ " : mark == 1 ? "* " : "", f->name);
         lay->AddRow2(name, human_size(f->size),
                      g_theme->row_text, size_color(f->size));
+        // Re-apply the selection: ClearMenu() wiped the widget's row marks, but
+        // g_sel is keyed to the file, so a row that reappears under a different
+        // filter or sort comes back still selected.
+        if (g_sel.count(g_files[k])) {
+            lay->SetMark(k, true);
+        }
     }
     if (g_files.empty()) {
         lay->AddRow(tr(S_NO_FILES_MATCH));
     }
-    // Persistent indicator for a non-default sort and/or an active filter —
-    // the toast announcing them vanishes, and an active filter is otherwise
-    // invisible ("where did my files go?").
-    std::string info;
-    if (updates > 0) {
-        char ub[80]; // roomy: some localized forms are multi-byte
-        snprintf(ub, sizeof(ub), tr(S_UPDATES_AVAIL), updates);
-        info = ub;
-    }
-    if (g_sort_mode != SORT_DEFAULT) {
-        if (!info.empty()) {
-            info += "  ·  ";
-        }
-        info += tr(g_sort_keys[g_sort_mode]);
-    }
-    if (!g_filter.empty()) {
-        char fb[120];
-        snprintf(fb, sizeof(fb), "%s\"%s\" (%d)",
-                 info.empty() ? "" : "  ·  ", g_filter.c_str(),
-                 (int)g_files.size());
-        info += fb;
-    }
-    lay->SetRomInfo(info);
+    g_files_updates = updates;
+    files_info_line(lay);
 }
 
 // Background metadata load: ia_fetch runs on its own thread so the file
@@ -814,6 +861,7 @@ void MainApplication::StartMetaLoad(const std::string &id,
         g_have_item = true;
     }
     g_filter.clear();
+    g_sel.clear(); // a new repo's file indices mean nothing to the old selection
     rebuild_files(this->layout.get(), g_files_target);
     this->layout->SetSubtitle(done_subtitle);
 }
@@ -832,6 +880,7 @@ void MainApplication::MetaTick() {
         g_have_item = true;
     }
     g_filter.clear();
+    g_sel.clear(); // a new repo's file indices mean nothing to the old selection
     rebuild_files(this->layout.get(), g_files_target);
     this->layout->SetSubtitle(this->meta_done_subtitle);
     // Returning to the same repo we last viewed? Restore the scroll position.
@@ -891,33 +940,6 @@ static bool looks_like_nro(const char *path) {
     size_t r = fread(h, 1, sizeof(h), f);
     fclose(f);
     return r == sizeof(h) && memcmp(h + 0x10, "NRO0", 4) == 0;
-}
-
-// Copy src over dst in place (truncate-write) — used to replace our own .nro.
-static bool install_over(const char *src, const char *dst) {
-    FILE *in = fopen(src, "rb");
-    if (!in) {
-        return false;
-    }
-    FILE *out = fopen(dst, "wb");
-    if (!out) {
-        fclose(in);
-        return false;
-    }
-    static char buf[65536];
-    size_t r;
-    bool ok = true;
-    while ((r = fread(buf, 1, sizeof(buf), in)) > 0) {
-        if (fwrite(buf, 1, r, out) != r) {
-            ok = false;
-            break;
-        }
-    }
-    fclose(in);
-    if (fclose(out) != 0) {
-        ok = false;
-    }
-    return ok;
 }
 
 void MainApplication::SetLaunchPath(const std::string &p) { g_launch_path = p; }
@@ -1717,6 +1739,7 @@ void MainLayout::PageDown() {
     }
 }
 void MainLayout::ToggleMark(s32 i) { this->list->ToggleMark(i); }
+void MainLayout::SetMark(s32 i, bool on) { this->list->SetMark(i, on); }
 int MainLayout::MarkedCount() { return this->list->MarkedCount(); }
 const std::set<s32> &MainLayout::Marked() { return this->list->Marked(); }
 void MainLayout::ClearMarks() { this->list->ClearMarks(); }
@@ -1773,23 +1796,233 @@ bool MainApplication::SpaceOkToQueue(uint64_t add_size) {
 
     uint64_t freeb = fs_free_bytes("sdmc:/");
     if (freeb == UINT64_MAX) return true; // statvfs failed: don't block
-    // Sum what the queue still has to pull (metadata size minus any .part
-    // already on disk) so the check accounts for items queued earlier.
-    uint64_t need = add_size;
-    static QueueView v[QUEUE_MAX]; // ~130KB; keep off the UI-thread stack
-    int n = queue_snapshot(v, QUEUE_MAX);
-    for (int i = 0; i < n; i++) {
-        QStatus s = v[i].item.status;
-        if (s == Q_DONE || s == Q_SAVED || s == Q_FAILED || s == Q_CANCELLED)
-            continue; // finished/failed items no longer need space
-        if (v[i].item.size > v[i].item.now)
-            need += v[i].item.size - v[i].item.now;
-    }
+    // Add what the queue still owes (metadata size minus whatever each .part
+    // already holds) so the check accounts for items queued earlier.
+    uint64_t need = add_size + queue_pending_bytes();
     if (need <= freeb) return true;
     // "needed > free" mirrors the warning sentence ("total size exceeds free
     // space") and reads the same in any language, so no new strings are needed.
     return this->Confirm(tr(S_FREE_SPACE_WARN),
                          human_size(need) + "  >  " + human_size(freeb));
+}
+
+// X in the file list. Filter and sort moved in here so Y could become "select";
+// one menu now covers everything that changes what the list shows or what is
+// picked out of it.
+void MainApplication::FilesViewMenu() {
+    enum { ACT_FILTER, ACT_SORT, ACT_ALL, ACT_NONE };
+    std::vector<std::string> opts;
+    std::vector<int> acts;
+    opts.push_back(tr(S_FILTER)); acts.push_back(ACT_FILTER);
+    opts.push_back(tr(S_SORT));   acts.push_back(ACT_SORT);
+    if (!g_files.empty()) {
+        char lb[96];
+        snprintf(lb, sizeof(lb), tr(S_SELECT_ALL_SHOWN), (int)g_files.size());
+        opts.push_back(lb); acts.push_back(ACT_ALL);
+    }
+    if (!g_sel.empty()) {
+        opts.push_back(tr(S_CLEAR_SELECTION)); acts.push_back(ACT_NONE);
+    }
+    opts.push_back(tr(S_CANCEL));
+
+    int r = this->CreateShowDialog(tr(S_VIEW), "", opts, false, {}, style_dialog);
+    if (r < 0 || r >= (int)acts.size()) {
+        return;
+    }
+    switch (acts[r]) {
+    case ACT_FILTER: {
+        char fb[64] = {0};
+        if (prompt_raw(tr(S_FILTER_GUIDE), g_filter.c_str(), fb, sizeof(fb))) {
+            g_filter = fb;
+            rebuild_files(this->layout.get(), g_files_target, false);
+        }
+        break;
+    }
+    case ACT_SORT: {
+        int s = this->CreateShowDialog(
+            tr(g_sort_keys[g_sort_mode]), "",
+            {tr(S_SORT_DEFAULT), tr(S_SORT_NAME_AZ), tr(S_SORT_NAME_ZA),
+             tr(S_SORT_SIZE_DESC), tr(S_SORT_SIZE_ASC), tr(S_CANCEL)},
+            false, {}, style_dialog);
+        if (s >= 0 && s < SORT__COUNT) {
+            g_sort_mode = s;
+            s32 keep = this->layout->Sel();
+            rebuild_files(this->layout.get(), g_files_target, false);
+            if (keep >= 0 && keep < this->layout->RowCount())
+                this->layout->SetSel(keep);
+        }
+        break;
+    }
+    case ACT_ALL:
+        // "Shown", not "all": with a filter active this selects exactly what
+        // the filter left, which is how a 500-file set gets built in one press.
+        // Anything selected under an earlier filter stays selected.
+        for (int k = 0; k < (int)g_files.size(); k++) {
+            g_sel.insert(g_files[k]);
+            this->layout->SetMark(k, true);
+        }
+        files_info_line(this->layout.get());
+        break;
+    case ACT_NONE:
+        g_sel.clear();
+        this->layout->ClearMarks();
+        files_info_line(this->layout.get());
+        break;
+    }
+}
+
+// A with files marked: queue the whole selection, but total it up first. Every
+// size here comes from the repo metadata, so the count, the bytes and what will
+// actually fit are all known before a single byte is transferred.
+void MainApplication::QueueSelection() {
+    if (!g_have_item || g_sel.empty()) {
+        return;
+    }
+    // Walk in list order so the queue mirrors the screen; selected files the
+    // current filter happens to hide are still part of the set and go last.
+    std::set<int> shown(g_files.begin(), g_files.end());
+    std::vector<int> pick;
+    pick.reserve(g_sel.size());
+    for (int fi : g_files) {
+        if (g_sel.count(fi)) pick.push_back(fi);
+    }
+    for (int fi : g_sel) {
+        if (!shown.count(fi)) pick.push_back(fi);
+    }
+
+    std::vector<int> add;
+    uint64_t bytes = 0;
+    int skipped = 0;
+    bool any_archive = false, any_huge = false;
+    for (int fi : pick) {
+        if (fi < 0 || fi >= g_item.file_count) continue;
+        ArchiveFile *f = &g_item.files[fi];
+        if (g_prefs.skip_installed && index_has_installed(g_inst_idx, f->name)) {
+            skipped++;
+            continue;
+        }
+        add.push_back(fi);
+        bytes += f->size;
+        if (is_archive_name(f->name)) any_archive = true;
+        if (f->size > 0xFFFFFFFFULL) any_huge = true;
+    }
+    if (add.empty()) {
+        this->Toast(tr(S_ALL_ALREADY_INSTALLED));
+        return;
+    }
+    int slots = queue_free_slots();
+    if (slots <= 0) {
+        this->ToastErr(tr(S_QUEUE_FULL));
+        return;
+    }
+
+    const uint64_t freeb = fs_free_bytes("sdmc:/");
+    const uint64_t pending = queue_pending_bytes();
+    const int n = (int)add.size();
+    const int cap = n < slots ? n : slots; // what "queue everything" can take
+
+    // How many, in order, fit in both the free slots and the free space. This
+    // is a lower bound on the footprint: archives are extracted after download,
+    // and while that runs the .part and the unpacked files coexist.
+    int fit = 0;
+    uint64_t run = pending;
+    // Budget once, then compare by subtraction. Declared sizes come from the
+    // collection file, so `run + sz + QUEUE_SPACE_RESERVE` had two additions
+    // that could wrap past UINT64_MAX and report that everything fits.
+    const uint64_t budget =
+        freeb > QUEUE_SPACE_RESERVE ? freeb - QUEUE_SPACE_RESERVE : 0;
+    for (int i = 0; i < cap; i++) {
+        uint64_t sz = g_item.files[add[i]].size;
+        if (freeb != UINT64_MAX && (run > budget || sz > budget - run)) break;
+        run += sz;
+        fit++;
+    }
+
+    char lb[160];
+    snprintf(lb, sizeof(lb), tr(S_N_FILES), n);
+    std::string msg = std::string(lb) + "  ·  " + human_size(bytes);
+    if (freeb != UINT64_MAX) {
+        msg += "\n" + std::string(tr(S_FREE_SPACE)) + "  " + human_size(freeb);
+    }
+    if (pending > 0) {
+        msg += "\n" + std::string(tr(S_QUEUE_PENDING)) + "  " +
+               human_size(pending);
+    }
+    if (skipped > 0) {
+        snprintf(lb, sizeof(lb), tr(S_N_SKIPPED_INSTALLED), skipped);
+        msg += "\n"; msg += lb;
+    }
+    if (n > cap) {
+        snprintf(lb, sizeof(lb), tr(S_ONLY_N_SLOTS), slots);
+        msg += "\n"; msg += lb;
+    }
+    if (any_archive) {
+        msg += "\n"; msg += tr(S_ARCHIVES_EXPAND);
+    }
+
+    std::vector<std::string> opts;
+    std::vector<int> counts;
+    if (fit >= cap) {
+        snprintf(lb, sizeof(lb), tr(S_QUEUE_N), cap);
+        opts.push_back(lb); counts.push_back(cap);
+    } else {
+        if (fit > 0) {
+            snprintf(lb, sizeof(lb), tr(S_QUEUE_N_THAT_FIT), fit);
+            opts.push_back(lb); counts.push_back(fit);
+        }
+        snprintf(lb, sizeof(lb), tr(S_QUEUE_N_ANYWAY), cap);
+        opts.push_back(lb); counts.push_back(cap);
+    }
+    opts.push_back(tr(S_CANCEL));
+
+    int r = this->CreateShowDialog(tr(S_QUEUE_SELECTED), msg, opts, false, {},
+                                   fit >= cap ? style_dialog
+                                              : style_dialog_danger);
+    if (r < 0 || r >= (int)counts.size()) {
+        return;
+    }
+    // Same FAT32 caveat as a single add, asked once for the whole batch.
+    if (any_huge && !this->fat32_ack) {
+        if (!this->Confirm(tr(S_FAT32_WARN), tr(S_FAT32_WARN_MSG))) return;
+        this->fat32_ack = true;
+    }
+
+    const int want = counts[r];
+    char auth[320];
+    creds_auth_header(&g_creds, auth, sizeof(auth));
+    int done = 0;
+    // One queue-state write for the whole batch: queue_add persists on every
+    // call, so without this, queueing N items rewrites the file N times.
+    queue_batch_begin();
+    for (int i = 0; i < n && done < want; i++) {
+        // The dialog above was modal; re-check the index rather than trusting
+        // that the metadata behind it is still the same size.
+        if (!g_have_item || add[i] < 0 || add[i] >= g_item.file_count) {
+            break;
+        }
+        ArchiveFile *f = &g_item.files[add[i]];
+        char url[1024];
+        ia_file_url(&g_item, f, url, sizeof(url));
+        if (!queue_add(url, f->name, g_files_target, auth, f->size,
+                       is_archive_name(f->name), f->md5)) {
+            break; // queue filled under us; report what did land
+        }
+        g_sel.erase(add[i]); // queued items drop out of the selection
+        done++;
+    }
+    queue_batch_end();
+    // One rebuild for the batch: it re-applies marks from what's left selected.
+    s32 keep = this->layout->Sel();
+    rebuild_files(this->layout.get(), g_files_target, false);
+    if (keep >= 0 && keep < this->layout->RowCount()) {
+        this->layout->SetSel(keep);
+    }
+    snprintf(lb, sizeof(lb), tr(S_QUEUED_N), done);
+    if (done > 0) {
+        this->Toast(lb);
+    } else {
+        this->ToastErr(tr(S_QUEUE_FULL));
+    }
 }
 
 void MainApplication::RefreshStatus() {
@@ -2280,9 +2513,12 @@ void MainApplication::GotoAdvanced() {
     b = g_prefs.chk_updates;
     this->layout->AddRow2(settings_label(tr(S_CHK_UPDATES_STARTUP)),
                           b ? tr(S_ON) : tr(S_OFF), lbl, onoff_color(b)); // 5
+    b = g_prefs.skip_installed;
+    this->layout->AddRow2(settings_label(tr(S_SKIP_INSTALLED)),
+                          b ? tr(S_ON) : tr(S_OFF), lbl, onoff_color(b)); // 6
     b = g_creds.access_key[0] != '\0';
     this->layout->AddRow2(settings_label(tr(S_ARCHIVE_CREDS)),
-                          b ? tr(S_SET) : tr(S_UNSET), lbl, onoff_color(b)); // 6
+                          b ? tr(S_SET) : tr(S_UNSET), lbl, onoff_color(b)); // 7
     /* Metadata cache toggle and ROM folder moved to Manage data. */
 }
 
@@ -2467,6 +2703,8 @@ void MainApplication::GotoManageData() {
 // dl_sources.json outright, so what arrived and what became of it is worth a
 // durable record — the one .bak slot only survives until the next import.
 static void xfer_log(const char *fmt, ...) {
+    // A handful of lines per transfer, so the size check can run every time.
+    fs_log_rotate(XFERLOG_PATH, LOG_ROTATE_XFER);
     fs_mkdir_p(CONFIG_DIR);
     FILE *f = fopen(XFERLOG_PATH, "a");
     if (!f) {
@@ -3312,7 +3550,7 @@ static void run_search_scan(const std::string &query, int scope_ci,
                             SearchHit h;
                             h.name = fname;
                             h.target = target;
-                            h.size = json_u64(body, tok,
+                            h.size = json_u64_size(body, tok,
                                 json_obj_get(body, tok, ch, "size"));
                             char md5[33] = "";
                             json_copy(body, tok,
@@ -3995,7 +4233,7 @@ static void parse_log_json(std::vector<LogEntry> &out) {
         json_copy(js, tok, json_obj_get(js, tok, 0, "md5"), buf, sizeof(buf));
         e.md5 = buf;
         int si = json_obj_get(js, tok, 0, "size");
-        if (si >= 0) e.size = json_u64(js, tok, si);
+        if (si >= 0) e.size = json_u64_size(js, tok, si);
         int ai = json_obj_get(js, tok, 0, "arc");
         if (ai >= 0) e.is_archive = json_bool(js, tok, ai);
         e.can_retry = !e.url.empty();
@@ -4160,6 +4398,7 @@ void MainApplication::HandleInput(u64 down, u64 held,
             this->meta.Join();
             ia_free(&g_item);
             g_have_item = false;
+            g_sel.clear(); // its indices pointed into the item just freed
             this->meta_discard = false;
         }
     }
@@ -4913,23 +5152,30 @@ void MainApplication::HandleInput(u64 down, u64 held,
                 this->GotoRepos(this->sel_ci);
             }
         } else if (down & HidNpadButton_A) {
-            if (g_have_item) {
-                s32 i = this->layout->Sel();
-                if (i >= 0 && i < (s32)g_files.size()) {
-                    ArchiveFile *f = &g_item.files[g_files[i]];
-                    if (!this->SpaceOkToQueue(f->size)) return;
-                    char url[1024];
-                    ia_file_url(&g_item, f, url, sizeof(url));
-                    char auth[320];
-                    creds_auth_header(&g_creds, auth, sizeof(auth));
-                    bool ok = queue_add(url, f->name, g_files_target, auth,
-                                        f->size, is_archive_name(f->name),
-                                        f->md5);
-                    if (ok) {
-                        this->Toast(std::string(tr(S_QUEUED)) + ": " + f->name);
-                    } else {
-                        this->ToastErr(tr(S_QUEUE_FULL));
-                    }
+            if (!g_have_item) {
+                break;
+            }
+            // With files marked, A acts on the whole selection; with none, it
+            // queues the highlighted row exactly as it always has.
+            if (!g_sel.empty()) {
+                this->QueueSelection();
+                break;
+            }
+            s32 i = this->layout->Sel();
+            if (i >= 0 && i < (s32)g_files.size()) {
+                ArchiveFile *f = &g_item.files[g_files[i]];
+                if (!this->SpaceOkToQueue(f->size)) return;
+                char url[1024];
+                ia_file_url(&g_item, f, url, sizeof(url));
+                char auth[320];
+                creds_auth_header(&g_creds, auth, sizeof(auth));
+                bool ok = queue_add(url, f->name, g_files_target, auth,
+                                    f->size, is_archive_name(f->name),
+                                    f->md5);
+                if (ok) {
+                    this->Toast(std::string(tr(S_QUEUED)) + ": " + f->name);
+                } else {
+                    this->ToastErr(tr(S_QUEUE_FULL));
                 }
             }
         } else if ((down & HidNpadButton_Minus) && !g_files_manual) {
@@ -4940,26 +5186,23 @@ void MainApplication::HandleInput(u64 down, u64 held,
                 return;
             }
         } else if (down & HidNpadButton_Y) {
-            char fb[64] = {0};
-            if (prompt_raw(tr(S_FILTER_GUIDE), g_filter.c_str(), fb,
-                           sizeof(fb))) {
-                g_filter = fb;
-                rebuild_files(this->layout.get(), g_files_target, false);
+            // Toggle this row's selection. Only the widget mark and the info
+            // line change — rebuilding the list on every press would re-add
+            // thousands of rows for one keystroke.
+            s32 i = this->layout->Sel();
+            if (i >= 0 && i < (s32)g_files.size()) {
+                int fi = g_files[i];
+                bool on = g_sel.count(fi) == 0;
+                if (on) {
+                    g_sel.insert(fi);
+                } else {
+                    g_sel.erase(fi);
+                }
+                this->layout->SetMark(i, on);
+                files_info_line(this->layout.get());
             }
         } else if (down & HidNpadButton_X) {
-            // Sort picker — same dialog as the Installed browser.
-            int s = this->CreateShowDialog(
-                tr(g_sort_keys[g_sort_mode]), "",
-                {tr(S_SORT_DEFAULT), tr(S_SORT_NAME_AZ), tr(S_SORT_NAME_ZA),
-                 tr(S_SORT_SIZE_DESC), tr(S_SORT_SIZE_ASC), tr(S_CANCEL)},
-                false, {}, style_dialog);
-            if (s >= 0 && s < SORT__COUNT) {
-                g_sort_mode = s;
-                s32 keep = this->layout->Sel();
-                rebuild_files(this->layout.get(), g_files_target, false);
-                if (keep >= 0 && keep < this->layout->RowCount())
-                    this->layout->SetSel(keep);
-            }
+            this->FilesViewMenu();
         } else if ((down & (HidNpadButton_Left | HidNpadButton_Right)) &&
                    !g_files_manual) {
             // Switch to the previous/next repo of the same console (L/R now
@@ -5150,6 +5393,10 @@ void MainApplication::HandleInput(u64 down, u64 held,
                 prefs_save(&g_prefs);
                 break;
             case 6:
+                g_prefs.skip_installed = !g_prefs.skip_installed;
+                prefs_save(&g_prefs);
+                break;
+            case 7:
                 this->GotoCreds();
                 return;
             default:
@@ -6047,23 +6294,35 @@ void MainApplication::HandleInput(u64 down, u64 held,
                 if (prompt(tr(S_ACCESS_KEY), g_creds.access_key, v, sizeof(v))) {
                     snprintf(g_creds.access_key, sizeof(g_creds.access_key), "%s",
                              v);
-                    creds_save(&g_creds);
-                    this->Toast(tr(S_SAVED));
+                    // These are keys the user typed in by hand off a web page,
+                    // so a save that didn't land has to say so rather than
+                    // toast "Saved" and lose them.
+                    if (creds_save(&g_creds)) {
+                        this->Toast(tr(S_SAVED));
+                    } else {
+                        this->ToastErr(tr(S_SAVE_FAILED));
+                    }
                 }
             } else if (i == 1) {
                 // Pre-filled with the current secret so it's easy to edit.
                 if (prompt(tr(S_SECRET_KEY), g_creds.secret, v, sizeof(v))) {
                     snprintf(g_creds.secret, sizeof(g_creds.secret), "%s", v);
-                    creds_save(&g_creds);
-                    this->Toast(tr(S_SAVED));
+                    if (creds_save(&g_creds)) {
+                        this->Toast(tr(S_SAVED));
+                    } else {
+                        this->ToastErr(tr(S_SAVE_FAILED));
+                    }
                 }
             } else if (i == 2) {
                 if (this->ConfirmDanger(tr(S_CLEAR_CREDS),
                                         tr(S_CLEAR_CREDS_CONFIRM))) {
                     g_creds.access_key[0] = '\0';
                     g_creds.secret[0] = '\0';
-                    creds_save(&g_creds);
-                    this->Toast(tr(S_CLEARED));
+                    if (creds_save(&g_creds)) {
+                        this->Toast(tr(S_CLEARED));
+                    } else {
+                        this->ToastErr(tr(S_SAVE_FAILED));
+                    }
                 }
             }
             s32 keep = this->layout->Sel();
@@ -6684,7 +6943,7 @@ void MainApplication::UpdTick() {
         if (!inst) {
             upd_log("upd: rename dl->stage failed (errno=%d), copying",
                     errno);
-            inst = install_over(dl.c_str(), stage) && looks_like_nro(stage);
+            inst = fs_copy_file(dl.c_str(), stage) && looks_like_nro(stage);
         }
         upd_log("upd: staged '%s' %s", stage, inst ? "ok" : "FAILED");
         if (inst) {

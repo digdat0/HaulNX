@@ -21,11 +21,17 @@ extern "C" {
 #define HTTPSRV_PORT     8080
 /* Big enough for an app build, small enough to refuse runaway uploads. */
 #define HTTPSRV_MAX_BODY (16 * 1024 * 1024)
-/* One-time code carried in the URL path (e.g. http://ip:8080/a1b2c3). It only
+/* One-time code carried in the URL path (e.g. http://ip:8080/k7m2xq9r). It only
  * ever appears on the console's screen, so anything that knows it was shown
  * the address by the user — a web page loaded on some other LAN device can
- * neither POST a file nor fetch the config export without it. */
-#define HTTPSRV_TOKEN_LEN 6
+ * neither POST a file nor fetch the config export without it.
+ *
+ * It is also the only thing standing between a LAN peer and replacing the app
+ * binary, and there is no attempt limiter behind it, so it is sized for guessing
+ * resistance rather than brevity: 8 characters from a 32-symbol alphabet is 40
+ * bits, against the 24 that six hex characters gave. Still short enough to read
+ * off a TV and type on a phone. */
+#define HTTPSRV_TOKEN_LEN 8
 
 typedef struct {
     int listen_fd;   /* -1 when closed */
@@ -43,7 +49,8 @@ typedef struct {
     size_t cbody_len;   /* bytes received so far */
     size_t cbody_total; /* Content-Length */
     char ctype[192];    /* Content-Type (for multipart slicing at the end) */
-    unsigned long long last_data_ns; /* watchdog for a client that went quiet */
+    unsigned long long last_data_ns;  /* watchdog for a client that went quiet */
+    unsigned long long conn_start_ns; /* accept time, for the head deadline */
     char *body;      /* received file, NUL-terminated, owned; NULL until then */
     size_t body_len;
 } HttpSrv;

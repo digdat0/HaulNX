@@ -156,7 +156,10 @@ static bool console_hidden_by_default(const char *name) {
         "atari-2600", "atari-5200", "atari-7800", "atari-lynx", "atari-jaguar",
         "wonderswan", "wonderswan-color", "colecovision", "intellivision",
         "odyssey2", "vectrex", "channel-f", "3do", "cd-i", "supervision",
-        "arcade", "fbneo"};
+        "arcade", "fbneo",
+        /* experimental — Wii U, playable only via the unofficial Cemu Switch
+         * port; hidden so it doesn't imply first-class on-device support */
+        "wiiu"};
     for (size_t i = 0; i < sizeof(hidden) / sizeof(hidden[0]); i++) {
         if (strcasecmp(name, hidden[i]) == 0) {
             return true;
@@ -565,6 +568,25 @@ bool config_import_json(SourcesConfig *cfg, const char *js, size_t len,
                          out_repos);
 }
 
+/* Finish a staged write: `f` is the temp file, and on success it replaces dst.
+ *
+ * stdio buffers, so most of the real writing happens inside fclose — a full or
+ * ejected card typically surfaces there rather than at the fputs calls, and
+ * checking only ferror would miss it. Both have to pass before the temp file is
+ * worth moving; if either fails the temp is dropped and dst is left exactly as
+ * it was, which is the whole point of staging. */
+static bool commit_staged(FILE *f, const char *tmp, const char *dst) {
+    bool ok = ferror(f) == 0;
+    if (fclose(f) != 0) {
+        ok = false;
+    }
+    if (!ok) {
+        remove(tmp);
+        return false;
+    }
+    return fs_move(tmp, dst);
+}
+
 bool config_save(const SourcesConfig *cfg) {
     fs_mkdir_p(CONFIG_DIR);
     /* Stage to a temp file and move it into place. dl_sources.json is the entire
@@ -608,17 +630,7 @@ bool config_save(const SourcesConfig *cfg) {
         }
     }
     fputs("]\n}\n", f);
-    /* stdio reports a full card at either of these, and defers most of the real
-     * writing to fclose, so both have to pass before the temp file is trusted. */
-    bool ok = ferror(f) == 0;
-    if (fclose(f) != 0) {
-        ok = false;
-    }
-    if (!ok) {
-        remove(SOURCES_TMP_PATH);
-        return false;
-    }
-    return fs_move(SOURCES_TMP_PATH, SOURCES_PATH);
+    return commit_staged(f, SOURCES_TMP_PATH, SOURCES_PATH);
 }
 
 /* ---- credentials ------------------------------------------------------ */
@@ -644,7 +656,14 @@ void creds_load(Credentials *c) {
 
 bool creds_save(const Credentials *c) {
     fs_mkdir_p(CONFIG_DIR);
-    FILE *f = fopen(CREDS_PATH, "wb");
+    /* Staged, and the return value is honest about the outcome. Opening
+     * CREDS_PATH "wb" directly truncated the file before the first byte was
+     * written, so a card that filled up mid-save destroyed the working key as
+     * well as failing to store the new one — and the unconditional `return
+     * true` then had the UI report success. These are keys the user copied off
+     * a website by hand; losing them silently is the worst thing this file can
+     * do. */
+    FILE *f = fopen(CREDS_TMP_PATH, "wb");
     if (!f) {
         return false;
     }
@@ -653,8 +672,7 @@ bool creds_save(const Credentials *c) {
     fputs(",\n  \"secret\": ", f);
     json_write_escaped(f, c->secret);
     fputs("\n}\n", f);
-    fclose(f);
-    return true;
+    return commit_staged(f, CREDS_TMP_PATH, CREDS_PATH);
 }
 
 /* ---- preferences ------------------------------------------------------ */
@@ -677,6 +695,7 @@ void prefs_load(Prefs *p) {
     p->pinned_dir_count = 0;
     p->filter_exts = true;
     p->exclude_ext_count = 0;
+    p->skip_installed = true;
     prefs_ext_seed_defaults(p);
     size_t len = 0;
     char *js = json_read_file(PREFS_PATH, &len);
@@ -742,6 +761,10 @@ void prefs_load(Prefs *p) {
         if (idx >= 0) {
             p->filter_exts = json_bool(js, tok, idx);
         }
+        idx = json_obj_get(js, tok, 0, "skipInstalled");
+        if (idx >= 0) {
+            p->skip_installed = json_bool(js, tok, idx);
+        }
         idx = json_obj_get(js, tok, 0, "excludeExts");
         if (idx >= 0 && tok[idx].type == JSMN_ARRAY) {
             /* A saved list replaces the seeded defaults wholesale (so a user who
@@ -785,7 +808,11 @@ void prefs_load(Prefs *p) {
 
 bool prefs_save(const Prefs *p) {
     fs_mkdir_p(CONFIG_DIR);
-    FILE *f = fopen(PREFS_PATH, "wb");
+    /* Staged for the same reason as the other two: a failed in-place write left
+     * a truncated prefs.json, which parses as "no keys" and silently resets
+     * every setting — including the pinned dirs and extension filters the user
+     * built up by hand. */
+    FILE *f = fopen(PREFS_TMP_PATH, "wb");
     if (!f) {
         return false;
     }
@@ -816,7 +843,9 @@ bool prefs_save(const Prefs *p) {
         }
         json_write_escaped(f, p->pinned_dirs[i]);
     }
-    fprintf(f, "],\n  \"filterExts\": %s,\n  \"excludeExts\": [",
+    fprintf(f, "],\n  \"skipInstalled\": %s,\n  \"filterExts\": %s,\n"
+               "  \"excludeExts\": [",
+            p->skip_installed ? "true" : "false",
             p->filter_exts ? "true" : "false");
     for (int i = 0; i < p->exclude_ext_count; i++) {
         if (i) {
@@ -828,8 +857,7 @@ bool prefs_save(const Prefs *p) {
                 p->exclude_exts[i].enabled ? "true" : "false");
     }
     fputs("]\n}\n", f);
-    fclose(f);
-    return true;
+    return commit_staged(f, PREFS_TMP_PATH, PREFS_PATH);
 }
 
 bool prefs_dir_pinned(const Prefs *p, const char *name) {

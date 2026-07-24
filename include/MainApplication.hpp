@@ -561,6 +561,7 @@ class MainLayout : public pu::ui::Layout {
     void PageUp();
     void PageDown();
     void ToggleMark(s32 i);
+    void SetMark(s32 i, bool on);
     int MarkedCount();
     const std::set<s32> &Marked();
     void ClearMarks();
@@ -786,6 +787,10 @@ class MainApplication : public pu::ui::Application {
     // queue still has outstanding, would exceed free SD space. Returns true to
     // proceed. add_size 0 (size unknown) or an unreadable disk never blocks.
     bool SpaceOkToQueue(uint64_t add_size);
+    // Browse file list: X opens the view/selection menu; A with files marked
+    // queues the whole selection after showing what it will cost.
+    void FilesViewMenu();
+    void QueueSelection();
 
     void GotoHome();
     void GotoRepos(int ci);

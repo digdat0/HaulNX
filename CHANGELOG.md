@@ -7,6 +7,76 @@ Notes for each release. `release.sh` pulls the section matching the version in
 `VERSION` and attaches it to the GitHub release. Add a `## <version>` section
 here before running a release.
 
+## 1.0.2
+
+**Bulk downloads, Nintendo Wii U support, and a two-way collection transfer.**
+
+**Bulk downloads**
+- **Y now selects files** in the Browse file list instead of opening the filter.
+  Selections are keyed to the file, not the row, so you can filter, select,
+  change the filter and select again to build one set across several passes.
+  **X** opens a **View** menu holding the filter, the sort picker, **Select all
+  shown** and **Clear selection**.
+- **A queues the whole selection** when anything is marked, and still queues
+  just the highlighted file when nothing is. A single deliberate A press is
+  never silently skipped, even for a file you already have.
+- Before anything downloads you get the totals: **how many files, how many
+  bytes, free space, what the queue already owes, and how many were skipped as
+  already installed**. If the set doesn't fit you can take **only what fits** or
+  queue it anyway. Sizes come from the repo metadata, so this is known up front
+  rather than discovered halfway through.
+- Archives are flagged in that summary: they expand when unpacked, so the total
+  shown is a floor, not the final footprint.
+- The queue holds **256 items** (was 64).
+- **Settings → Advanced → Skip installed on bulk add** (default **ON**) drops
+  files you already have from a marked selection. It applies to bulk adds only.
+- A download no longer starts when the card can't hold it. The queue **waits for
+  free space** — shown in the queue header — instead of failing item after item
+  as the disk fills. It resumes on its own once you free some up.
+
+**Wii U**
+- Added **Nintendo Wii U** (`wiiu`) as a supported console, with its own icon.
+  Existing installs pick it up automatically on update — nothing to re-import.
+- It ships **hidden** in **Settings → Manage data → Manage consoles**: playing
+  Wii U titles on a Switch depends on an unofficial emulator port, so it stays
+  opt-in rather than implying first-class support. Turn it on there to use it.
+
+**App Utility**
+- Bumped to **`appUtility-v1.0.2.html`**.
+- **Send to Switch** is now **Switch transfer**, and works both ways: the new
+  **Get from Switch** button pulls the collection the console is currently
+  running straight into the editor, so the round trip is fetch → edit → send
+  back. It uses the same address and one-time code as sending, and asks before
+  replacing anything you have open.
+
+**Reliability**
+- **A failed check no longer throws away a good download.** Verifying a file
+  means reading it back off the card, and a read that fails partway through used
+  to look exactly like a checksum mismatch — so the download was deleted and
+  reported as corrupt. Those two cases are now told apart: a card hiccup keeps
+  the partial file and a retry re-verifies it in seconds instead of pulling the
+  whole thing down again. Only a genuine mismatch deletes.
+- **Truncated writes are caught.** A downloaded file, an extracted file, a saved
+  setting or a cached listing that didn't fully make it to the card is now
+  reported as a failure rather than quietly left short. Writes go through the
+  card in large batches, so the last chunk of a file lands when it is closed —
+  which is exactly where a full or ejected card shows up.
+- **Settings, credentials and collections are written atomically** — staged to a
+  temporary file, checked, then moved into place. Losing power or filling the
+  card mid-save can no longer leave a half-written file that fails to load on
+  the next launch.
+- **Archives extract more defensively.** An entry claiming to write outside its
+  own declared size is dropped instead of trusted, and a failed seek is treated
+  as an error rather than silently putting the data in the wrong place.
+- **Logs are capped** — 1 MB for `debug.log`, 256 KB for `transfers.log`, 4 MB
+  for the download history — with one previous generation kept. They can't grow
+  without bound any more.
+- A truncated language file can no longer put uninitialized memory on screen as
+  UI text; keys past the cut fall back to English, the same as a missing key.
+- The Wi-Fi receiver's one-time code drops the characters people misread (`0`,
+  `1`, `i`, `l`), and a peer that dribbles a request a byte at a time can no
+  longer hold the console's single connection slot open indefinitely.
+
 ## 1.0.1
 
 **Maintenance and hardening release.** No new features on the console — this

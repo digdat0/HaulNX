@@ -254,9 +254,14 @@ bool md5_file(const char *path, char out_hex[33], volatile bool *cancel) {
             break;
         }
     }
+    /* fread stops on EOF and on a read error alike, so without this a transient
+     * SD failure hashes only what we managed to read and returns a confident
+     * mismatch — and the caller treats that as a corrupt download. Report the
+     * failure instead: "couldn't verify" is not "verified bad". */
+    bool read_err = !aborted && ferror(f) != 0;
     free(buf);
     fclose(f);
-    if (aborted) {
+    if (aborted || read_err) {
         return false;
     }
 

@@ -102,7 +102,8 @@ static bool parse_metadata(const char *body, size_t len, ArchiveItem *item) {
                       f->name, sizeof(f->name));
             json_copy(body, tok, json_obj_get(body, tok, child, "format"),
                       f->format, sizeof(f->format));
-            f->size = json_u64(body, tok, json_obj_get(body, tok, child, "size"));
+            f->size =
+                json_u64_size(body, tok, json_obj_get(body, tok, child, "size"));
             json_copy(body, tok, json_obj_get(body, tok, child, "md5"), f->md5,
                       sizeof(f->md5));
             if (f->name[0]) {
@@ -192,8 +193,14 @@ static bool ia_fetch_impl(void *conn, const char *identifier, ArchiveItem *item,
         fs_mkdir_p(cache_dir);
         FILE *f = fopen(cpath, "wb");
         if (f) {
-            fwrite(body, 1, len, f);
-            fclose(f);
+            /* A short write here is self-healing — the truncated JSON fails to
+             * parse on the next load and we refetch, per above. But leaving the
+             * corrupt file on the card costs that round-trip every single time,
+             * so drop it now. stdio buffers, so check fclose too. */
+            bool wrote = (fwrite(body, 1, len, f) == len);
+            if (fclose(f) != 0 || !wrote) {
+                remove(cpath);
+            }
         }
     }
     free(body);

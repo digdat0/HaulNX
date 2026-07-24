@@ -9,7 +9,12 @@
 extern "C" {
 #endif
 
-#define QUEUE_MAX 64
+/* Queue capacity. Every slot is a fixed-size QueueItem (~2 KB) and the UI keeps
+ * a few QueueView snapshot buffers of the same length, so this costs roughly
+ * 2 KB * QUEUE_MAX per buffer — ~2.5 MB in total at 256. That is affordable
+ * even in applet mode, and 256 is what makes "mark a filtered set and queue it"
+ * useful rather than a 64-item tease. */
+#define QUEUE_MAX 256
 
 typedef enum {
     Q_FREE = 0,       /* empty slot */
@@ -43,6 +48,10 @@ typedef struct {
     volatile int ex_files;     /* files extracted so far, while extracting */
     volatile bool cancel;
     volatile bool pause; /* ask the worker to preempt this download (keep .part) */
+    /* Passed over this round because the card can't hold what's left of it.
+     * In-memory only (never persisted): a smaller item behind it still runs,
+     * and the flag is cleared whenever free space could have changed. */
+    volatile bool no_space;
     long http_code;
     char fail_reason[24]; /* short reason shown on a failed item, e.g. "HTTP 404" */
     int overwrote;        /* # existing files this install replaced (0 = all new) */
@@ -80,6 +89,34 @@ void queue_set_rate_limits(int all_bps, int item_bps);
 bool queue_add(const char *url, const char *name, const char *target,
                const char *auth, uint64_t size, bool is_archive,
                const char *md5);
+
+/* How many more items queue_add can accept right now. Lets a bulk add tell the
+ * user "only 40 of your 500 fit" before it queues anything, instead of stopping
+ * halfway with a "queue full" toast. */
+int queue_free_slots(void);
+
+/* Total bytes the queue still has to pull. Reads memory only — an item that
+ * hasn't started counts its full size even when a resumable .part is already on
+ * disk, so the figure can overshoot. Items of unknown size (0) contribute
+ * nothing, so it can also undershoot. Good enough for "will this fit?"; the
+ * workers do the exact, .part-aware check per item before starting one. */
+uint64_t queue_pending_bytes(void);
+
+/* Bracket a run of queue_add calls. Each add otherwise rewrites the whole
+ * queue-state file, which turns queueing N items into N growing rewrites;
+ * inside a batch the writes collapse into a single save at the end. Calls
+ * nest, and every begin must be matched by an end. */
+void queue_batch_begin(void);
+void queue_batch_end(void);
+
+/* True while the workers are holding off because the SD card is nearly full.
+ * Nothing is failed or lost — queued items simply don't start, and the hold
+ * lifts on its own once space is freed. Meant for a status line in the UI. */
+bool queue_space_hold(void);
+
+/* Free bytes the queue insists on leaving on the card. A download won't start
+ * unless free space covers what's left of it plus this margin. */
+#define QUEUE_SPACE_RESERVE (256ull * 1024 * 1024)
 
 /* Copy current items (sorted FIFO) into out (size max). Returns count. */
 int queue_snapshot(QueueView *out, int max);

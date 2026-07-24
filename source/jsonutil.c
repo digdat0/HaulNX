@@ -181,6 +181,11 @@ uint64_t json_u64(const char *js, const jsmntok_t *t, int idx) {
     return strtoull(buf, NULL, 10);
 }
 
+uint64_t json_u64_size(const char *js, const jsmntok_t *t, int idx) {
+    uint64_t v = json_u64(js, t, idx);
+    return v > JSON_SIZE_MAX ? JSON_SIZE_MAX : v;
+}
+
 bool json_bool(const char *js, const jsmntok_t *t, int idx) {
     if (idx < 0) {
         return false;
@@ -193,20 +198,34 @@ char *json_read_file(const char *path, size_t *out_len) {
     if (!f) {
         return NULL;
     }
-    fseek(f, 0, SEEK_END);
-    long sz = ftell(f);
-    if (sz < 0) {
+    if (fseek(f, 0, SEEK_END) != 0) {
         fclose(f);
         return NULL;
     }
-    fseek(f, 0, SEEK_SET);
+    long sz = ftell(f);
+    /* The length comes off the filesystem, so bound it before allocating. */
+    if (sz < 0 || (unsigned long long)sz > JSON_FILE_MAX) {
+        fclose(f);
+        return NULL;
+    }
+    if (fseek(f, 0, SEEK_SET) != 0) {
+        fclose(f);
+        return NULL;
+    }
     char *buf = (char *)malloc((size_t)sz + 1);
     if (!buf) {
         fclose(f);
         return NULL;
     }
     size_t rd = fread(buf, 1, (size_t)sz, f);
+    /* A short read leaves truncated JSON that would fail to parse anyway; say
+     * so plainly rather than handing back a buffer that looks complete. */
+    bool bad = (rd != (size_t)sz && ferror(f) != 0);
     fclose(f);
+    if (bad) {
+        free(buf);
+        return NULL;
+    }
     buf[rd] = '\0';
     if (out_len) {
         *out_len = rd;

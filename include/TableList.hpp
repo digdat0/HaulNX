@@ -462,6 +462,13 @@ class TableList : public pu::ui::elm::Element {
         if (this->marked.count(i)) this->marked.erase(i);
         else this->marked.insert(i);
     }
+    /* Set a row's mark explicitly. Clear() drops every mark, so a screen that
+     * owns its selection independently of row order (Browse keys its selection
+     * to files, not rows) uses this to re-apply marks after a rebuild. */
+    void SetMark(s32 i, bool on) {
+        if (on) this->marked.insert(i);
+        else this->marked.erase(i);
+    }
     bool IsMarked(s32 i) { return this->marked.count(i) > 0; }
     const std::set<s32> &Marked() { return this->marked; }
     int MarkedCount() { return (int)this->marked.size(); }

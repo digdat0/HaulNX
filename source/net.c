@@ -4,10 +4,12 @@
 
 #include <switch.h>
 #include <curl/curl.h>
+#include <ctype.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 
 #define USER_AGENT "HaulNX/1.0 (libnx)"
 
@@ -22,8 +24,16 @@ static bool g_ready = false;
 static CURL *g_get_handle = NULL;
 static Mutex g_get_mtx;
 
-/* Append a line to the debug log so failures are diagnosable on-device. */
+/* Append a line to the debug log so failures are diagnosable on-device. This is
+ * the busiest writer in the app (two lines per HTTP request, from several worker
+ * threads), so the size check is sampled rather than run every call — a stat per
+ * 64 lines is nothing, one per line would contend with the downloads for the SD
+ * card. Racy across threads by design: a missed sample only delays a rotation. */
 static void net_log(const char *fmt, ...) {
+    static unsigned tick = 0;
+    if ((tick++ & 63u) == 0) {
+        fs_log_rotate(LOG_PATH, LOG_ROTATE_DEBUG);
+    }
     fs_mkdir_p(CONFIG_DIR);
     FILE *f = fopen(LOG_PATH, "a");
     if (!f) {
@@ -50,6 +60,10 @@ bool net_init(void) {
         return false;
     }
     mutexInit(&g_get_mtx);
+    /* One guaranteed size check per session, before anything appends: net_log
+     * only samples, and the other writers of debug.log (extract, queue, the
+     * updater) don't check at all. */
+    fs_log_rotate(LOG_PATH, LOG_ROTATE_DEBUG);
     g_ready = true;
     return true;
 }
@@ -74,10 +88,76 @@ void net_exit(void) {
  * cacert.pem / mbedtls is involved; leaving curl's defaults (VERIFYPEER on)
  * uses that store. This works on real hardware; emulators that stub the ssl
  * service (e.g. Ryujinx) will fail the handshake regardless.
+ *
+ * There is nothing per-request to configure, so this only records which backend
+ * is in play — once per session, not once per request: the line is a constant,
+ * and writing it on every GET meant an SD open/write/close competing with the
+ * downloads for the card on every metadata fetch.
  */
 static void apply_tls(CURL *c) {
+    static bool logged = false;
     (void)c;
-    net_log("TLS: libnx ssl backend (console cert store)");
+    if (!logged) {
+        logged = true;
+        net_log("TLS: libnx ssl backend (console cert store)");
+    }
+}
+
+/* Restrict what a URL is allowed to be. curl speaks far more than HTTP, and a
+ * download URL can come from an imported dl_sources.json, so pin both the
+ * initial request and any redirect to http/https — otherwise a crafted
+ * collection could make a "download" read file:// off the SD card. */
+static void pin_protocols(CURL *c) {
+    curl_easy_setopt(c, CURLOPT_PROTOCOLS, CURLPROTO_HTTP | CURLPROTO_HTTPS);
+    curl_easy_setopt(c, CURLOPT_REDIR_PROTOCOLS,
+                     CURLPROTO_HTTP | CURLPROTO_HTTPS);
+}
+
+bool net_is_archive_org_url(const char *url) {
+    if (!url) {
+        return false;
+    }
+    const char *p = strstr(url, "://");
+    if (!p) {
+        return false;
+    }
+    p += 3;
+    /* The authority runs to the first path/query/fragment delimiter. Backslash
+     * counts as one: several URL parsers fold it to '/', and our idea of the
+     * host must not be able to differ from the one curl actually connects to. */
+    size_t alen = 0;
+    while (p[alen] && p[alen] != '/' && p[alen] != '\\' && p[alen] != '?' &&
+           p[alen] != '#') {
+        alen++;
+    }
+    /* Everything up to the LAST '@' is userinfo, not the host — the host in
+     * "https://archive.org@evil.com/" is evil.com. */
+    size_t hs = 0;
+    for (size_t i = 0; i < alen; i++) {
+        if (p[i] == '@') {
+            hs = i + 1;
+        }
+    }
+    const char *h = p + hs;
+    size_t hl = alen - hs;
+    for (size_t i = 0; i < hl; i++) {
+        if (h[i] == ':') { /* drop the port */
+            hl = i;
+            break;
+        }
+    }
+    /* "archive.org." is the same name to DNS as "archive.org". */
+    while (hl > 0 && h[hl - 1] == '.') {
+        hl--;
+    }
+
+    static const char dom[] = "archive.org";
+    const size_t dl = sizeof(dom) - 1;
+    if (hl == dl && strncasecmp(h, dom, dl) == 0) {
+        return true;
+    }
+    return hl > dl && h[hl - dl - 1] == '.' &&
+           strncasecmp(h + hl - dl, dom, dl) == 0;
 }
 
 /* Ceiling for an in-memory GET. The biggest legitimate response is an
@@ -120,6 +200,7 @@ static char *http_get_impl(CURL *c, const char *url, long *http_code,
 
     curl_easy_setopt(c, CURLOPT_URL, url);
     curl_easy_setopt(c, CURLOPT_FOLLOWLOCATION, 1L);
+    pin_protocols(c);
     curl_easy_setopt(c, CURLOPT_USERAGENT, USER_AGENT);
     /* archive.org's /metadata/ JSON (whole file listing of an item) is large
      * and highly compressible; ask for gzip so the transfer is ~5-10x smaller.
@@ -239,6 +320,97 @@ static int xfer_info(void *ud, curl_off_t dltotal, curl_off_t dlnow,
     return 0;
 }
 
+/* ---- credential redirect guard ---------------------------------------- */
+
+/* True if `u` starts with a URL scheme ("https:", "file:", ...) rather than
+ * being a path relative to the URL we are already on. */
+static bool has_scheme(const char *u) {
+    size_t i = 0;
+    while (u[i] && (isalnum((unsigned char)u[i]) || u[i] == '+' ||
+                    u[i] == '-' || u[i] == '.')) {
+        i++;
+    }
+    return i > 0 && u[i] == ':';
+}
+
+/* May the credential follow this Location? */
+static bool redirect_ok(const char *loc) {
+    /* "//host/path" keeps the scheme and changes the host: resolve it against
+     * https (REDIR_PROTOCOLS already forbids anything else) and check the host. */
+    if (loc[0] == '/' && loc[1] == '/') {
+        char abs[2048];
+        int n = snprintf(abs, sizeof(abs), "https:%s", loc);
+        return n > 0 && (size_t)n < sizeof(abs) && net_is_archive_org_url(abs);
+    }
+    /* No scheme at all: relative to the URL we are on, which has already been
+     * checked — so the host cannot change. */
+    if (!has_scheme(loc)) {
+        return true;
+    }
+    return strncasecmp(loc, "https://", 8) == 0 && net_is_archive_org_url(loc);
+}
+
+struct auth_guard {
+    long code; /* status of the response whose headers are arriving */
+};
+
+/*
+ * Keep the archive.org credential from riding a redirect off archive.org.
+ *
+ * curl is told to carry the Authorization header across hosts
+ * (CURLOPT_UNRESTRICTED_AUTH) because archive.org's /download/ URL redirects to
+ * a data node (ia######.us.archive.org) and, without it, the node sees an
+ * unauthenticated request and 401s a restricted item. curl has no host allowlist
+ * to bound that trust, so we read the Location of each 3xx as it arrives:
+ * returning a short count aborts the transfer *before* curl issues the
+ * redirected request, so a redirect off archive.org fails the download rather
+ * than handing the S3 secret to whoever it points at.
+ */
+static size_t auth_hdr_check(char *buf, size_t size, size_t nitems, void *ud) {
+    struct auth_guard *g = (struct auth_guard *)ud;
+    size_t len = size * nitems;
+
+    if (len >= 5 && strncasecmp(buf, "HTTP/", 5) == 0) {
+        /* Status line: a new response starts here (curl replays this callback
+         * for every hop, so the code must be re-read each time). */
+        const char *sp = memchr(buf, ' ', len);
+        g->code = sp ? strtol(sp + 1, NULL, 10) : 0;
+        return len;
+    }
+    if (g->code != 301 && g->code != 302 && g->code != 303 &&
+        g->code != 307 && g->code != 308) {
+        return len;
+    }
+    static const char key[] = "location:";
+    const size_t kl = sizeof(key) - 1;
+    if (len <= kl || strncasecmp(buf, key, kl) != 0) {
+        return len;
+    }
+    const char *v = buf + kl;
+    size_t vl = len - kl;
+    while (vl > 0 && (*v == ' ' || *v == '\t')) {
+        v++;
+        vl--;
+    }
+    while (vl > 0 && (v[vl - 1] == '\r' || v[vl - 1] == '\n' ||
+                      v[vl - 1] == ' ' || v[vl - 1] == '\t')) {
+        vl--;
+    }
+    char loc[2048];
+    if (vl == 0 || vl >= sizeof(loc)) {
+        net_log("SEC redirect refused: unusable Location (%lu bytes)",
+                (unsigned long)vl);
+        return 0; /* can't vet it, so don't follow it */
+    }
+    memcpy(loc, v, vl);
+    loc[vl] = '\0';
+    if (!redirect_ok(loc)) {
+        net_log("SEC redirect refused, credential withheld: %s", loc);
+        return 0;
+    }
+    return len;
+}
+
 bool http_download(const char *url, const char *dest_path,
                    const char *extra_header,
                    net_progress_cb cb, void *userdata,
@@ -275,13 +447,23 @@ bool http_download(const char *url, const char *dest_path,
     d.rate_ud = rate_ud;
     d.last_cap = 0;
 
+    /* A credential goes to archive.org over TLS or it does not go at all. The
+     * caller already gates this, but the rule is the whole reason the header
+     * exists, so it is re-checked at the point of use rather than trusted from
+     * a distance: an unauthenticated attempt is the correct fallback. */
     struct curl_slist *hdrs = NULL;
     if (extra_header && extra_header[0]) {
-        hdrs = curl_slist_append(hdrs, extra_header);
+        if (strncasecmp(url, "https://", 8) == 0 && net_is_archive_org_url(url)) {
+            hdrs = curl_slist_append(hdrs, extra_header);
+        } else {
+            net_log("SEC credential withheld, not an archive.org https URL");
+        }
     }
+    struct auth_guard guard = {0};
 
     curl_easy_setopt(c, CURLOPT_URL, url);
     curl_easy_setopt(c, CURLOPT_FOLLOWLOCATION, 1L);
+    pin_protocols(c);
     curl_easy_setopt(c, CURLOPT_USERAGENT, USER_AGENT);
     curl_easy_setopt(c, CURLOPT_WRITEFUNCTION, file_write);
     curl_easy_setopt(c, CURLOPT_WRITEDATA, &d);
@@ -311,15 +493,14 @@ bool http_download(const char *url, const char *dest_path,
          * (ia######.us.archive.org); by default curl drops a custom
          * Authorization header across that host change, so the node sees an
          * unauthenticated request and 401s a restricted item. Keep the header
-         * across the redirect (curl's --location-trusted). Only reached with the
-         * archive.org S3 credential, which the caller already gates to
-         * archive.org HTTPS URLs; archive.org only redirects within
-         * *.archive.org, so the secret is never sent off-domain. */
+         * across the redirect (curl's --location-trusted) — and then bound that
+         * trust ourselves, since curl has no host allowlist: auth_hdr_check
+         * vets every Location before it is followed, and every hop must be TLS
+         * so the header can't be downgraded onto plain http. */
         curl_easy_setopt(c, CURLOPT_UNRESTRICTED_AUTH, 1L);
-        /* And since the header now rides every hop, every hop must be TLS:
-         * refuse any redirect that would downgrade to plain http (the initial
-         * URL is already gated to https:// by the caller). */
         curl_easy_setopt(c, CURLOPT_REDIR_PROTOCOLS, CURLPROTO_HTTPS);
+        curl_easy_setopt(c, CURLOPT_HEADERFUNCTION, auth_hdr_check);
+        curl_easy_setopt(c, CURLOPT_HEADERDATA, &guard);
     }
     apply_tls(c);
 
@@ -333,12 +514,21 @@ bool http_download(const char *url, const char *dest_path,
         curl_slist_free_all(hdrs);
     }
     curl_easy_cleanup(c);
-    fclose(fp);
+    /* Up to 512KB of the tail is still sitting in the stdio buffer here, so a
+     * full or ejected card surfaces at this fclose rather than at any write.
+     * Discarding the result would hand the caller a short file that only the
+     * size/md5 checks catch — and an item that declares neither would be
+     * installed truncated. */
+    bool flush_ok = (fclose(fp) == 0);
     free(iobuf); /* only after fclose flushes through it */
 
-    net_log("DL  %s (resume=%llu) -> curl=%d(%s) http=%ld", url,
+    net_log("DL  %s (resume=%llu) -> curl=%d(%s) http=%ld%s", url,
             (unsigned long long)resume_from, (int)rc, curl_easy_strerror(rc),
-            code);
+            code, flush_ok ? "" : " FLUSH FAILED");
+
+    if (!flush_ok) {
+        return false; /* the .part is short; the caller resumes from it */
+    }
 
     /* 416 on a resumed transfer means the server has nothing past our offset:
      * the partial file already holds the whole thing. Treat as success. */
