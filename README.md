@@ -90,18 +90,6 @@ themes, a live network/space/battery header, and a configurable ROM folder.
 temporary downloads folder, and takes a collection sent over Wi-Fi from the
 [App Utility](#app-utility).
 
-### Controls
-
-| Button | Browse / file lists | Queue | Installed |
-|---|---|---|---|
-| **A** | open · queue the marked set | — | open |
-| **Y** | mark file · add repo | actions menu | mark for delete |
-| **X** | view menu (filter, sort, select all) | — | rename |
-| **−** | global search | — | search · delete marked |
-| **D-pad ▶ / ◀** | pin · re-sort | jump to top/bottom | pin · re-sort |
-| **ZL / ZR** | page up/down | reorder an item | page up/down |
-| **L / R** | switch tab | switch tab | switch tab |
-
 ---
 
 ## Using it with your emulators
@@ -209,7 +197,18 @@ Each item has an **item id** — the last part of its URL, e.g. for
 
 The console now appears on the Browse tab. Open it with **A**, pick the repo, and
 you'll see its file list. Repeat **Y** to add more collections — a console can
-hold several. (You can also edit `dl_sources.json` directly — see
+hold several.
+
+**Building more than a couple of these? Use the [App Utility](#app-utility)
+instead.** Typing item ids on the Switch's on-screen keyboard gets old fast. The
+utility is a single HTML file that ships with every release — open it in a
+browser on your PC, build the whole collection with a real keyboard, preview any
+item's file list before you commit to it, and send the result straight to the
+console over your network. No SD card swapping, and no re-typing. It can also
+pull the collection the console is currently running back into the editor, so
+you can fetch, edit and send it on again.
+
+(You can also edit `dl_sources.json` on the SD card by hand — see
 [Configuration](#configuration).)
 
 ### 2. Add your archive.org keys (optional)
