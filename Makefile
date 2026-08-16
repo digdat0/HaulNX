@@ -41,7 +41,12 @@ include $(DEVKITPRO)/libnx/switch_rules
 #   of a homebrew executable (.nro). This is intended to be used for sysmodules.
 #   NACP building is skipped as well.
 #---------------------------------------------------------------------------------
-TARGET	:=	HaulNX
+# Plain `make` is the everyday local build and includes source/ext (see below)
+# when present — it's named HaulNX-private so it's never mistaken for the
+# release artifact. `make dist` is the one that produces plain HaulNX.nro,
+# the only NRO that should ever leave this machine — see the `dist` target
+# further down.
+TARGET	:=	HaulNX-private
 APP_TITLE	:=	HaulNX
 APP_AUTHOR	:=	digdat0
 # Single source of truth: the version string lives in the VERSION file. It is
@@ -211,12 +216,13 @@ else
 endif
 
 #---------------------------------------------------------------------------------
-# Public/release build: forces source/ext out of SOURCES (see above) regardless
-# of whether it's present on disk, and links to a distinctly-named output so it
-# can never be confused with (or silently overwrite) a full local build.
-# HaulNX-public.nro is the only NRO variant that should ever leave this machine.
+# Release build: forces source/ext out of SOURCES (see above) regardless of
+# whether it's present on disk, and links to a separate build dir/output name
+# so it can never be confused with (or silently overwrite) a full local build.
+# Produces plain HaulNX.nro — the only NRO variant that should ever leave this
+# machine; upload it as-is, no rename needed.
 dist:
-	@$(MAKE) --no-print-directory PUBLIC_BUILD=1 TARGET=HaulNX-public BUILD=build-public
+	@$(MAKE) --no-print-directory PUBLIC_BUILD=1 TARGET=HaulNX BUILD=build-public
 
 #---------------------------------------------------------------------------------
 else

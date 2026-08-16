@@ -14,9 +14,10 @@ normal target/, so this never clobbers — or gets stale mixed in with — an
 ordinary local `cargo build --release` and its full-featured exe.
 
 Output: target-public/release/haulnx-app-utility.exe copied to
-desktop/HaulNX-AppUtility-public.exe — the only desktop exe that should ever
-leave this machine. Never attach the plain haulnx-app-utility.exe from an
-ordinary local build to a release.
+desktop/HaulNX-AppUtility.exe — the only desktop exe that should ever leave
+this machine; upload it as-is, no rename needed. Never attach the plain
+haulnx-app-utility.exe from an ordinary local `cargo build --release` (your
+full-featured local copy) to a release.
 #>
 
 $ErrorActionPreference = 'Stop'
@@ -51,7 +52,7 @@ try {
 
     $exe = Join-Path $root 'src-tauri\target-public\release\haulnx-app-utility.exe'
     if (-not (Test-Path $exe)) { throw "build succeeded but $exe is missing" }
-    $out = Join-Path $root 'HaulNX-AppUtility-public.exe'
+    $out = Join-Path $root 'HaulNX-AppUtility.exe'
     Copy-Item $exe $out -Force
     Write-Host "Public exe written to $out"
 } finally {
