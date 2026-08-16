@@ -5,6 +5,7 @@
 #include "config.h"
 #include "jsonutil.h"
 #include "md5.h"
+#include "romm_client.h"
 
 #include <switch.h>
 #include <stdio.h>
@@ -357,6 +358,15 @@ static void save_locked(void) {
         json_write_escaped(f, it->dest);
         fputs(",\"md5\":", f);
         json_write_escaped(f, it->md5);
+        /* auth and auth_verify_tls are never persisted -- both are rebuilt on
+         * load from the CURRENT credentials/settings, like archive.org's auth
+         * always was. auth_host just says WHICH credentials apply: "" (the
+         * default/omitted case) means archive.org, matching every queue.json
+         * written before this field existed. */
+        if (it->auth_host[0]) {
+            fputs(",\"auth_host\":", f);
+            json_write_escaped(f, it->auth_host);
+        }
         /* "downloaded": the file is fully on disk (past the download phase),
          * so on reload it skips straight to extraction — no re-download, and
          * no network needed. */
@@ -457,6 +467,13 @@ static void queue_load(void) {
     char auth[320];
     creds_auth_header(&creds, auth, sizeof(auth));
 
+    /* Same, for whichever items are RomM's (auth_host set) rather than
+     * archive.org's -- see the auth_host handling below. */
+    RommCredentials romm_creds;
+    romm_creds_load(&romm_creds);
+    char romm_auth[400];
+    romm_creds_queue_auth_header(&romm_creds, romm_auth, sizeof(romm_auth));
+
     int count = tok[arr].size;
     int child = arr + 1;
     uint32_t maxseq = 0;
@@ -493,7 +510,14 @@ static void queue_load(void) {
                     body, tok, json_obj_get(body, tok, child, "is_archive"));
                 it->seq = (uint32_t)json_u64(
                     body, tok, json_obj_get(body, tok, child, "seq"));
-                snprintf(it->auth, sizeof(it->auth), "%s", auth);
+                json_copy(body, tok, json_obj_get(body, tok, child, "auth_host"),
+                          it->auth_host, sizeof(it->auth_host));
+                if (it->auth_host[0]) {
+                    snprintf(it->auth, sizeof(it->auth), "%s", romm_auth);
+                    it->auth_verify_tls = !romm_creds.ignore_cert_verify;
+                } else {
+                    snprintf(it->auth, sizeof(it->auth), "%s", auth);
+                }
                 bool downloaded = json_bool(
                     body, tok, json_obj_get(body, tok, child, "downloaded"));
                 if (!it->url[0]) {
@@ -633,14 +657,19 @@ static void process_item(QueueItem *it) {
      * browser-style: start unauthenticated, and only if we hit an auth error
      * (the item is actually restricted) retry once WITH the credentials. The
      * credential is still only ever sent to archive.org over HTTPS, and only
-     * when the server demands it — never leaked, never wasted on public files. */
+     * when the server demands it — never leaked, never wasted on public files.
+     *
+     * A RomM item (auth_host set) has no such public/private distinction to
+     * probe -- a self-hosted instance either wants its credential on every
+     * request or doesn't, so it goes out from the very first attempt instead. */
+    bool is_romm = it->auth_host[0] != '\0';
     const char *cred_auth =
-        (it->auth[0] && strncasecmp(it->url, "https://", 8) == 0 &&
+        (!is_romm && it->auth[0] && strncasecmp(it->url, "https://", 8) == 0 &&
          net_is_archive_org_url(it->url))
             ? it->auth
             : NULL;
-    const char *auth = NULL; /* unauthenticated first, like a browser */
-    bool tried_auth = false;
+    const char *auth = (is_romm && it->auth[0]) ? it->auth : NULL;
+    bool tried_auth = is_romm;
     long code = 0;
     bool ok = false;
     /* Count this transfer among the active downloads so the fair-share rate
@@ -651,8 +680,12 @@ static void process_item(QueueItem *it) {
      * new connections) and transport drops get a couple of automatic retries
      * with a short backoff, resuming from the .part instead of failing. */
     for (int attempt = 0;; attempt++) {
-        ok = http_download(it->url, tmp, auth, dl_progress, &ctx,
-                           dl_rate_cb, NULL, have, &code);
+        ok = is_romm
+                ? http_download_authed(it->url, tmp, it->auth_host, auth,
+                                       it->auth_verify_tls, dl_progress, &ctx,
+                                       dl_rate_cb, NULL, have, &code)
+                : http_download(it->url, tmp, auth, dl_progress, &ctx,
+                                dl_rate_cb, NULL, have, &code);
         it->http_code = code;
         if (ok || it->cancel || it->pause || !g_run) {
             break;
@@ -1136,9 +1169,11 @@ void queue_exit(void) {
     mutexUnlock(&g_mtx);
 }
 
-bool queue_add(const char *url, const char *name, const char *target,
-               const char *auth, uint64_t size, bool is_archive,
-               const char *md5, const char *dest) {
+static bool queue_add_impl(const char *url, const char *name,
+                           const char *target, const char *auth,
+                           const char *auth_host, bool verify_tls,
+                           uint64_t size, bool is_archive, const char *md5,
+                           const char *dest) {
     mutexLock(&g_mtx);
     int slot = -1;
     for (int i = 0; i < QUEUE_MAX; i++) {
@@ -1158,6 +1193,9 @@ bool queue_add(const char *url, const char *name, const char *target,
     snprintf(it->target, sizeof(it->target), "%s", target);
     snprintf(it->dest, sizeof(it->dest), "%s", dest ? dest : "");
     snprintf(it->auth, sizeof(it->auth), "%s", auth ? auth : "");
+    snprintf(it->auth_host, sizeof(it->auth_host), "%s",
+            auth_host ? auth_host : "");
+    it->auth_verify_tls = verify_tls;
     snprintf(it->md5, sizeof(it->md5), "%s", md5 ? md5 : "");
     /* Backstop: every download enters here, whatever route the caller took to
      * find a size, so the space guard's arithmetic is bounded at one place. */
@@ -1168,6 +1206,21 @@ bool queue_add(const char *url, const char *name, const char *target,
     save_locked();
     mutexUnlock(&g_mtx);
     return true;
+}
+
+bool queue_add(const char *url, const char *name, const char *target,
+               const char *auth, uint64_t size, bool is_archive,
+               const char *md5, const char *dest) {
+    return queue_add_impl(url, name, target, auth, "", true, size, is_archive,
+                          md5, dest);
+}
+
+bool queue_add_ex(const char *url, const char *name, const char *target,
+                  const char *auth, const char *auth_host, bool verify_tls,
+                  uint64_t size, bool is_archive, const char *md5,
+                  const char *dest) {
+    return queue_add_impl(url, name, target, auth, auth_host, verify_tls,
+                          size, is_archive, md5, dest);
 }
 
 void queue_batch_begin(void) {

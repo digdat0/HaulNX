@@ -241,6 +241,10 @@ static void url_encode_path(const char *in, char *out, size_t out_sz) {
 
 void ia_file_url(const ArchiveItem *item, const ArchiveFile *file,
                  char *out, size_t out_sz) {
+    if (file->url_override[0]) {
+        snprintf(out, out_sz, "%s", file->url_override);
+        return;
+    }
     char base[512];
     if (item->download_base[0]) {
         snprintf(base, sizeof(base), "%s", item->download_base);

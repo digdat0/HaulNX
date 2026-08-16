@@ -551,6 +551,16 @@ class CardGrid : public pu::ui::elm::Element {
         this->dirty = true;
     }
 
+    // Swap one card's icon in place -- e.g. a cover-art thumbnail decoded
+    // after the card was first built with a fallback icon. Icon is read
+    // fresh every frame (never cached), same as SetQueueCard already mutates
+    // cd.icon in place, so this needs no cache rebuild / dirty flag.
+    void SetCardIcon(const s32 i, pu::sdl2::Texture icon) {
+        if (i >= 0 && i < (s32)this->cards.size()) {
+            this->cards[i].icon = icon;
+        }
+    }
+
     // Queue card view: the queue refreshes every frame, so instead of the
     // Clear + AddCard rebuild it diff-updates cards in place — text textures
     // re-render only when their content actually changed.

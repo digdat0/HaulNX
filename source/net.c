@@ -160,6 +160,52 @@ bool net_is_archive_org_url(const char *url) {
            strncasecmp(h + hl - dl, dom, dl) == 0;
 }
 
+bool net_url_host_eq(const char *url, const char *host) {
+    if (!url || !host || !host[0]) {
+        return false;
+    }
+    const char *p = strstr(url, "://");
+    if (!p) {
+        return false;
+    }
+    p += 3;
+    size_t alen = 0;
+    while (p[alen] && p[alen] != '/' && p[alen] != '\\' && p[alen] != '?' &&
+           p[alen] != '#') {
+        alen++;
+    }
+    size_t hs = 0;
+    for (size_t i = 0; i < alen; i++) {
+        if (p[i] == '@') {
+            hs = i + 1;
+        }
+    }
+    const char *h = p + hs;
+    size_t hl = alen - hs;
+    for (size_t i = 0; i < hl; i++) {
+        if (h[i] == ':') { /* drop the port */
+            hl = i;
+            break;
+        }
+    }
+    while (hl > 0 && h[hl - 1] == '.') {
+        hl--;
+    }
+
+    /* Same normalisation on the configured host (as typed into settings, e.g.
+     * "192.168.1.10:8080"): drop a port and a trailing dot, so the comparison
+     * only cares whether it is the same host. */
+    size_t hostlen = 0;
+    while (host[hostlen] && host[hostlen] != ':') {
+        hostlen++;
+    }
+    while (hostlen > 0 && host[hostlen - 1] == '.') {
+        hostlen--;
+    }
+
+    return hl > 0 && hl == hostlen && strncasecmp(h, host, hl) == 0;
+}
+
 /* Ceiling for an in-memory GET. The biggest legitimate response is an
  * archive.org /metadata/ listing for a huge item — single-digit MB. Anything
  * beyond this is a broken or hostile server, and letting it realloc without
@@ -448,6 +494,83 @@ char *http_get_on(void *conn, const char *url, long *http_code, size_t *out_len)
     return http_get_impl(c, url, http_code, out_len);
 }
 
+char *http_get_authed(const char *url, const char *auth_host,
+                      const char *user, const char *pass,
+                      const char *auth_header, bool verify_tls,
+                      long *http_code, size_t *out_len) {
+    CURL *c = curl_easy_init();
+    if (!c) {
+        return NULL;
+    }
+
+    struct mem_buf m;
+    m.data = (char *)malloc(1);
+    m.len = 0;
+    if (m.data) {
+        m.data[0] = '\0';
+    }
+
+    curl_easy_setopt(c, CURLOPT_URL, url);
+    /* No CURLOPT_FOLLOWLOCATION: a provider's JSON API has no legitimate
+     * reason to redirect, and not following one closes off any question of
+     * where the credential set below could end up. */
+    pin_protocols(c);
+    curl_easy_setopt(c, CURLOPT_USERAGENT, USER_AGENT);
+    curl_easy_setopt(c, CURLOPT_ACCEPT_ENCODING, "");
+    curl_easy_setopt(c, CURLOPT_WRITEFUNCTION, mem_write);
+    curl_easy_setopt(c, CURLOPT_WRITEDATA, &m);
+    curl_easy_setopt(c, CURLOPT_TIMEOUT, 30L);
+    curl_easy_setopt(c, CURLOPT_CONNECTTIMEOUT, 20L);
+    apply_tls(c);
+
+    /* The credential is this provider's own (e.g. a RomM instance), never
+     * archive.org's or vice versa — re-checked here at the point of use,
+     * against the host the caller says it is meant for, exactly like the
+     * archive.org credential is re-checked in http_download. */
+    struct curl_slist *hdrs = NULL;
+    bool host_ok = net_url_host_eq(url, auth_host);
+    if (host_ok && user && user[0] && pass) {
+        char userpwd[300];
+        snprintf(userpwd, sizeof(userpwd), "%s:%s", user, pass);
+        curl_easy_setopt(c, CURLOPT_HTTPAUTH, CURLAUTH_BASIC);
+        curl_easy_setopt(c, CURLOPT_USERPWD, userpwd);
+    } else if (host_ok && auth_header && auth_header[0]) {
+        hdrs = curl_slist_append(hdrs, auth_header);
+        curl_easy_setopt(c, CURLOPT_HTTPHEADER, hdrs);
+    } else if (!host_ok && ((user && user[0]) || (auth_header && auth_header[0]))) {
+        net_log("SEC credential withheld, host mismatch: %s", url);
+    }
+
+    if (!verify_tls) {
+        curl_easy_setopt(c, CURLOPT_SSL_VERIFYPEER, 0L);
+        curl_easy_setopt(c, CURLOPT_SSL_VERIFYHOST, 0L);
+    }
+
+    CURLcode rc = curl_easy_perform(c);
+    long code = 0;
+    curl_easy_getinfo(c, CURLINFO_RESPONSE_CODE, &code);
+    if (http_code) {
+        *http_code = code;
+    }
+
+    net_log("GET(authed) %s -> curl=%d(%s) http=%ld len=%lu", url, (int)rc,
+            curl_easy_strerror(rc), code, (unsigned long)m.len);
+
+    if (hdrs) {
+        curl_slist_free_all(hdrs);
+    }
+    curl_easy_cleanup(c);
+
+    if (rc != CURLE_OK) {
+        free(m.data);
+        return NULL;
+    }
+    if (out_len) {
+        *out_len = m.len;
+    }
+    return m.data;
+}
+
 struct dl_ctx {
     FILE *fp;
     net_progress_cb cb;
@@ -702,6 +825,110 @@ bool http_download(const char *url, const char *dest_path,
 
     /* 416 on a resumed transfer means the server has nothing past our offset:
      * the partial file already holds the whole thing. Treat as success. */
+    if (rc == CURLE_HTTP_RETURNED_ERROR && code == 416 && resume_from > 0) {
+        return true;
+    }
+    return rc == CURLE_OK;
+}
+
+bool http_download_authed(const char *url, const char *dest_path,
+                          const char *auth_host, const char *extra_header,
+                          bool verify_tls,
+                          net_progress_cb cb, void *userdata,
+                          net_rate_cb rate_cb, void *rate_ud,
+                          uint64_t resume_from,
+                          long *http_code) {
+    FILE *fp = fopen(dest_path, resume_from > 0 ? "ab" : "wb");
+    if (!fp) {
+        return false;
+    }
+    char *iobuf = (char *)malloc(512 * 1024);
+    if (iobuf) {
+        setvbuf(fp, iobuf, _IOFBF, 512 * 1024);
+    }
+    CURL *c = curl_easy_init();
+    if (!c) {
+        fclose(fp);
+        free(iobuf);
+        return false;
+    }
+
+    struct dl_ctx d;
+    d.fp = fp;
+    d.cb = cb;
+    d.ud = userdata;
+    d.base = resume_from;
+    d.handle = c;
+    d.rate_cb = rate_cb;
+    d.rate_ud = rate_ud;
+    d.last_cap = 0;
+
+    /* The credential is this provider's own (e.g. a RomM instance), never
+     * archive.org's or vice versa -- re-checked here at the point of use,
+     * like every other credential in this file. */
+    struct curl_slist *hdrs = NULL;
+    if (extra_header && extra_header[0]) {
+        if (net_url_host_eq(url, auth_host)) {
+            hdrs = curl_slist_append(hdrs, extra_header);
+        } else {
+            net_log("SEC credential withheld, host mismatch: %s", url);
+        }
+    }
+
+    curl_easy_setopt(c, CURLOPT_URL, url);
+    /* No CURLOPT_FOLLOWLOCATION: see this function's header comment in net.h
+     * -- not following a redirect closes off any question of where the
+     * header above could end up. */
+    pin_protocols(c);
+    curl_easy_setopt(c, CURLOPT_USERAGENT, USER_AGENT);
+    curl_easy_setopt(c, CURLOPT_WRITEFUNCTION, file_write);
+    curl_easy_setopt(c, CURLOPT_WRITEDATA, &d);
+    curl_easy_setopt(c, CURLOPT_NOPROGRESS, 0L);
+    curl_easy_setopt(c, CURLOPT_XFERINFOFUNCTION, xfer_info);
+    curl_easy_setopt(c, CURLOPT_XFERINFODATA, &d);
+    curl_easy_setopt(c, CURLOPT_CONNECTTIMEOUT, 20L);
+    /* Abort a transfer that stalls (<30 B/s for 30s), same as http_download. */
+    curl_easy_setopt(c, CURLOPT_LOW_SPEED_LIMIT, 30L);
+    curl_easy_setopt(c, CURLOPT_LOW_SPEED_TIME, 30L);
+    curl_easy_setopt(c, CURLOPT_FAILONERROR, 1L); /* treat 4xx/5xx as errors */
+    if (rate_cb) {
+        d.last_cap = rate_cb(rate_ud);
+        curl_easy_setopt(c, CURLOPT_MAX_RECV_SPEED_LARGE,
+                         (curl_off_t)d.last_cap);
+    }
+    if (resume_from > 0) {
+        curl_easy_setopt(c, CURLOPT_RESUME_FROM_LARGE,
+                         (curl_off_t)resume_from);
+    }
+    if (hdrs) {
+        curl_easy_setopt(c, CURLOPT_HTTPHEADER, hdrs);
+    }
+    if (!verify_tls) {
+        curl_easy_setopt(c, CURLOPT_SSL_VERIFYPEER, 0L);
+        curl_easy_setopt(c, CURLOPT_SSL_VERIFYHOST, 0L);
+    }
+    apply_tls(c);
+
+    CURLcode rc = curl_easy_perform(c);
+    long code = 0;
+    curl_easy_getinfo(c, CURLINFO_RESPONSE_CODE, &code);
+    if (http_code) {
+        *http_code = code;
+    }
+    if (hdrs) {
+        curl_slist_free_all(hdrs);
+    }
+    curl_easy_cleanup(c);
+    bool flush_ok = (fclose(fp) == 0);
+    free(iobuf);
+
+    net_log("DL(authed) %s (resume=%llu) -> curl=%d(%s) http=%ld%s", url,
+            (unsigned long long)resume_from, (int)rc, curl_easy_strerror(rc),
+            code, flush_ok ? "" : " FLUSH FAILED");
+
+    if (!flush_ok) {
+        return false;
+    }
     if (rc == CURLE_HTTP_RETURNED_ERROR && code == 416 && resume_from > 0) {
         return true;
     }

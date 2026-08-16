@@ -540,6 +540,10 @@ class MainLayout : public pu::ui::Layout {
     void AddCard(const std::string &title, const std::string &subtitle,
                  pu::sdl2::Texture icon, bool pinned = false,
                  bool dim = false);
+    // Swap one card's icon in place (e.g. a RomM cover-art thumbnail landing
+    // after the card was first built with a fallback icon). No-op outside
+    // card mode.
+    void SetCardIcon(s32 i, pu::sdl2::Texture icon);
     // Queue card view: per-frame diff updates instead of Clear + AddCard.
     // Single-card mode shows one enlarged centred card (self-update).
     void SetSingleCard(bool on);
@@ -582,6 +586,8 @@ class MainApplication : public pu::ui::Application {
         Log,
         Manage,   // show/hide consoles on the Browse page
         Creds,    // archive.org credentials editor
+        RommCreds, // RomM credentials editor (second download source)
+        RommPlatformPicker, // Browse (Y) -> RomM: pick a platform, live from /api/platforms
         DlPrefs,  // Downloads settings (concurrency/rate/skip/keep-awake)
         Appearance, // Appearance settings (theme/cards/group/language)
         ExtFilter, // Browse file-view extension filter editor
@@ -734,6 +740,73 @@ class MainApplication : public pu::ui::Application {
     // to draw the meters and sets sp_prog.cancel to abort. See net.h SpeedProg.
     SpeedProg sp_prog{};
 
+    // Background RomM "Test connection" (Settings -> Account -> RomM): a single
+    // GET /api/platforms off the UI thread, same shape as the network self-test
+    // (diag) but its own task -- a RomM test must not collide with a Diagnostics
+    // self-test/speed test in flight.
+    BgTask romm_test;
+    std::atomic<bool> romm_test_ok{false};
+    long romm_test_http_code = 0;   // 0 = transport-level failure, not an HTTP response
+    char romm_test_err[160] = "";   // short, plain-English reason on failure
+
+    // Background RomM platform list (Browse -> Y -> RomM): GET /api/platforms,
+    // same shape as romm_test above. Result lands in the g_romm_platform_list
+    // global (like archive.org metadata lands in g_item) -- see
+    // RommPlatformsThread.
+    BgTask romm_platforms;
+    std::atomic<bool> romm_platforms_ok{false};
+    long romm_platforms_http_code = 0;
+    char romm_platforms_err[160] = "";
+
+    // Background RomM rom list for one platform (after it's picked): GET
+    // /api/roms?platform_id=. romm_roms_platform_id/target/display_name are
+    // set by RommRomsStart before the thread runs, same as StartMetaLoad's
+    // g_files_id/g_files_target for archive.org.
+    BgTask romm_roms;
+    std::atomic<bool> romm_roms_ok{false};
+    long romm_roms_http_code = 0;
+    char romm_roms_err[160] = "";
+    int romm_roms_platform_id = 0;
+    std::string romm_roms_target;
+    std::string romm_roms_display_name;
+    /* -1 (the default): the roms/platforms fetch in flight is the ephemeral
+     * Browse (Y) one-off browse. >= 0: it's linking a RomM platform to this
+     * console index as a persisted repo (Screen::Repos' own Y), or (via
+     * GotoFiles) re-fetching an already-linked repo's roms -- see
+     * OfferLinkRommRepo/Screen::RommPlatformPicker's A-press handler. */
+    int romm_link_ci = -1;
+    /* True when the current romm_roms fetch is for an already-linked repo
+     * (opened via GotoFiles) rather than a fresh platform pick -- decides
+     * whether RommRomsTick treats the resulting Files listing like a normal
+     * repo (g_files_manual=false, B returns to Screen::Repos) or like the
+     * ephemeral one-off browse (g_files_manual=true, B returns to Home). */
+    bool romm_roms_from_repo = false;
+
+    // Background RomM cover-art cache warmer: after a listing loads, quietly
+    // downloads each file's cover thumbnail to CACHE_DIR/romm_covers/<platform>/
+    // (see RommCoversStart) so the grid view's cards can pick them up from
+    // disk as they land. Runs one file at a time on its own thread, reading
+    // only its job list (g_romm_cover_jobs) -- never g_item directly. Safe
+    // because RommCoversStart only clears/repopulates that job list (and
+    // g_romm_cover_paths/g_romm_cover_tex) AFTER synchronously cancelling and
+    // Join()ing any run already in flight, same idiom as GotoSearch
+    // superseding a running scan (and g_ra_ids/RaStart's "rebuild only when
+    // nothing is reading it" contract) -- so a later listing switch can never
+    // race a worker still reading the previous listing's job list. Reaped
+    // non-blockingly every frame by RommCoversPoll, same shape as BgChkPoll.
+    BgTask romm_covers;
+    std::atomic<bool> romm_covers_cancel{false};
+    static int RommCoverProgressCb(void *userdata, uint64_t now, uint64_t total);
+    static void RommCoversThread(void *arg);
+    void RommCoversStart(); // (re)start caching covers for the just-loaded g_item
+    void RommCoversPoll();  // non-blocking: reap a finished run
+    // Every frame while Screen::Files is showing a RomM listing in grid view:
+    // decode+show the cover for each newly-visible card whose file has landed
+    // on disk, and free+fall back to the console icon for cards that scrolled
+    // out of view (bounds resident cover textures to roughly one screen's
+    // worth). No-op otherwise.
+    void RommCoverGridTick();
+
     // Background bulk metadata refresh (Manage data -> Refresh all metadata):
     // force-fetches every enabled repo's file list, with live (n/total)
     // progress and B to cancel between repos.
@@ -861,6 +934,29 @@ class MainApplication : public pu::ui::Application {
     void GotoLog();
     void GotoManage();
     void GotoCreds();
+    void GotoRommCreds();
+    void RommTestStart();   // kick off the background "Test connection" GET
+    void RommTestTick();    // poll it; show the result when done
+    static void RommTestThread(void *arg);
+    // Browse (Y): offer archive.org vs RomM when RomM is configured, else go
+    // straight to the archive.org console picker (today's only behavior).
+    void OfferAddSource();
+    void RommPlatformsStart(); // kick off the background /api/platforms GET
+    void RommPlatformsTick();  // poll it; open the picker or report the error
+    static void RommPlatformsThread(void *arg);
+    void GotoRommPlatformPicker();
+    void RommRomsStart(int platform_id, const std::string &target,
+                       const std::string &display_name);
+    void RommRomsTick(); // poll the roms GET; populate g_item and open Files
+    static void RommRomsThread(void *arg);
+    // Screen::Repos' own Y (already inside a console): offer archive.org vs
+    // RomM the same way OfferAddSource does on Home, but linking a picked
+    // RomM platform to THIS console as a persisted repo instead of an
+    // ephemeral one-off browse -- see romm_link_ci.
+    void OfferLinkRommRepo(int ci);
+    // The prompt-for-name-then-id archive.org add flow, factored out of
+    // Screen::Repos' Y-handler so OfferLinkRommRepo can fall back to it.
+    void AddArchiveRepoPrompt(int ci);
     void GotoDlPrefs();
     void GotoRomPicker(const std::string &path);
     void GotoAppearance();

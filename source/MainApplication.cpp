@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cerrno>
 #include <cstdarg>
+#include <cstdlib>
 #include <fstream>
 #include <map>
 #include <set>
@@ -15,6 +16,7 @@ extern "C" {
 #include "config.h"
 #include "i18n.h"
 #include "iarchive.h"
+#include "romm_client.h"
 #include "net.h"
 #include "queue.h"
 #include "extract.h"
@@ -32,6 +34,22 @@ extern "C" {
 // ---- backend state --------------------------------------------------------
 static SourcesConfig g_cfg;
 static Credentials g_creds;
+static RommCredentials g_romm_creds;
+// Session-only "last test" outcome for the Account row's status text (see
+// GotoAccount): romm_status_failed only shows after a test has actually been
+// run and failed, not merely because the connection has never been tested.
+static bool g_romm_tested = false;
+static bool g_romm_last_test_ok = false;
+// Live platform list from Browse -> Y -> RomM (RommPlatformsThread), and the
+// display order the picker shows them in (indices into
+// g_romm_platform_list.platforms, sorted by name -- mirrors g_picker's role
+// for the archive.org console picker).
+static RommPlatformList g_romm_platform_list = {NULL, 0};
+static std::vector<int> g_romm_platform_order;
+// Scratch for the roms fetch (RommRomsThread): converted into g_item/g_files
+// (see romm_roms_to_archive_item) and freed immediately, so it never needs to
+// survive past RommRomsTick.
+static RommRomList g_romm_roms_list = {NULL, 0};
 static Prefs g_prefs;
 static TicoState g_tico;
 static ArchiveItem g_item;
@@ -54,6 +72,31 @@ static char g_files_id[256], g_files_base[512], g_files_target[64];
 // on the UI thread). g_dl_md5 (below) holds the md5 side.
 static std::vector<std::string> g_inst_idx;
 static bool g_files_manual = false;
+// True when the current Files listing (g_item) came from RomM instead of
+// archive.org -- decides which credential enqueueing attaches (see
+// queue_add_current_source). g_files_manual is also set true for a RomM
+// listing (it has no "repo" to cycle through either, same as a pasted
+// archive.org URL), but that flag alone can't tell the two apart.
+static bool g_files_is_romm = false;
+// Grid (cover-art) vs list display for the current Files listing. Only ever
+// true for a RomM listing (list mode is the only display archive.org's has
+// -- see rebuild_files); defaulted true whenever a fresh RomM listing loads
+// (RommRomsTick) and togglable from the View menu (FilesViewMenu).
+static bool g_files_card_view = false;
+// Parallel to g_item.files (by index): the on-disk cache path RommCoversStart
+// picked for each file's cover ("" if the file has no cover_url), and the
+// decoded texture once RommCoverGridTick has loaded it (nullptr until then,
+// and while scrolled out of view -- see its doc comment). UI-thread-only:
+// the cover-fetch worker never reads or writes these, only g_romm_cover_jobs
+// below (and only ever the copy RommCoversStart handed it before it began).
+static std::vector<std::string> g_romm_cover_paths;
+static std::vector<pu::sdl2::Texture> g_romm_cover_tex;
+// The cover-fetch worker's job list, rebuilt by RommCoversStart -- see
+// MainApplication::romm_covers' doc comment for why this is safe without a
+// lock (only ever touched after a synchronous cancel+Join of whatever was
+// reading the previous contents).
+struct RommCoverJob { std::string url, path; };
+static std::vector<RommCoverJob> g_romm_cover_jobs;
 
 #define FILES_SUBTITLE tr(S_SUB_FILES)
 
@@ -778,6 +821,16 @@ static void rebuild_files(MainLayout *lay, const char *target,
         build_installed_index(target, g_inst_idx);
         load_dl_md5(); // md5 of what we installed, to spot repo-updated files
     }
+    // Grid (cover art) display is a RomM-only alternative to the list above --
+    // archive.org listings have no cover metadata and always render as rows.
+    // Multi-select (marks) stays list-only: CardGrid has no mark visual, so
+    // Y-toggle and the View menu's select-all/clear are hidden in grid mode
+    // (see HandleInput/FilesViewMenu) rather than mutating g_sel invisibly.
+    bool grid = g_files_is_romm && g_files_card_view;
+    if (grid) {
+        lay->SetCardsMode(true);
+    }
+    pu::sdl2::Texture fallback_icon = console_icon(target);
     int updates = 0;
     for (int k = 0; k < (int)g_files.size(); k++) {
         ArchiveFile *f = &g_item.files[g_files[k]];
@@ -799,17 +852,27 @@ static void rebuild_files(MainLayout *lay, const char *target,
         char name[540];
         snprintf(name, sizeof(name), "%s%s",
                  mark == 2 ? "↑ " : mark == 1 ? "* " : "", f->name);
-        lay->AddRow2(name, human_size(f->size),
-                     g_theme->row_text, size_color(f->size));
-        // Re-apply the selection: ClearMenu() wiped the widget's row marks, but
-        // g_sel is keyed to the file, so a row that reappears under a different
-        // filter or sort comes back still selected.
-        if (g_sel.count(g_files[k])) {
-            lay->SetMark(k, true);
+        if (grid) {
+            // Fallback icon until RommCoverGridTick swaps in the decoded
+            // cover (or forever, for a file with no cover_url).
+            lay->AddCard(name, human_size(f->size), fallback_icon);
+        } else {
+            lay->AddRow2(name, human_size(f->size),
+                         g_theme->row_text, size_color(f->size));
+            // Re-apply the selection: ClearMenu() wiped the widget's row marks,
+            // but g_sel is keyed to the file, so a row that reappears under a
+            // different filter or sort comes back still selected.
+            if (g_sel.count(g_files[k])) {
+                lay->SetMark(k, true);
+            }
         }
     }
     if (g_files.empty()) {
-        lay->AddRow(tr(S_NO_FILES_MATCH));
+        if (grid) {
+            lay->SetEmptyState(fallback_icon, tr(S_NO_FILES_MATCH));
+        } else {
+            lay->AddRow(tr(S_NO_FILES_MATCH));
+        }
     }
     g_files_updates = updates;
     files_info_line(lay);
@@ -841,6 +904,7 @@ void MainApplication::StartMetaLoad(const std::string &id,
         g_have_item = false;
         this->meta_discard = false;
     }
+    g_files_is_romm = false; // every StartMetaLoad caller is archive.org
     snprintf(g_files_id, sizeof(g_files_id), "%s", id.c_str());
     snprintf(g_files_base, sizeof(g_files_base), "%s", base.c_str());
     snprintf(g_files_target, sizeof(g_files_target), "%s", target.c_str());
@@ -1678,6 +1742,9 @@ void MainLayout::AddCard(const std::string &title, const std::string &subtitle,
                          pu::sdl2::Texture icon, bool pinned, bool dim) {
     this->grid->AddCard(title, subtitle, icon, pinned, dim);
 }
+void MainLayout::SetCardIcon(s32 i, pu::sdl2::Texture icon) {
+    this->grid->SetCardIcon(i, icon);
+}
 void MainLayout::SetSingleCard(bool on) { this->grid->SetSingle(on); }
 void MainLayout::SetQueueCount(s32 n) { this->grid->SetQueueCount(n); }
 void MainLayout::SetQueueCard(s32 i, const std::string &console,
@@ -1829,18 +1896,29 @@ bool MainApplication::SpaceOkToQueue(uint64_t add_size) {
 // one menu now covers everything that changes what the list shows or what is
 // picked out of it.
 void MainApplication::FilesViewMenu() {
-    enum { ACT_FILTER, ACT_SORT, ACT_ALL, ACT_NONE };
+    enum { ACT_FILTER, ACT_SORT, ACT_ALL, ACT_NONE, ACT_GRID_TOGGLE };
     std::vector<std::string> opts;
     std::vector<int> acts;
     opts.push_back(tr(S_FILTER)); acts.push_back(ACT_FILTER);
     opts.push_back(tr(S_SORT));   acts.push_back(ACT_SORT);
-    if (!g_files.empty()) {
-        char lb[96];
-        snprintf(lb, sizeof(lb), tr(S_SELECT_ALL_SHOWN), (int)g_files.size());
-        opts.push_back(lb); acts.push_back(ACT_ALL);
+    // Grid <-> list is RomM-only (cover art is the whole point; archive.org
+    // listings have no cover metadata) and mutually exclusive with
+    // multi-select, so select-all/clear are hidden while the grid is active
+    // -- see rebuild_files' grid branch and the Y-handler's InCards() guard.
+    if (g_files_is_romm) {
+        opts.push_back(tr(g_files_card_view ? S_SWITCH_TO_LIST
+                                            : S_SWITCH_TO_GRID));
+        acts.push_back(ACT_GRID_TOGGLE);
     }
-    if (!g_sel.empty()) {
-        opts.push_back(tr(S_CLEAR_SELECTION)); acts.push_back(ACT_NONE);
+    if (!this->layout->InCards()) {
+        if (!g_files.empty()) {
+            char lb[96];
+            snprintf(lb, sizeof(lb), tr(S_SELECT_ALL_SHOWN), (int)g_files.size());
+            opts.push_back(lb); acts.push_back(ACT_ALL);
+        }
+        if (!g_sel.empty()) {
+            opts.push_back(tr(S_CLEAR_SELECTION)); acts.push_back(ACT_NONE);
+        }
     }
     opts.push_back(tr(S_CANCEL));
 
@@ -1857,6 +1935,10 @@ void MainApplication::FilesViewMenu() {
         }
         break;
     }
+    case ACT_GRID_TOGGLE:
+        g_files_card_view = !g_files_card_view;
+        rebuild_files(this->layout.get(), g_files_target, false);
+        break;
     case ACT_SORT: {
         int s = this->CreateShowDialog(
             tr(g_sort_keys[g_sort_mode]), "",
@@ -1897,6 +1979,29 @@ void MainApplication::FilesViewMenu() {
 // redirect a download already running.
 static const char *install_folder_for(const char *target) {
     return g_prefs.custom_folders ? config_console_folder(&g_cfg, target) : "";
+}
+
+// Enqueue a file from the currently-open Files listing (g_item), attaching
+// whichever provider's credential actually applies: archive.org's (the
+// default) or RomM's, when the listing came from RomM (g_files_is_romm) --
+// see romm_creds_queue_auth_header/queue_add_ex's doc comments for why RomM
+// needs its own queue_add variant instead of archive.org's queue_add.
+static bool queue_add_current_source(const char *url, const char *name,
+                                     const char *target, uint64_t size,
+                                     bool is_archive, const char *md5,
+                                     const char *dest) {
+    if (g_files_is_romm) {
+        char auth[400];
+        romm_creds_queue_auth_header(&g_romm_creds, auth, sizeof(auth));
+        char host[256];
+        romm_server_authority(g_romm_creds.server_url, host, sizeof(host));
+        return queue_add_ex(url, name, target, auth, host,
+                            !g_romm_creds.ignore_cert_verify, size, is_archive,
+                            md5, dest);
+    }
+    char auth[320];
+    creds_auth_header(&g_creds, auth, sizeof(auth));
+    return queue_add(url, name, target, auth, size, is_archive, md5, dest);
 }
 
 // A with files marked: queue the whole selection, but total it up first. Every
@@ -2016,8 +2121,6 @@ void MainApplication::QueueSelection() {
     }
 
     const int want = counts[r];
-    char auth[320];
-    creds_auth_header(&g_creds, auth, sizeof(auth));
     int done = 0;
     // One queue-state write for the whole batch: queue_add persists on every
     // call, so without this, queueing N items rewrites the file N times.
@@ -2031,9 +2134,9 @@ void MainApplication::QueueSelection() {
         ArchiveFile *f = &g_item.files[add[i]];
         char url[1024];
         ia_file_url(&g_item, f, url, sizeof(url));
-        if (!queue_add(url, f->name, g_files_target, auth, f->size,
-                       is_archive_name(f->name), f->md5,
-                       install_folder_for(g_files_target))) {
+        if (!queue_add_current_source(url, f->name, g_files_target, f->size,
+                                      is_archive_name(f->name), f->md5,
+                                      install_folder_for(g_files_target))) {
             break; // queue filled under us; report what did land
         }
         g_sel.erase(add[i]); // queued items drop out of the selection
@@ -2191,7 +2294,13 @@ void MainApplication::GotoHome() {
                 Repo *rp = &g_cfg.consoles[c].repos[r];
                 const char *cname = g_cfg.consoles[c].console;
                 const char *full = console_full_name(cname);
-                flat_rows.push_back({full ? full : cname, rp->label, cname,
+                std::string lbl = rp->label;
+                if (rp->is_romm) {
+                    lbl += " (";
+                    lbl += tr(S_ROMM);
+                    lbl += ")";
+                }
+                flat_rows.push_back({full ? full : cname, lbl, cname,
                                      rp->pinned, rp->enabled != 0});
             }
         }
@@ -2249,7 +2358,15 @@ void MainApplication::GotoRepos(int ci) {
     for (int idx : g_repos_map) {
         // On/off state as a coloured right-hand chip, matching the flat
         // Browse rows (the console is already in the title, so no icon).
-        this->layout->AddRow2(g->repos[idx].label,
+        // A RomM-linked repo gets a "(RomM)" suffix so it reads apart from
+        // archive.org repos at a glance.
+        std::string lbl = g->repos[idx].label;
+        if (g->repos[idx].is_romm) {
+            lbl += " (";
+            lbl += tr(S_ROMM);
+            lbl += ")";
+        }
+        this->layout->AddRow2(lbl,
                               g->repos[idx].enabled ? tr(S_ON) : tr(S_OFF),
                               g_theme->row_text,
                               onoff_color(g->repos[idx].enabled), -1.0f,
@@ -2263,13 +2380,26 @@ void MainApplication::GotoRepos(int ci) {
 
 void MainApplication::GotoFiles(int ci, int ri, bool force) {
     g_sort_mode = SORT_DEFAULT;
-    g_files_manual = false;
     this->sel_ci = ci;
     this->sel_ri = ri;
     ConsoleGroup *g = &g_cfg.consoles[ci];
     Repo *rp = &g->repos[ri];
-    this->layout->SetTitle(std::string(g->console) + " > " + rp->label);
     this->layout->SetTitleIcon(console_icon(g->console));
+    if (rp->is_romm) {
+        // Linked RomM repo: re-fetch its platform's roms live -- there's no
+        // metadata cache for RomM, so `force` (hard refresh) makes no
+        // difference here, it's always a fresh GET. See RommRomsTick's
+        // romm_roms_from_repo branch for how this differs from the ephemeral
+        // Browse (Y) -> RomM one-off pick.
+        g_files_manual = false;
+        this->romm_roms_from_repo = true;
+        this->layout->SetTitle(std::string(g->console) + " > " + rp->label);
+        this->screen = Screen::Files;
+        this->RommRomsStart(atoi(rp->id), g->target, rp->label);
+        return;
+    }
+    g_files_manual = false;
+    this->layout->SetTitle(std::string(g->console) + " > " + rp->label);
     this->screen = Screen::Files;
     this->StartMetaLoad(rp->id, rp->download_base, g->target, force,
                         FILES_SUBTITLE);
@@ -2477,6 +2607,11 @@ static pu::ui::Color value_color() {
 }
 static pu::ui::Color chevron_color() {
     return pu::ui::Color(125, 132, 150, 255);
+}
+// Failure-state red, matching Q_FAILED's queue-row color (qstatus_color).
+static pu::ui::Color error_color() {
+    return is_light_theme() ? pu::ui::Color(185, 35, 35, 255)
+                            : pu::ui::Color(240, 110, 110, 255);
 }
 static const char *CHEVRON = "›"; // › — marks a row that opens a screen
 
@@ -2907,9 +3042,33 @@ void MainApplication::GotoAccount() {
     bool b = g_creds.access_key[0] != '\0';
     this->layout->AddRow2(settings_label(tr(S_ARCHIVE_CREDS)),
                           b ? tr(S_SET) : tr(S_UNSET), lbl, onoff_color(b)); // 0
+    // RomM: a second, independent source. Status mirrors its 3-state design
+    // (not configured / connected / connection failed) rather than the plain
+    // Set/Unset archive.org uses above — "connected" is shown optimistically
+    // once configured, until an actual Test connection run says otherwise.
+    bool romm_configured = romm_creds_configured(&g_romm_creds);
+    std::string romm_status;
+    pu::ui::Color romm_color;
+    if (!romm_configured) {
+        romm_status = tr(S_ROMM_STATUS_NOT_CONFIGURED);
+        romm_color = onoff_color(false);
+    } else if (g_romm_tested && !g_romm_last_test_ok) {
+        romm_status = tr(S_ROMM_STATUS_FAILED);
+        romm_color = error_color();
+    } else if (g_romm_creds.username[0]) {
+        char s[192];
+        snprintf(s, sizeof(s), tr(S_ROMM_STATUS_CONNECTED), g_romm_creds.username);
+        romm_status = s;
+        romm_color = onoff_color(true);
+    } else {
+        romm_status = tr(S_ROMM_TEST_OK_TOKEN);
+        romm_color = onoff_color(true);
+    }
+    this->layout->AddRow2(settings_label(tr(S_ROMM)), romm_status.c_str(), lbl,
+                          romm_color); // 1
     b = g_prefs.net_check;
     this->layout->AddRow2(settings_label(tr(S_NET_CHECK_STARTUP)),
-                          b ? tr(S_ON) : tr(S_OFF), lbl, onoff_color(b)); // 1
+                          b ? tr(S_ON) : tr(S_OFF), lbl, onoff_color(b)); // 2
 }
 
 // Updates: check now (GitHub release or a pushed .nro over Wi-Fi) and whether
@@ -3971,7 +4130,10 @@ void MainApplication::RaStart() {
     for (int c = 0; c < g_cfg.console_count; c++) {
         for (int r = 0; r < g_cfg.consoles[c].repo_count; r++) {
             Repo *rp = &g_cfg.consoles[c].repos[r];
-            if (rp->enabled && rp->id[0]) {
+            // RomM repos have no archive.org-shaped metadata cache -- their id
+            // is a platform id, and their listing is always fetched live when
+            // opened, so there's nothing here for this refresh to warm.
+            if (rp->enabled && rp->id[0] && !rp->is_romm) {
                 g_ra_ids.push_back(rp->id);
             }
         }
@@ -4222,7 +4384,12 @@ static void run_search_scan(const std::string &query, int scope_ci,
         for (int r = 0; r < g_cfg.consoles[c].repo_count; r++) {
             if (scope_ci >= 0 && scope_ri >= 0 && r != scope_ri) continue;
             Repo *rp = &g_cfg.consoles[c].repos[r];
-            if (!rp->enabled || !rp->id[0]) continue;
+            // RomM repos have no on-disk metadata cache for this scan to walk
+            // (their listing is fetched live, held only in memory) and their
+            // id is a platform id, not an archive.org identifier -- feeding
+            // it to ia_fetch below would just waste a bogus lookup. Skip them;
+            // an archive.org-only console still searches its other repos.
+            if (!rp->enabled || !rp->id[0] || rp->is_romm) continue;
             repos.push_back({rp->id, g_cfg.consoles[c].target,
                              rp->download_base});
         }
@@ -4545,6 +4712,469 @@ void MainApplication::GotoCreds() {
              g_creds.secret[0] ? tr(S_SET) : tr(S_UNSET));
     this->layout->AddRow(r);
     this->layout->AddRow(tr(S_CLEAR_CREDS));
+}
+
+// RomM: settings/romm_client.h's server URL, username/password, API token and
+// ignore-cert-verify toggle, plus test/remove actions. Same single-column
+// "Label: value" row style as GotoCreds (its archive.org sibling) — see
+// OnInput's Screen::RommCreds case for what each row does when pressed.
+void MainApplication::GotoRommCreds() {
+    this->screen = Screen::RommCreds;
+    this->layout->SetTitle(tr(S_TITLE_ROMM_CREDS));
+    this->layout->SetSubtitle(tr(S_SUB_ROMM_CREDS));
+    this->layout->ClearMenu();
+    char r[300];
+    snprintf(r, sizeof(r), "%s: %.100s", tr(S_ROMM_SERVER_URL),
+             g_romm_creds.server_url[0] ? g_romm_creds.server_url : tr(S_UNSET)); // 0
+    this->layout->AddRow(r);
+    snprintf(r, sizeof(r), "%s: %.60s", tr(S_ROMM_USERNAME),
+             g_romm_creds.username[0] ? g_romm_creds.username : tr(S_UNSET)); // 1
+    this->layout->AddRow(r);
+    snprintf(r, sizeof(r), "%s: %s", tr(S_ROMM_PASSWORD),
+             g_romm_creds.password[0] ? tr(S_SET) : tr(S_UNSET)); // 2
+    this->layout->AddRow(r);
+    snprintf(r, sizeof(r), "%s: %s", tr(S_ROMM_API_TOKEN),
+             g_romm_creds.api_token[0] ? tr(S_SET) : tr(S_UNSET)); // 3
+    this->layout->AddRow(r);
+    snprintf(r, sizeof(r), "%s: %s", tr(S_ROMM_IGNORE_CERT),
+             g_romm_creds.ignore_cert_verify ? tr(S_ON) : tr(S_OFF)); // 4
+    this->layout->AddRow(r);
+    this->layout->AddRow(tr(S_ROMM_TEST_CONNECTION)); // 5
+    this->layout->AddRow(tr(S_ROMM_CLEAR_CREDS));      // 6
+}
+
+// Worker for RomM "Test connection": a single GET /api/platforms with the
+// currently-saved credentials. Blocks, so it lives off the UI thread, same
+// shape as DiagThread (the archive.org/LAN self-test).
+void MainApplication::RommTestThread(void *arg) {
+    auto self = static_cast<MainApplication *>(arg);
+    bool ok = romm_test_connection(&g_romm_creds, &self->romm_test_http_code,
+                                   self->romm_test_err,
+                                   sizeof(self->romm_test_err));
+    self->romm_test_ok = ok;
+    self->romm_test.done = true;
+}
+
+// RomM credentials -> Test connection: kick the worker and show a spinner.
+// The screen stays put; RommTestTick reaps the result and shows it in a
+// dialog, same pattern as NetSelfTest/DiagTick.
+void MainApplication::RommTestStart() {
+    this->romm_test_ok = false;
+    this->romm_test_http_code = 0;
+    this->romm_test_err[0] = '\0';
+    if (!this->romm_test.Start(&MainApplication::RommTestThread, this)) {
+        this->ToastErr(tr(S_SAVE_FAILED));
+        return;
+    }
+    this->layout->ClearMenu();
+    this->layout->ShowSpinner(tr(S_ROMM_TEST_RUNNING));
+}
+
+// Poll the "Test connection" worker; called each frame while it runs (see the
+// romm_test.running check in OnInput's top dispatch chain).
+void MainApplication::RommTestTick() {
+    if (!this->romm_test.done) {
+        return;
+    }
+    this->romm_test.Join();
+    g_romm_tested = true;
+    g_romm_last_test_ok = this->romm_test_ok;
+    if (this->romm_test_ok) {
+        std::string body;
+        if (g_romm_creds.username[0]) {
+            char s[192];
+            snprintf(s, sizeof(s), tr(S_ROMM_STATUS_CONNECTED),
+                    g_romm_creds.username);
+            body = s;
+        } else {
+            body = tr(S_ROMM_TEST_OK_TOKEN);
+        }
+        this->CreateShowDialog(tr(S_ROMM_TEST_CONNECTION), body, {tr(S_OK)},
+                               true, {}, style_dialog);
+    } else {
+        char body[256];
+        snprintf(body, sizeof(body), tr(S_ROMM_TEST_FAIL), this->romm_test_err);
+        this->CreateShowDialog(tr(S_ROMM_TEST_CONNECTION), body, {tr(S_OK)},
+                               true, {}, style_dialog);
+    }
+    s32 keep = this->layout->Sel();
+    this->GotoRommCreds();
+    this->layout->SetSel(keep);
+}
+
+// Browse (Y): archive.org's console picker is the only option unless RomM is
+// configured, in which case offer a choice -- see the doc's "oferecer RomM
+// como opção de fonte ao lado de archive.org". Matches the pre-existing
+// GotoPicker(Pending::AddRepo) call exactly when RomM isn't configured, so a
+// user who never touches RomM sees no change at all.
+void MainApplication::OfferAddSource() {
+    this->romm_link_ci = -1; // ephemeral one-off browse, not a repo link
+    if (!romm_creds_configured(&g_romm_creds)) {
+        this->GotoPicker(Pending::AddRepo);
+        return;
+    }
+    int r = this->CreateShowDialog(
+        tr(S_ADD_SOURCE_TITLE), tr(S_ADD_SOURCE_BODY),
+        {tr(S_SOURCE_ARCHIVE_ORG), tr(S_SOURCE_ROMM), tr(S_CANCEL)}, false, {},
+        style_dialog);
+    if (r == 0) {
+        this->GotoPicker(Pending::AddRepo);
+    } else if (r == 1) {
+        this->RommPlatformsStart();
+    }
+}
+
+// Screen::Repos' Y (already inside a console): the archive.org add-repo
+// prompt, factored out so OfferLinkRommRepo can fall back to it unchanged.
+void MainApplication::AddArchiveRepoPrompt(int ci) {
+    ConsoleGroup *g = &g_cfg.consoles[ci];
+    char nm[64] = {0}, id[256] = {0};
+    if (prompt(tr(S_HINT_NAME), nullptr, nm, sizeof(nm)) &&
+        prompt(tr(S_HINT_ARCHIVE_ID), nullptr, id, sizeof(id))) {
+        if (config_add_repo(g, nm, id)) {
+            config_save(&g_cfg);
+            this->Toast(tr(S_ADDED));
+        }
+    }
+    this->GotoRepos(ci);
+}
+
+// Screen::Repos' own Y: offer archive.org vs RomM exactly like OfferAddSource
+// does on Home, but a RomM pick here links the chosen platform to THIS
+// console as a persisted repo (romm_link_ci >= ci) instead of an ephemeral
+// one-off browse -- see Screen::RommPlatformPicker's A-press handler.
+void MainApplication::OfferLinkRommRepo(int ci) {
+    if (!romm_creds_configured(&g_romm_creds)) {
+        this->AddArchiveRepoPrompt(ci);
+        return;
+    }
+    int r = this->CreateShowDialog(
+        tr(S_ADD_SOURCE_TITLE), tr(S_ADD_SOURCE_BODY),
+        {tr(S_SOURCE_ARCHIVE_ORG), tr(S_SOURCE_ROMM), tr(S_CANCEL)}, false, {},
+        style_dialog);
+    if (r == 0) {
+        this->AddArchiveRepoPrompt(ci);
+    } else if (r == 1) {
+        this->romm_link_ci = ci;
+        this->RommPlatformsStart();
+    }
+}
+
+// Worker: GET /api/platforms into g_romm_platform_list, same shape as
+// RommTestThread.
+void MainApplication::RommPlatformsThread(void *arg) {
+    auto self = static_cast<MainApplication *>(arg);
+    bool ok = romm_fetch_platforms(&g_romm_creds, &g_romm_platform_list,
+                                   &self->romm_platforms_http_code,
+                                   self->romm_platforms_err,
+                                   sizeof(self->romm_platforms_err));
+    self->romm_platforms_ok = ok;
+    self->romm_platforms.done = true;
+}
+
+void MainApplication::RommPlatformsStart() {
+    romm_free_platforms(&g_romm_platform_list);
+    this->romm_platforms_ok = false;
+    if (!this->romm_platforms.Start(&MainApplication::RommPlatformsThread,
+                                    this)) {
+        this->ToastErr(tr(S_SAVE_FAILED));
+        return;
+    }
+    this->layout->ClearMenu();
+    this->layout->ShowSpinner(tr(S_LOADING));
+}
+
+void MainApplication::RommPlatformsTick() {
+    if (!this->romm_platforms.done) {
+        return;
+    }
+    this->layout->HideSpinner();
+    this->romm_platforms.Join();
+    if (!this->romm_platforms_ok) {
+        char body[256];
+        snprintf(body, sizeof(body), tr(S_ROMM_TEST_FAIL),
+                this->romm_platforms_err);
+        this->CreateShowDialog(tr(S_ROMM), body, {tr(S_OK)}, true, {},
+                               style_dialog);
+        if (this->romm_link_ci >= 0) {
+            this->GotoRepos(this->romm_link_ci);
+        } else {
+            this->GotoHome();
+        }
+        return;
+    }
+    this->GotoRommPlatformPicker();
+}
+
+// Browse (Y) -> RomM: pick a platform, live from /api/platforms -- see
+// GotoPicker for the archive.org equivalent this mirrors (sorted A-Z rows,
+// index resolved back through a display-order vector).
+void MainApplication::GotoRommPlatformPicker() {
+    this->screen = Screen::RommPlatformPicker;
+    this->layout->SetTitle(tr(S_TITLE_ROMM_PLATFORMS));
+    this->layout->SetSubtitle(tr(S_SUB_ROMM_PLATFORMS));
+    this->layout->ClearMenu();
+
+    g_romm_platform_order.clear();
+    for (int i = 0; i < g_romm_platform_list.count; i++) {
+        g_romm_platform_order.push_back(i);
+    }
+    std::sort(g_romm_platform_order.begin(), g_romm_platform_order.end(),
+             [](int a, int b) {
+                 const RommPlatform &pa = g_romm_platform_list.platforms[a];
+                 const RommPlatform &pb = g_romm_platform_list.platforms[b];
+                 const char *na = pa.name[0] ? pa.name : pa.slug;
+                 const char *nb = pb.name[0] ? pb.name : pb.slug;
+                 return strcasecmp(na, nb) < 0;
+             });
+
+    for (int idx : g_romm_platform_order) {
+        const RommPlatform &p = g_romm_platform_list.platforms[idx];
+        char cnt[32];
+        snprintf(cnt, sizeof(cnt), tr(S_N_ROMS), p.rom_count);
+        this->layout->AddRow2(p.name[0] ? p.name : p.slug, cnt,
+                              g_theme->row_text, count_color());
+    }
+    if (g_romm_platform_order.empty()) {
+        this->layout->AddRow(tr(S_EMPTY));
+    }
+}
+
+// Worker: GET /api/roms?platform_id=<romm_roms_platform_id> into
+// g_romm_roms_list, same shape as RommPlatformsThread.
+void MainApplication::RommRomsThread(void *arg) {
+    auto self = static_cast<MainApplication *>(arg);
+    bool ok = romm_fetch_roms(&g_romm_creds, self->romm_roms_platform_id,
+                              &g_romm_roms_list, &self->romm_roms_http_code,
+                              self->romm_roms_err, sizeof(self->romm_roms_err));
+    self->romm_roms_ok = ok;
+    self->romm_roms.done = true;
+}
+
+void MainApplication::RommRomsStart(int platform_id, const std::string &target,
+                                    const std::string &display_name) {
+    this->romm_roms_platform_id = platform_id;
+    this->romm_roms_target = target;
+    this->romm_roms_display_name = display_name;
+    this->romm_roms_ok = false;
+    if (!this->romm_roms.Start(&MainApplication::RommRomsThread, this)) {
+        this->ToastErr(tr(S_SAVE_FAILED));
+        return;
+    }
+    this->layout->ClearMenu();
+    this->layout->ShowSpinner(tr(S_LOADING_META));
+}
+
+// Convert a fetched RomM rom list into an ArchiveItem/ArchiveFile array (each
+// file's url_override pre-built via romm_content_url) so the existing Files
+// screen -- built entirely around ArchiveItem/ArchiveFile -- can list, mark,
+// and enqueue RomM roms without knowing they didn't come from archive.org.
+static void romm_roms_to_archive_item(const RommRomList *roms,
+                                      const RommCredentials *creds,
+                                      ArchiveItem *out) {
+    memset(out, 0, sizeof(*out));
+    out->files = (ArchiveFile *)calloc(roms->count > 0 ? roms->count : 1,
+                                       sizeof(ArchiveFile));
+    int added = 0;
+    if (out->files) {
+        for (int i = 0; i < roms->count; i++) {
+            const RommRom &r = roms->roms[i];
+            if (!r.fs_name[0]) {
+                continue;
+            }
+            ArchiveFile *f = &out->files[added];
+            snprintf(f->name, sizeof(f->name), "%s", r.fs_name);
+            f->size = r.size;
+            snprintf(f->md5, sizeof(f->md5), "%s", r.md5);
+            romm_content_url(creds, &r, f->url_override,
+                             sizeof(f->url_override));
+            romm_cover_url(creds, &r, f->cover_url, sizeof(f->cover_url));
+            added++;
+        }
+    }
+    out->file_count = added;
+}
+
+void MainApplication::RommRomsTick() {
+    if (!this->romm_roms.done) {
+        return;
+    }
+    this->layout->HideSpinner();
+    this->romm_roms.Join();
+    if (!this->romm_roms_ok) {
+        char body[256];
+        snprintf(body, sizeof(body), tr(S_ROMM_TEST_FAIL), this->romm_roms_err);
+        this->CreateShowDialog(tr(S_ROMM), body, {tr(S_OK)}, true, {},
+                               style_dialog);
+        if (this->romm_roms_from_repo) {
+            // Linked repo: same failure destination as an archive.org repo
+            // whose metadata fetch fails -- back to this console's repo list,
+            // not the (ephemeral-only) platform picker.
+            this->GotoRepos(this->sel_ci);
+        } else {
+            this->GotoRommPlatformPicker();
+        }
+        return;
+    }
+    if (g_have_item) {
+        ia_free(&g_item);
+        g_have_item = false;
+    }
+    romm_roms_to_archive_item(&g_romm_roms_list, &g_romm_creds, &g_item);
+    romm_free_roms(&g_romm_roms_list);
+    g_have_item = true;
+    g_files_is_romm = true;
+    // Linked repo behaves like any archive.org repo (B returns to Repos,
+    // Left/Right cycles repos); the ephemeral one-off browse has no repo to
+    // go back to, same as a pasted URL.
+    g_files_manual = !this->romm_roms_from_repo;
+    snprintf(g_files_id, sizeof(g_files_id), "romm:%d",
+            this->romm_roms_platform_id);
+    g_files_base[0] = '\0'; // unused: every file carries its own url_override
+    snprintf(g_files_target, sizeof(g_files_target), "%s",
+            this->romm_roms_target.c_str());
+    g_filter.clear();
+    g_sel.clear();
+    // List view by default -- cover art in the grid isn't reliable yet. The
+    // grid toggle stays in the View menu for whenever that's revisited. The
+    // cache-warm below runs regardless of display mode, so covers keep
+    // landing on disk in the background while the list is browsed -- no
+    // reason to wait on fixing the grid to at least warm the cache.
+    g_files_card_view = false;
+    rebuild_files(this->layout.get(), g_files_target);
+    this->RommCoversStart(); // quietly cache covers in the background
+    if (!this->romm_roms_from_repo) {
+        this->layout->SetTitle(this->romm_roms_display_name);
+    }
+    this->layout->SetSubtitle(FILES_SUBTITLE);
+    this->screen = Screen::Files;
+}
+
+// ---- RomM cover-art cache warmer (grid view thumbnails) --------------------
+
+int MainApplication::RommCoverProgressCb(void *userdata, uint64_t, uint64_t) {
+    auto self = static_cast<MainApplication *>(userdata);
+    return self->romm_covers_cancel ? 1 : 0; // non-zero aborts the transfer
+}
+
+// Runs entirely off g_romm_cover_jobs (rebuilt by RommCoversStart) -- never
+// touches g_item or any other g_romm_cover_* global. See the class doc
+// comment on romm_covers for why a listing switch on the UI thread can never
+// race this.
+void MainApplication::RommCoversThread(void *arg) {
+    auto self = static_cast<MainApplication *>(arg);
+    char host[256];
+    romm_server_authority(g_romm_creds.server_url, host, sizeof(host));
+    char auth[400];
+    romm_creds_queue_auth_header(&g_romm_creds, auth, sizeof(auth));
+    for (const auto &j : g_romm_cover_jobs) {
+        if (self->romm_covers_cancel) {
+            break;
+        }
+        if (fs_exists(j.path.c_str())) {
+            continue; // cached from a previous visit to this listing
+        }
+        long code = 0;
+        http_download_authed(j.url.c_str(), j.path.c_str(), host, auth,
+                             !g_romm_creds.ignore_cert_verify,
+                             &MainApplication::RommCoverProgressCb, self,
+                             nullptr, nullptr, 0, &code);
+    }
+    self->romm_covers.done = true;
+}
+
+void MainApplication::RommCoversStart() {
+    // Cancel + synchronously reap whatever the previous listing's cache-warm
+    // was doing before touching g_romm_cover_* -- same cancel+Join idiom
+    // GotoSearch uses when a new search supersedes one already running. Only
+    // past this point is it safe to clear/repopulate g_romm_cover_jobs: no
+    // thread is still reading the old contents.
+    this->romm_covers_cancel = true;
+    if (this->romm_covers.running) {
+        this->romm_covers.Join();
+    }
+    this->romm_covers_cancel = false;
+
+    for (auto t : g_romm_cover_tex) {
+        if (t) {
+            pu::ui::render::DeleteTexture(t);
+        }
+    }
+    g_romm_cover_tex.assign(g_item.file_count > 0 ? g_item.file_count : 0,
+                            nullptr);
+    g_romm_cover_paths.assign(g_item.file_count > 0 ? g_item.file_count : 0,
+                              "");
+    g_romm_cover_jobs.clear();
+
+    char dir[512];
+    snprintf(dir, sizeof(dir), "%s/romm_covers/%d", CACHE_DIR,
+            this->romm_roms_platform_id);
+    for (int i = 0; i < g_item.file_count; i++) {
+        if (!g_item.files[i].cover_url[0]) {
+            continue;
+        }
+        char path[600];
+        snprintf(path, sizeof(path), "%s/%d.img", dir, i);
+        g_romm_cover_paths[i] = path;
+        g_romm_cover_jobs.push_back({g_item.files[i].cover_url, path});
+    }
+    if (g_romm_cover_jobs.empty()) {
+        return;
+    }
+    fs_mkdir_p(dir);
+    this->romm_covers.Start(&MainApplication::RommCoversThread, this);
+}
+
+void MainApplication::RommCoversPoll() {
+    if (this->romm_covers.running && this->romm_covers.done) {
+        this->romm_covers.Join();
+    }
+}
+
+void MainApplication::RommCoverGridTick() {
+    if (this->screen != Screen::Files || !g_files_is_romm ||
+        !g_files_card_view) {
+        return;
+    }
+    for (int k = 0; k < (int)g_files.size(); k++) {
+        int fi = g_files[k];
+        if (fi < 0 || fi >= (int)g_romm_cover_paths.size()) {
+            continue;
+        }
+        if (!this->layout->QueueCardVisible(k)) {
+            // Scrolled out of view: drop the decoded texture (reloads
+            // instantly from the disk cache if scrolled back) to keep
+            // resident cover textures bounded to roughly one screen's worth.
+            // The card's icon is reset right along with it -- CardGrid only
+            // renders cards inside its own live visible window, but leaving
+            // the freed pointer in place would dangle the moment this exact
+            // row becomes visible again before a fresh cover has loaded.
+            if (g_romm_cover_tex[fi]) {
+                pu::ui::render::DeleteTexture(g_romm_cover_tex[fi]);
+                g_romm_cover_tex[fi] = nullptr;
+                this->layout->SetCardIcon(k, console_icon(g_files_target));
+            }
+            continue;
+        }
+        if (g_romm_cover_tex[fi]) {
+            // Already decoded -- re-apply every tick (cheap: SetCardIcon is a
+            // plain pointer swap, no cache rebuild) so a card that gets
+            // rebuilt from scratch by a filter/sort change picks its cover
+            // back up instead of getting stuck on the fallback icon
+            // rebuild_files just gave it.
+            this->layout->SetCardIcon(k, g_romm_cover_tex[fi]);
+            continue;
+        }
+        if (g_romm_cover_paths[fi].empty() ||
+            !fs_exists(g_romm_cover_paths[fi].c_str())) {
+            continue; // no cover, or not downloaded yet
+        }
+        auto tex = pu::ui::render::LoadImageFromFile(g_romm_cover_paths[fi]);
+        if (tex) {
+            g_romm_cover_tex[fi] = tex;
+            this->layout->SetCardIcon(k, tex);
+        }
+    }
 }
 
 // Display name used for Installed sorting: root console folders sort by their
@@ -5052,12 +5682,25 @@ void MainApplication::GotoRepoEdit(int ci, int ri) {
     snprintf(r, sizeof(r), tr(S_LABEL_NAME),
              rp->label[0] ? rp->label : tr(S_UNSET));
     this->layout->AddRow(r);
-    snprintf(r, sizeof(r), tr(S_LABEL_ARCHIVE_ID),
-             rp->id[0] ? rp->id : tr(S_UNSET));
-    this->layout->AddRow(r);
-    snprintf(r, sizeof(r), tr(S_LABEL_DOWNLOAD_URL),
-             rp->download_base[0] ? rp->download_base : tr(S_AUTO));
-    this->layout->AddRow(r);
+    if (rp->is_romm) {
+        // Rows 1-2 stay in place (so 3-5 below need no index changes) but show
+        // RomM-appropriate, non-editable info instead of the archive.org
+        // fields -- see the S_ROMM_REPO_FIELD_LOCKED guard in the A-handler.
+        snprintf(r, sizeof(r), tr(S_LABEL_ROMM_PLATFORM_ID),
+                 rp->id[0] ? rp->id : tr(S_UNSET));
+        this->layout->AddRow(r);
+        char host[256];
+        romm_server_authority(g_romm_creds.server_url, host, sizeof(host));
+        snprintf(r, sizeof(r), tr(S_LABEL_ROMM_SOURCE), host);
+        this->layout->AddRow(r);
+    } else {
+        snprintf(r, sizeof(r), tr(S_LABEL_ARCHIVE_ID),
+                 rp->id[0] ? rp->id : tr(S_UNSET));
+        this->layout->AddRow(r);
+        snprintf(r, sizeof(r), tr(S_LABEL_DOWNLOAD_URL),
+                 rp->download_base[0] ? rp->download_base : tr(S_AUTO));
+        this->layout->AddRow(r);
+    }
     snprintf(r, sizeof(r), tr(S_LABEL_ENABLED),
              rp->enabled ? tr(S_ON) : tr(S_OFF));
     this->layout->AddRow(r);                     // 3
@@ -5250,6 +5893,12 @@ void MainApplication::HandleInput(u64 down, u64 held,
     }
     // Reap the silent startup update check (if any) and light the Settings dot.
     this->BgChkPoll();
+    // Non-blocking, every frame, regardless of screen: reap a finished cover
+    // cache-warm and (only while Screen::Files is showing a RomM grid) load
+    // newly-visible cards' covers / free ones that scrolled away. Never
+    // consumes input or blocks like the tasks below.
+    this->RommCoversPoll();
+    this->RommCoverGridTick();
 
     // A self-update download owns the UI while it runs: drive its progress /
     // finish and swallow all other input until it completes.
@@ -5299,6 +5948,24 @@ void MainApplication::HandleInput(u64 down, u64 held,
             this->sp_prog.cancel = 1; // curl aborts; DiagTick reaps when it lands
         }
         this->DiagTick();
+        return;
+    }
+
+    // A RomM "Test connection" is running: same quick-single-request shape as
+    // the network self-test above, just its own task and screen.
+    if (this->romm_test.running) {
+        this->RommTestTick();
+        return;
+    }
+
+    // Browse (Y) -> RomM is fetching the platform list, or (after one's
+    // picked) that platform's rom list -- same shape as romm_test above.
+    if (this->romm_platforms.running) {
+        this->RommPlatformsTick();
+        return;
+    }
+    if (this->romm_roms.running) {
+        this->RommRomsTick();
         return;
     }
 
@@ -5994,7 +6661,7 @@ void MainApplication::HandleInput(u64 down, u64 held,
                     return;
                 }
             } else if (down & HidNpadButton_Y) {
-                this->GotoPicker(Pending::AddRepo);
+                this->OfferAddSource();
             }
         } else {
             int ci, ri;
@@ -6005,7 +6672,7 @@ void MainApplication::HandleInput(u64 down, u64 held,
                        flat_ref(this->layout->Sel(), &ci, &ri)) {
                 this->GotoRepoEdit(ci, ri);
             } else if (down & HidNpadButton_Y) {
-                this->GotoPicker(Pending::AddRepo);
+                this->OfferAddSource();
             } else if (down & HidNpadButton_Minus) {
                 // Global search, same as the grouped view. Repo delete stays
                 // available in the app utility (X → delete).
@@ -6057,15 +6724,7 @@ void MainApplication::HandleInput(u64 down, u64 held,
         } else if ((down & HidNpadButton_X) && g->repo_count > 0) {
             this->GotoRepoEdit(this->sel_ci, repos_ref(this->layout->Sel()));
         } else if (down & HidNpadButton_Y) {
-            char nm[64] = {0}, id[256] = {0};
-            if (prompt(tr(S_HINT_NAME), nullptr, nm, sizeof(nm)) &&
-                prompt(tr(S_HINT_ARCHIVE_ID), nullptr, id, sizeof(id))) {
-                if (config_add_repo(g, nm, id)) {
-                    config_save(&g_cfg);
-                    this->Toast(tr(S_ADDED));
-                }
-            }
-            this->GotoRepos(this->sel_ci);
+            this->OfferLinkRommRepo(this->sel_ci);
         } else if (down & HidNpadButton_Minus) {
             // Search across every repo in this console. (Repo deletion now lives
             // in the edit screen, X.)
@@ -6115,29 +6774,32 @@ void MainApplication::HandleInput(u64 down, u64 held,
                 if (!this->SpaceOkToQueue(f->size)) return;
                 char url[1024];
                 ia_file_url(&g_item, f, url, sizeof(url));
-                char auth[320];
-                creds_auth_header(&g_creds, auth, sizeof(auth));
-                bool ok = queue_add(url, f->name, g_files_target, auth,
-                                    f->size, is_archive_name(f->name),
-                                    f->md5,
-                                    install_folder_for(g_files_target));
+                bool ok = queue_add_current_source(
+                    url, f->name, g_files_target, f->size,
+                    is_archive_name(f->name), f->md5,
+                    install_folder_for(g_files_target));
                 if (ok) {
                     this->Toast(std::string(tr(S_QUEUED)) + ": " + f->name);
                 } else {
                     this->ToastErr(tr(S_QUEUE_FULL));
                 }
             }
-        } else if ((down & HidNpadButton_Minus) && !g_files_manual) {
-            // Search within the opened repo.
+        } else if ((down & HidNpadButton_Minus) && !g_files_manual &&
+                   !g_files_is_romm) {
+            // Search within the opened repo. Not offered for a RomM repo --
+            // its listing is live/in-memory, not on the disk cache this scan
+            // walks (see run_search_scan's is_romm skip).
             char q[256] = {0};
             if (prompt_raw(tr(S_SEARCH_REPO), nullptr, q, sizeof(q)) && q[0]) {
                 this->GotoSearch(q, this->sel_ci, this->sel_ri);
                 return;
             }
-        } else if (down & HidNpadButton_Y) {
+        } else if ((down & HidNpadButton_Y) && !this->layout->InCards()) {
             // Toggle this row's selection. Only the widget mark and the info
             // line change — rebuilding the list on every press would re-add
-            // thousands of rows for one keystroke.
+            // thousands of rows for one keystroke. Grid view has no mark
+            // visual (CardGrid's cards aren't multi-selectable), so this is
+            // list-only -- see rebuild_files' grid branch.
             s32 i = this->layout->Sel();
             if (i >= 0 && i < (s32)g_files.size()) {
                 int fi = g_files[i];
@@ -6705,8 +7367,9 @@ void MainApplication::HandleInput(u64 down, u64 held,
             this->GotoSettings();
         } else if (down & HidNpadButton_A) {
             switch (this->layout->Sel()) {
-            case 0: this->GotoCreds(); return; // archive.org credentials
-            case 1: // Warn if offline at startup
+            case 0: this->GotoCreds(); return;     // archive.org credentials
+            case 1: this->GotoRommCreds(); return; // RomM credentials
+            case 2: // Warn if offline at startup
                 g_prefs.net_check = !g_prefs.net_check;
                 prefs_save(&g_prefs);
                 break;
@@ -6718,7 +7381,7 @@ void MainApplication::HandleInput(u64 down, u64 held,
                 this->layout->SetSel(sel);
             }
         } else if (down & (HidNpadButton_Left | HidNpadButton_Right)) {
-            if (this->layout->Sel() == 1) {
+            if (this->layout->Sel() == 2) {
                 g_prefs.net_check = !g_prefs.net_check;
                 prefs_save(&g_prefs);
                 s32 sel = this->layout->Sel();
@@ -7450,6 +8113,10 @@ void MainApplication::HandleInput(u64 down, u64 held,
                 }
                 break;
             case 1:
+                if (rp->is_romm) {
+                    this->ToastErr(tr(S_ROMM_REPO_FIELD_LOCKED));
+                    break;
+                }
                 if (prompt(tr(S_HINT_ARCHIVE_ID), rp->id, v, sizeof(v))) {
                     snprintf(rp->id, sizeof(rp->id), "%s", v);
                     rp->download_base[0] = '\0';
@@ -7458,6 +8125,10 @@ void MainApplication::HandleInput(u64 down, u64 held,
                 }
                 break;
             case 2:
+                if (rp->is_romm) {
+                    this->ToastErr(tr(S_ROMM_REPO_FIELD_LOCKED));
+                    break;
+                }
                 if (prompt(tr(S_HINT_DOWNLOAD_URL), rp->download_base, v, sizeof(v))) {
                     snprintf(rp->download_base, sizeof(rp->download_base), "%s",
                              v);
@@ -7650,6 +8321,148 @@ void MainApplication::HandleInput(u64 down, u64 held,
         break;
     }
 
+    case Screen::RommCreds: {
+        if (down & HidNpadButton_B) {
+            this->GotoAccount();
+        } else if (down & HidNpadButton_A) {
+            s32 i = this->layout->Sel();
+            char v[1024] = {0};
+            if (i == 0) {
+                if (prompt(tr(S_ROMM_SERVER_URL), g_romm_creds.server_url, v,
+                          sizeof(v))) {
+                    snprintf(g_romm_creds.server_url,
+                            sizeof(g_romm_creds.server_url), "%s", v);
+                    if (romm_creds_save(&g_romm_creds)) {
+                        romm_creds_load(&g_romm_creds); // pick up the
+                                                        // trailing-slash trim
+                        g_romm_tested = false;
+                        this->Toast(tr(S_SAVED));
+                    } else {
+                        this->ToastErr(tr(S_SAVE_FAILED));
+                    }
+                }
+            } else if (i == 1) {
+                if (prompt(tr(S_ROMM_USERNAME), g_romm_creds.username, v,
+                          sizeof(v))) {
+                    snprintf(g_romm_creds.username,
+                            sizeof(g_romm_creds.username), "%s", v);
+                    if (romm_creds_save(&g_romm_creds)) {
+                        g_romm_tested = false;
+                        this->Toast(tr(S_SAVED));
+                    } else {
+                        this->ToastErr(tr(S_SAVE_FAILED));
+                    }
+                }
+            } else if (i == 2) {
+                if (prompt(tr(S_ROMM_PASSWORD), g_romm_creds.password, v,
+                          sizeof(v))) {
+                    snprintf(g_romm_creds.password,
+                            sizeof(g_romm_creds.password), "%s", v);
+                    if (romm_creds_save(&g_romm_creds)) {
+                        g_romm_tested = false;
+                        this->Toast(tr(S_SAVED));
+                    } else {
+                        this->ToastErr(tr(S_SAVE_FAILED));
+                    }
+                }
+            } else if (i == 3) {
+                if (prompt(tr(S_ROMM_API_TOKEN), g_romm_creds.api_token, v,
+                          sizeof(v))) {
+                    snprintf(g_romm_creds.api_token,
+                            sizeof(g_romm_creds.api_token), "%s", v);
+                    if (romm_creds_save(&g_romm_creds)) {
+                        g_romm_tested = false;
+                        this->Toast(tr(S_SAVED));
+                    } else {
+                        this->ToastErr(tr(S_SAVE_FAILED));
+                    }
+                }
+            } else if (i == 4) {
+                g_romm_creds.ignore_cert_verify = !g_romm_creds.ignore_cert_verify;
+                if (romm_creds_save(&g_romm_creds)) {
+                    g_romm_tested = false;
+                } else {
+                    this->ToastErr(tr(S_SAVE_FAILED));
+                }
+            } else if (i == 5) {
+                if (romm_creds_configured(&g_romm_creds)) {
+                    this->RommTestStart();
+                } else {
+                    this->ToastErr(tr(S_ROMM_STATUS_NOT_CONFIGURED));
+                }
+                return;
+            } else if (i == 6) {
+                if (this->ConfirmDanger(tr(S_ROMM_CLEAR_CREDS),
+                                        tr(S_ROMM_CLEAR_CREDS_CONFIRM))) {
+                    romm_creds_remove(); // deletes romm_credentials.json outright
+                    memset(&g_romm_creds, 0, sizeof(g_romm_creds));
+                    g_romm_tested = false;
+                    this->Toast(tr(S_CLEARED));
+                }
+            }
+            s32 keep = this->layout->Sel();
+            this->GotoRommCreds();
+            this->layout->SetSel(keep);
+        } else if (down & (HidNpadButton_Left | HidNpadButton_Right)) {
+            if (this->layout->Sel() == 4) {
+                g_romm_creds.ignore_cert_verify = !g_romm_creds.ignore_cert_verify;
+                if (romm_creds_save(&g_romm_creds)) {
+                    g_romm_tested = false;
+                } else {
+                    this->ToastErr(tr(S_SAVE_FAILED));
+                }
+                s32 keep = this->layout->Sel();
+                this->GotoRommCreds();
+                this->layout->SetSel(keep);
+            }
+        }
+        break;
+    }
+
+    case Screen::RommPlatformPicker: {
+        if (down & HidNpadButton_B) {
+            if (this->romm_link_ci >= 0) {
+                this->GotoRepos(this->romm_link_ci);
+            } else {
+                this->GotoHome();
+            }
+        } else if (down & HidNpadButton_A) {
+            s32 i = this->layout->Sel();
+            if (i >= 0 && i < (s32)g_romm_platform_order.size()) {
+                const RommPlatform &p =
+                    g_romm_platform_list.platforms[g_romm_platform_order[i]];
+                if (this->romm_link_ci >= 0) {
+                    // Linking mode (Screen::Repos' own Y): persist this
+                    // platform as a repo of the console we came from instead
+                    // of an ephemeral one-off browse. The repo's target
+                    // folder is that console's target, same as every
+                    // archive.org repo -- no need for
+                    // romm_map_platform_console here, the user is explicitly
+                    // choosing which RomM library feeds this console.
+                    ConsoleGroup *g = &g_cfg.consoles[this->romm_link_ci];
+                    const char *label = p.name[0] ? p.name : p.slug;
+                    if (config_add_romm_repo(g, label, p.id)) {
+                        config_save(&g_cfg);
+                        this->Toast(tr(S_ADDED));
+                    }
+                    this->GotoRepos(this->romm_link_ci);
+                } else {
+                    const char *target = romm_map_platform_console(&p);
+                    if (!target) {
+                        this->CreateShowDialog(
+                            tr(S_ROMM), tr(S_ROMM_PLATFORM_UNMAPPED),
+                            {tr(S_OK)}, true, {}, style_dialog);
+                    } else {
+                        this->romm_roms_from_repo = false;
+                        this->RommRomsStart(p.id, target,
+                                            p.name[0] ? p.name : p.slug);
+                    }
+                }
+            }
+        }
+        break;
+    }
+
     case Screen::Search: {
         if (down & HidNpadButton_B) {
             // Return to wherever the search was launched from.
@@ -7704,6 +8517,7 @@ void MainApplication::OnLoad() {
     config_load(&g_cfg);
     config_sort(&g_cfg);
     creds_load(&g_creds);
+    romm_creds_load(&g_romm_creds);
     prefs_load(&g_prefs);
     /* A user-set ROM folder overrides the default ROM root. */
     tico_set_roms_override(&g_tico, g_prefs.roms_override);

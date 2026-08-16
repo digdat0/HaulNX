@@ -1,18 +1,47 @@
-# <img width="34" height="34" alt="icon" src="https://github.com/user-attachments/assets/0c0cbe7e-3e2e-4068-9518-44179f6406d3" /> HaulNX
+# <img width="34" height="34" alt="icon" src="https://github.com/user-attachments/assets/0c0cbe7e-3e2e-4068-9518-44179f6406d3" /> HaulNX-Romm-App
 
-> Please report issues on the [GitHub Issues](https://github.com/digdat0/HaulNX/issues) page.
+> **This is an unofficial, personal fork** of [digdat0/HaulNX](https://github.com/digdat0/HaulNX),
+> made for my own testing and use — it is not affiliated with, endorsed by, or
+> supported by the original project or its author. All credit for HaulNX itself
+> goes to [digdat0](https://github.com/digdat0); please report bugs in the base
+> app on the **[upstream Issues page](https://github.com/digdat0/HaulNX/issues)**,
+> not here.
 
-A Nintendo Switch homebrew that browses and downloads game files from
-[archive.org](https://archive.org) into its own centralized ROM library at
-`sdmc:/roms/<console>/`, decompressing archives along the way. Point your
-emulators at that folder and your games show up. Built for the devkitPro /
-libnx toolchain using Claude Code. **Yes, this is 100% AI created, but it
-works.**
+A Nintendo Switch homebrew that browses and downloads game files into its own
+centralized ROM library at `sdmc:/roms/<console>/`, decompressing archives
+along the way. Point your emulators at that folder and your games show up.
+Built for the devkitPro / libnx toolchain using Claude Code. **Yes, this is
+100% AI created, but it works.**
+
+## What's new in this fork: RomM as a second source
+
+Everything below this section documents upstream HaulNX, unchanged. On top of
+it, this fork adds [RomM](https://github.com/rommapp/romm) — a self-hosted ROM
+manager/library server — as a **second, independent download source**
+alongside archive.org:
+
+- **Settings → Account → RomM**: point it at your own RomM instance (`http://`
+  for LAN or `https://`), sign in with username/password (HTTP Basic) or an
+  API token (Bearer), and test the connection before saving. Credentials live
+  in their own file on the SD card and are never sent to archive.org, or
+  archive.org's to RomM.
+- **Browse → Y**: when RomM is configured, choose it alongside Archive.org.
+  Platforms are fetched **live** from your instance (nothing hardcoded) and
+  mapped to HaulNX's existing 53 console folders.
+- Picking a platform lists its roms in the same file browser as any
+  archive.org repo — mark with **Y**, see totals, queue with **A** — and they
+  go through the exact same download queue, extraction, verification, and
+  `sdmc:/roms/<console>/` library as everything else.
+
+Archive.org's own flow is unchanged by any of this — RomM is purely additive.
+
+---
 
 > HaulNX ships **no ROMs, no collections, and no
 > credentials** — it's an empty downloader. **You provide your own** archive.org
-> item ids (and optionally your own archive.org keys for restricted items). No
-> links to any content are bundled.
+> item ids (and optionally your own archive.org keys for restricted items), and
+> **your own** RomM server URL and login if you use that source instead. No
+> links to any content, and no server addresses, are bundled.
 >
 > **Disclaimer:** This project does not condone piracy or copyright infringement in any form.
 > The screenshots shown use placeholder file names for illustration only. Please do not discuss

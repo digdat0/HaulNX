@@ -40,7 +40,18 @@ typedef struct {
                         <roms_root>/<target>; set when the console has a custom
                         install folder. Snapshotted at enqueue so a later config
                         change doesn't redirect an item already in flight. */
-    char auth[320];  /* optional archive.org S3 auth header */
+    char auth[400];  /* optional auth header: archive.org's S3 one, or (when
+                        auth_host is set) RomM's Basic/Bearer one */
+    /* Host this item's auth header may be sent to (net_url_host_eq), e.g. a
+     * configured RomM instance's host[:port]. Empty (the default) means
+     * archive.org's own rule applies instead (net_is_archive_org_url,
+     * https-only, unauthenticated-first) -- every archive.org item, exactly
+     * as before this field existed. */
+    char auth_host[256];
+    /* Only consulted when auth_host is set: skip TLS certificate verification
+     * (a self-signed/LAN certificate). Unused otherwise -- archive.org's
+     * transfer always verifies, unaffected by this field. */
+    bool auth_verify_tls;
     char md5[33];    /* expected MD5 hex from metadata, "" if unknown */
     uint64_t size;   /* expected file size from metadata (0 if unknown) */
     bool is_archive;
@@ -100,6 +111,20 @@ void queue_set_rate_limits(int all_bps, int item_bps);
 bool queue_add(const char *url, const char *name, const char *target,
                const char *auth, uint64_t size, bool is_archive,
                const char *md5, const char *dest);
+
+/* Like queue_add, but for a provider with its own credentials scoped to a
+ * single host (e.g. a self-hosted RomM instance) rather than archive.org's.
+ * auth is a raw "authorization: ..." header line (see
+ * romm_creds_queue_auth_header), sent on every attempt to auth_host
+ * (net_url_host_eq) -- unlike archive.org's items, there is no
+ * unauthenticated-first attempt, since a self-hosted instance has no public/
+ * private distinction to probe. verify_tls=false skips TLS certificate
+ * verification (a self-signed/LAN certificate). auth_host must be non-empty
+ * (queue_add already covers "no host-scoped credential"). */
+bool queue_add_ex(const char *url, const char *name, const char *target,
+                  const char *auth, const char *auth_host, bool verify_tls,
+                  uint64_t size, bool is_archive, const char *md5,
+                  const char *dest);
 
 /* How many more items queue_add can accept right now. Lets a bulk add tell the
  * user "only 40 of your 500 fit" before it queues anything, instead of stopping

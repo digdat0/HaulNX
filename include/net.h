@@ -50,6 +50,36 @@ char *http_get_on(void *conn, const char *url, long *http_code, size_t *out_len)
 bool net_is_archive_org_url(const char *url);
 
 /*
+ * True if url's host exactly equals host (case-insensitive, ignoring a
+ * trailing dot and the port on either side). Used to scope a non-archive.org
+ * provider credential (e.g. a self-hosted RomM instance) to exactly its
+ * configured host, the same way net_is_archive_org_url scopes the
+ * archive.org one — parsed the same way curl resolves the authority (userinfo
+ * before the last '@' discarded, '\' terminates it like '/').
+ */
+bool net_url_host_eq(const char *url, const char *host);
+
+/*
+ * Like http_get, but for a provider with its own credentials scoped to a
+ * single configured host (e.g. a self-hosted RomM instance) rather than
+ * archive.org's. Attaches HTTP Basic Auth (user/pass, via CURLOPT_USERPWD) or
+ * a literal header line (auth_header, e.g. "authorization: Bearer rmm_xxx")
+ * -- pass one or the other, not both; NULL/empty both means unauthenticated.
+ * The credential is attached only when url's host exactly matches auth_host
+ * (net_url_host_eq) -- over http or https alike, since a self-hosted instance
+ * may have no TLS at all, unlike the archive.org credential, which is
+ * https-only. Redirects are never followed: a JSON API has no legitimate
+ * reason to redirect, and not following one closes off any question of where
+ * the credential could end up. verify_tls=false skips TLS certificate
+ * verification, for a self-signed/LAN certificate. Returns NULL on transport
+ * error; *http_code / *out_len are filled if non-NULL.
+ */
+char *http_get_authed(const char *url, const char *auth_host,
+                      const char *user, const char *pass,
+                      const char *auth_header, bool verify_tls,
+                      long *http_code, size_t *out_len);
+
+/*
  * Stream an HTTP GET to a file on disk. Returns true on a 2xx download.
  * Set extra_header (e.g. "authorization: LOW key:secret") or NULL. A header is
  * only ever sent to archive.org over HTTPS: the initial URL is re-checked here,
@@ -67,6 +97,25 @@ bool http_download(const char *url, const char *dest_path,
                    net_rate_cb rate_cb, void *rate_ud,
                    uint64_t resume_from,
                    long *http_code);
+
+/*
+ * Like http_download, but for a provider with its own credentials scoped to
+ * a single configured host (e.g. a self-hosted RomM instance) rather than
+ * archive.org's. extra_header is sent only when url's host exactly matches
+ * auth_host (net_url_host_eq) -- over http or https alike, since a
+ * self-hosted instance may have no TLS at all. Redirects are never followed:
+ * a file-content endpoint has no legitimate reason to redirect, and not
+ * following one closes off any question of where the header could end up.
+ * verify_tls=false skips TLS certificate verification (a self-signed/LAN
+ * certificate). Other params behave exactly as http_download's.
+ */
+bool http_download_authed(const char *url, const char *dest_path,
+                          const char *auth_host, const char *extra_header,
+                          bool verify_tls,
+                          net_progress_cb cb, void *userdata,
+                          net_rate_cb rate_cb, void *rate_ud,
+                          uint64_t resume_from,
+                          long *http_code);
 
 /* Which half of the speed test is running (see SpeedProg). */
 typedef enum {
