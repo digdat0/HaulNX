@@ -51,6 +51,13 @@ APP_AUTHOR	:=	digdat0
 APP_VERSION	:=	$(strip $(shell cat $(TOPDIR)/VERSION | tr -d '\r'))
 BUILD		:=	build
 SOURCES		:=	source source/mtp source/rar3
+# source/ext is a local-only extras dir (kept out of git; empty/absent on a
+# public checkout, so this line is a no-op there). PUBLIC_BUILD=1 excludes it
+# even when present, so `make dist` can never link it in by accident — see
+# the `dist` target below.
+ifneq ($(PUBLIC_BUILD),1)
+SOURCES		+=	source/ext
+endif
 DATA		:=	data
 INCLUDES	:=	include
 ROMFS		:=	romfs
@@ -168,7 +175,7 @@ ifneq ($(ROMFS),)
 	export NROFLAGS += --romfsdir=$(CURDIR)/$(ROMFS)
 endif
 
-.PHONY: $(BUILD) clean all plutonium version_header i18n_strings
+.PHONY: $(BUILD) clean all plutonium version_header i18n_strings dist
 
 #---------------------------------------------------------------------------------
 all: $(BUILD)
@@ -203,6 +210,13 @@ else
 	@rm -fr $(BUILD) $(TARGET).nsp $(TARGET).nso $(TARGET).npdm $(TARGET).elf
 endif
 
+#---------------------------------------------------------------------------------
+# Public/release build: forces source/ext out of SOURCES (see above) regardless
+# of whether it's present on disk, and links to a distinctly-named output so it
+# can never be confused with (or silently overwrite) a full local build.
+# HaulNX-public.nro is the only NRO variant that should ever leave this machine.
+dist:
+	@$(MAKE) --no-print-directory PUBLIC_BUILD=1 TARGET=HaulNX-public BUILD=build-public
 
 #---------------------------------------------------------------------------------
 else

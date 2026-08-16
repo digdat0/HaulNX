@@ -1,6 +1,13 @@
 # build output
 /build/
+/build-public/
 *.nro
+
+# desktop/ as a whole stays untracked (see build-public.ps1), but these two
+# generated outputs get a belt-and-suspenders ignore in case of a stray `git
+# add -A` from the repo root
+/desktop/HaulNX-AppUtility-public.exe
+/desktop/src-tauri/target-public/
 *.elf
 *.nacp
 *.lst
