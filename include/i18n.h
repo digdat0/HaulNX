@@ -139,12 +139,19 @@ enum {
     S_PIN,                    /* menu entry: pin this console to the top */
     S_UNPIN,                  /* menu entry: unpin this console */
     S_SORT_MENU,              /* menu entry: open the sort picker */
+    S_TOOLS,                  /* title of the global Tools panel (left slide) */
+    S_ADD_REPO,               /* menu entry: add a repo to this console */
     S_ROM_RECV_TITLE,         /* receive-screen title, e.g. "Receive game" */
     S_ROM_RECV_STEPS,         /* on-screen steps for the ROM receiver (%s = console) */
     S_ROM_RECV_INTO,          /* live line: which folder files land in (%s = path) */
     S_ROM_RECV_CONFIRM,       /* overwrite confirm body (%s = filename) */
     S_ROM_RECV_DONE,          /* toast after a game is saved (%s = filename) */
     S_ROM_RECV_FAIL,          /* toast when the received file couldn't be saved */
+    S_ROM_RECV_MULTI_DONE,    /* toast: N files saved this session (%d) */
+    S_RECV_LIST_RECEIVING,    /* receive-list subtitle while a file is arriving */
+    S_RECV_LIST_IDLE,         /* receive-list subtitle between files */
+    S_RECV_DONE_ROW,          /* receive-list row right cell: file saved */
+    S_RECV_SKIPPED,           /* receive-list row right cell: overwrite declined */
 
     /* ---- downloads folder ---- */
     S_TITLE_DOWNLOADS,
@@ -164,6 +171,12 @@ enum {
     S_DELETE_ONE,
     S_SIZE_LABEL,
     S_MOVE_UP,
+    S_OPEN_SETTINGS,
+    S_OPTIONS,           /* library file Options menu title */
+    S_RENAME,            /* menu label: rename the file under the cursor */
+    S_MOVE_TO_CONSOLE,   /* menu label: move file(s) to another console */
+    S_MOVE_PICK,         /* console picker title: "Move %d to…" */
+    S_NO_MOVE_TARGET,    /* toast: no other console to move to */
     S_MOVE_UP_MULTI,
     S_MOVING,
     S_MOVING_N,
@@ -171,6 +184,12 @@ enum {
     S_MOVE_PARTIAL,
     S_EMPTY_FOLDER_DELETE,
     S_FOLDER_DELETED,
+    /* multi-file games (a .cue and its .bin tracks, a multi-disc set) shown
+     * as a single row standing for every piece */
+    S_GROUP_SUBTITLE,    /* row right cell: "%d files · %s" (count, total) */
+    S_DELETE_GROUP_ONE,  /* confirm header: name the game and its file count */
+    S_GROUP_FILE_COUNT,  /* file dialog line: "Files: %d" */
+    S_GROUP_SETS,        /* Appearance toggle label */
 
     /* ---- repo edit ---- */
     S_TITLE_EDIT_REPO,
@@ -206,6 +225,7 @@ enum {
     S_CLEAR_CREDS_CONFIRM,
     S_ACCESS_KEY,
     S_SECRET_KEY,
+    S_GITHUB_TOKEN,
 
     /* ---- update ---- */
     S_TITLE_UPDATE,
@@ -264,6 +284,7 @@ enum {
     /* ---- search ---- */
     S_TITLE_SEARCH,
     S_SUB_SEARCH,
+    S_SUB_SEARCH_EMPTY,  /* footer when the result list is empty (no "A download") */
     S_SEARCH_PROMPT,
     S_SEARCH_CONSOLE,
     S_SEARCH_REPO,
@@ -327,6 +348,15 @@ enum {
     S_CLEAR_FINISHED,
     S_RETRIED_N,
     S_TOAST_ALL_DONE,
+    S_PAUSE_ALL,
+    S_CANCEL_ALL,
+    S_RETRY_ALL_PAUSED,
+    S_RETRY_ALL_CANCELLED,
+    S_PAUSE_ALL_CONFIRM,
+    S_CANCEL_ALL_CONFIRM,
+    S_PAUSED_ALL,
+    S_CANCELLED_ALL,
+    S_RESUMED_N,
 
     /* ---- installed search ---- */
     S_TITLE_INST_SEARCH,
@@ -364,6 +394,7 @@ enum {
     S_SUB_IMPORT,
     S_IMPORT_STEPS,
     S_IMPORT_REPO_NOTE,  /* accent chip: push straight from the app utility */
+    S_TRANSFER_CODE,     /* label before the big 4-digit LAN transfer code */
     S_IMPORT_NO_NET,
     S_IMPORT_SRV_FAIL,
     S_IMPORT_BAD_FILE,
@@ -454,6 +485,8 @@ enum {
     S_EX_BENCH,              /* toggle: log per-archive extraction throughput */
     S_EX_PREALLOC,           /* toggle: preallocate output files */
     S_EX_CHUNK,              /* value: write chunk size (1/2/4 MB) */
+    S_KEEP_ARCHIVES,         /* toggle: keep downloaded archives compressed */
+    S_CONVERT_IMPORT,        /* toggle: run the post-import converter on new files */
 
     /* ==== reorganized settings hierarchy (v2) ============================= */
     /* Top-level section rows on the Settings screen. */
@@ -488,13 +521,60 @@ enum {
     S_CHECK_NOW,          /* Updates: run a check right now */
     S_SD_CARD,            /* Storage: SD-card status row label */
     S_SD_FREE_OF,         /* "%s free of %s" — SD status value */
+    S_SEC_DATA_FILES,     /* Settings row + screen title: "Data Files" (hosts DAT files + metadata cache) */
+    S_SUB_DATA_FILES,     /* Data Files screen subtitle */
+    S_MANAGE_DAT_FILES,   /* Data Files: row opening the DAT-files manager */
+    S_SUB_META_SECTION,   /* "Manage metadata cache" sub-screen subtitle */
+    S_VIEW_CACHED_FILES,  /* "Manage metadata cache" sub-screen: row opening the cache browser */
     S_MANAGE_META,        /* Storage: open the metadata-cache manager */
+    S_MANAGE_INBOX,       /* Storage: open the Inbox-folder manager */
+    S_TITLE_INBOX_FILES,  /* Inbox-folder manager screen title */
+    S_SUB_INBOX_FILES,    /* Inbox-folder manager subtitle (hints) */
+    S_INBOX_FILES_EMPTY,  /* Inbox-folder manager empty state */
+    S_DELETE_ALL_INBOX_CONFIRM, /* "Delete ALL %d file(s) in the Inbox folder?" */
+    S_INBOX_CLEARED,      /* toast after clearing the Inbox folder */
+    S_INSTALL_WIFI,       /* PC Sync: row — install a game over Wi-Fi */
+    S_INSTALL_USB_CONN,   /* PC Sync: row — install a game over a USB connection */
+    S_MANAGE_BACKUPS,     /* Storage: open the emulator/app backups manager */
+    S_LARGE_FILES,        /* Storage row label + scan-start title: "Largest files" */
+    S_LARGE_FILES_SCANNING, /* spinner while walking the library */
+    S_LARGE_FILES_TITLE_N, /* results title (%d = file count shown) */
+    S_SUB_LARGE_FILES,    /* results subtitle (hints) */
+    S_SUB_LARGE_FILES_EMPTY, /* results subtitle when the library is empty */
+    S_LARGE_FILES_NONE,   /* empty-state: no files found */
+    S_LARGE_FILES_DEL_BODY, /* confirm-delete body (%s name, %s size) */
+    S_TITLE_BACKUPS,      /* Backups screen title */
+    S_SUB_BACKUPS,        /* Backups screen subtitle (empty) */
+    S_SUB_BACKUPS_N,      /* Backups subtitle with total size + hints (%s) */
+    S_BACKUPS_EMPTY,      /* Backups screen empty state */
+    S_CLEAR_BACKUPS,      /* Backups: clear-all action / confirm title */
+    S_CLEAR_BACKUPS_CONFIRM, /* Backups: clear-all confirm body */
+    S_MANAGE_DATS,        /* Storage: open the DAT-files manager */
+    S_TITLE_DATS,         /* DAT-files screen title */
+    S_SUB_DATS,           /* DAT-files screen subtitle */
+    S_DAT_DOWNLOAD,       /* DAT-files: the auto-download action row */
+    S_DAT_SYNC,           /* DAT-files: spinner/title while downloading */
+    S_DAT_SYNC_DONE,      /* DAT-files: "%d downloaded, %d missing" result */
+    S_DAT_LISTING_FAIL,   /* DAT-files: couldn't fetch the repo listing */
+    S_DAT_RATELIMIT,      /* DAT-files: listing GET hit GitHub's rate limit */
+    S_DAT_NONE,           /* DAT-files: empty-list placeholder */
+    S_DAT_NO_MATCH,       /* DAT-files: no configured console matches the DB */
+    S_REGION_PRIORITY,    /* DAT-files: row opening the 1G1R region-order screen */
+    S_TITLE_REGION_PRIORITY, /* Region-order screen title */
+    S_SUB_REGION_PRIORITY,   /* Region-order screen subtitle ("A moves up") */
+    S_REGION_WORLD,       /* region name: World */
+    S_REGION_USA,         /* region name: USA */
+    S_REGION_EUROPE,      /* region name: Europe */
+    S_REGION_JAPAN,       /* region name: Japan */
     S_EXT_TUNING,         /* Diagnostics: open the extraction-tuning sub-screen */
 
     /* Diagnostics build features + their results. */
     S_EXPORT_BUNDLE,
+    S_VIEW_BUNDLE,        /* Logs row: open the exported bundle in the viewer */
     S_BUNDLE_DONE,        /* "Saved debug bundle to %s" */
     S_BUNDLE_FAIL,
+    S_CLEAR_ALL_LOGS,     /* Logs row: delete every log file */
+    S_CLEAR_ALL_LOGS_CONFIRM,
     S_NET_SELFTEST,
     S_SELFTEST_RUNNING,
     S_SELFTEST_RESULT,    /* dialog body: "%s\n%s" (LAN line, internet line) */
@@ -513,6 +593,14 @@ enum {
     S_RESET_DEFAULTS,
     S_RESET_DEFAULTS_CONFIRM,
     S_RESET_DONE,
+    S_MTP_ENABLED,        /* Diagnostics: USB file-transfer (MTP) on/off toggle */
+    S_MTP_DISABLED_TOAST, /* toast: "Connect to PC over USB" while the toggle is off */
+    S_USB3_STATUS,        /* Diagnostics: read-only "USB 3.0" row label */
+    S_ENABLED,
+    S_DISABLED,
+    S_UNKNOWN,
+    S_INV_SERVER,         /* Transfers: companion inventory server toggle label */
+    S_INV_ADDRESS,        /* Transfers: read-only address the companion connects to */
 
     /* Storage detail dialog (A on the SD-card row). */
     S_STORAGE_TITLE,
@@ -520,6 +608,206 @@ enum {
 
     /* About: re-runnable onboarding entry. */
     S_GETTING_STARTED,
+
+    /* ---- DAT verification (Library tab) ---- */
+    S_VERIFY_DAT,      /* console options-menu entry ("Verify Files") */
+    S_VERIFYING,       /* progress spinner caption */
+    S_SUB_VERIFY,      /* results-screen footer hint */
+    S_NO_DAT_TITLE,
+    S_NO_DAT_BODY,     /* how to add a DAT when nothing can fetch one; %s = expected path */
+    S_NO_DAT_FETCH_BODY, /* offers an on-the-spot download; %s = system name */
+    S_DAT_FETCH_NOW,     /* confirm button: download it now */
+    S_DAT_FETCH_QUEUED,  /* toast after confirming the on-the-spot download */
+    S_DAT_FETCH_FAIL,    /* toast: the on-the-spot download didn't find/land a match */
+    S_DAT_LOAD_FAIL,
+    S_VERIFY_SUMMARY,  /* %d verified, %d bad, %d unknown */
+    S_VERIFY_OK,
+    S_VERIFY_BAD,
+    S_VERIFY_UNKNOWN,
+    S_VERIFY_ERR,
+    S_VERIFY_CANCELLED,
+    S_VERIFY_MISNAMED,   /* verified data, non-canonical file name */
+    S_SUB_VERIFY_RENAME, /* footer hint when renamable files are present */
+    S_RENAME_TO_DAT,     /* single-file rename dialog title + confirm button */
+    S_RENAME_ONE_BODY,   /* %s = canonical name */
+    S_RENAME_ALL,        /* bulk rename dialog title + confirm button */
+    S_RENAME_ALL_BODY,   /* %d = count of files to rename */
+    S_RENAME_ALL_DONE,   /* %d renamed, %d skipped */
+
+    /* ---- receive a DAT from a PC over Wi-Fi (Library tab) ---- */
+    S_RECV_DAT,          /* console options-menu entry: get a DAT from a PC */
+    S_DAT_RECV_TITLE,    /* DAT receive-screen title */
+    S_DAT_RECV_STEPS,    /* on-screen steps for the DAT receiver */
+    S_DAT_RECV_CONFIRM,  /* apply confirm body (%d games listed, %s = console) */
+    S_DAT_RECV_DONE,     /* toast after a DAT is saved (%d games listed) */
+    S_DAT_RECV_BAD,      /* toast when the received file isn't a valid DAT */
+    S_DAT_RECV_UNKNOWN,  /* toast when the DAT's system isn't recognised (%s) */
+    S_DAT_RECV_UNKNOWN_SHORT, /* same, no console name (passive inv-server push) */
+    S_DAT_PUSH_DONE,     /* toast after a companion-pushed DAT is filed (%d, %s) */
+    S_DAT_RECV_HOW,      /* prompt: how to send the DAT (companion connected) */
+    S_DAT_RECV_VIA_APP,  /* choice: receive from the app utility */
+    S_DAT_RECV_VIA_URL,  /* choice: show the browser upload URL */
+    S_DAT_RECV_APP_HINT, /* toast: push a DAT from the app utility's DAT tab */
+
+    /* ---- verify results: report export + forced re-verify (Library tab) ---- */
+    S_VERIFY_ACTIONS,    /* Y-menu title on the verify results screen */
+    S_EXPORT_REPORT,     /* Y-menu entry: write the full report to the SD card */
+    S_EXPORT_FIXDAT,     /* Y-menu entry: write a fixdat of the missing entries */
+    S_REVERIFY_FRESH,    /* Y-menu entry: re-verify ignoring the hash cache */
+    S_REVERIFY_TITLE,    /* forced re-verify confirm title */
+    S_REVERIFY_BODY,     /* forced re-verify confirm body */
+    S_REPORT_FAIL,       /* toast when the report couldn't be written */
+    S_REPORT_DONE,       /* toast after the report is written (%s = path) */
+    S_FIXDAT_DONE,       /* toast after the fixdat is written (%d missing, %s path) */
+
+    /* ---- verify every console in one pass (Library tab) ---- */
+    S_VERIFY_ALL,        /* console options-menu entry: verify all consoles */
+    S_NO_DATS,           /* toast when no console has a DAT to verify */
+    S_SUB_VERIFY_ALL,    /* subtitle on the aggregate results screen */
+    S_VERIFY_ALL_ROW,    /* per-console row tallies (%d ok/bad/unknown/missing) */
+    S_VERIFY_ALL_DONE,   /* aggregate results title (%d consoles checked) */
+    S_AUDIT_SUMMARY,     /* verify-all subtitle: library-wide bad/unknown/missing roll-up */
+
+    /* ---- re-acquire a bad dump via search (Library tab) ---- */
+    S_SUB_VERIFY_BAD,    /* results subtitle when there are bad dumps (A hint) */
+    S_REACQUIRE,         /* confirm button: search for a replacement copy */
+    S_REACQUIRE_TITLE,   /* re-acquire confirm title */
+    S_REACQUIRE_BODY,    /* re-acquire confirm body (%s = file name) */
+    S_SHOW_MISSING,      /* Y-menu: browse missing titles (%d = count) */
+    S_MISSING_TITLE,     /* missing-list screen title (%d = count) */
+    S_MISSING_TITLE_FILTERED, /* missing-list title while a filter is active (%d shown, %d total) */
+    S_SUB_MISSING,       /* missing-list subtitle (A find & download hint) */
+    S_SUB_MISSING_FILTERED, /* missing-list subtitle while a filter is active */
+    S_MISSING_NO_MATCH,  /* empty-state: filter matched nothing */
+    S_FILTER_MISSING_PROMPT, /* keyboard guide for the missing-list filter */
+    S_ADD_SOURCE_HOW,    /* title: choose how to add a source */
+    S_SRC_SEARCH_IA,     /* option: search archive.org */
+    S_SRC_ENTER_ID,      /* option: enter an archive.org item id by hand */
+    S_IA_QUERY_GUIDE,    /* keyboard guide for the search query */
+    S_TITLE_IA_SEARCH,   /* archive.org search results title */
+    S_SUB_IA_SEARCH,     /* archive.org search results subtitle */
+    S_IA_NO_RESULTS,     /* empty-state: nothing matched */
+    S_IA_RESULTS,        /* results count line (%d) */
+    S_IA_SEARCH_FAIL,    /* toast: the search request failed */
+    S_IA_ADD_TITLE,      /* confirm-add dialog title */
+    S_IA_ADD_BODY,       /* confirm-add dialog body (%s console, %s item) */
+    S_TIDY_LIBRARY,      /* menu: scan the library for issues to fix */
+    S_TIDY_CONSOLE,      /* menu: tidy just one console's folder */
+    S_STORAGE_OVERVIEW,  /* Tools menu: library-wide storage summary */
+    S_HAVE_MISSING,      /* console Options: verify then show missing titles ("Missing Games") */
+    S_CONSOLE_INFO,      /* console Options: read-only per-console stats dialog */
+    S_TIDY_SCANNING,     /* spinner while scanning */
+    S_TIDY_TITLE,        /* tidy results title (%d = issue count) */
+    S_SUB_TIDY,          /* tidy results subtitle */
+    S_SUB_TIDY_EMPTY,    /* tidy results subtitle when there is nothing to fix */
+    S_TIDY_CLEAN,        /* empty-state: nothing to fix */
+    S_TIDY_DUP,          /* row status: duplicate file */
+    S_TIDY_MISFILED,     /* row status: move to console (%s) */
+    S_TIDY_MOVE_TITLE,   /* confirm-move dialog title */
+    S_TIDY_MOVE_BODY,    /* confirm-move body (%s file, %s console) */
+    S_TIDY_MOVE_FAIL,    /* toast: move refused/failed */
+    S_TIDY_DUP_TITLE,    /* confirm-delete-duplicate dialog title */
+    S_TIDY_DUP_BODY,     /* confirm-delete body (%s this path, %s kept path) */
+    S_MOVED,             /* toast: file moved */
+    S_TIDY_CLONE,        /* 1G1R row status: duplicate regional/revision copy, keeping %s */
+    S_ONEGR_SCAN,        /* menu: reduce regional/revision duplicates to one per title (1G1R) */
+    S_ONEGR_TITLE,       /* 1G1R results title (%d = duplicate count) */
+    S_ONEGR_CLEAN,       /* empty-state: no duplicate copies found */
+    S_ONEGR_DELETE_TITLE,/* confirm-delete-duplicate dialog title */
+    S_ONEGR_BODY,        /* confirm-delete-duplicate body (%s this file, %s kept) */
+
+    /* ---- inbox sorter: file games from a PC into the right console ---- */
+    S_RECV_SORT,         /* X-menu: receive a game and auto-sort it */
+    S_SORT_INBOX,        /* X-menu: sort whatever is staged in the inbox now */
+    S_INBOX_EMPTY,       /* toast: nothing staged to sort */
+    S_INBOX_LABEL,       /* on-screen label for the inbox as a receive target */
+    S_INV_GAME_INBOX,    /* toast: a game pushed over the live link (%s) hit the inbox */
+    S_INV_GAME_FILED,    /* toast: a Library push (%s) landed straight in a console folder (%s) */
+    S_LIVE_RECV_TITLE,   /* title of the receive page shown for a push over the live link */
+    S_LIVE_RECV_MSG,     /* body of that page while a file is arriving */
+    S_SORT_DONE,         /* results title (%d filed, %d need a console) */
+    S_SUB_SORT,          /* results subtitle when everything was filed */
+    S_SUB_SORT_PICK,     /* results subtitle when some rows need a hand-pick */
+    S_SORT_UNKNOWN,      /* row value: couldn't identify the console */
+    S_SORT_GUESS,        /* row value prefix before a best-guess console name */
+    S_SORTED,            /* toast: a staged file was filed after a manual pick */
+    S_SORT_FAIL,         /* toast: filing failed (name clash / move error) */
+    S_SORT_DELETE_FAIL,  /* toast: deleting an inbox file failed */
+
+    S_USB_MENU,          /* X-menu: connect the console to a PC over USB */
+    S_USB_TITLE,         /* USB screen title */
+    S_USB_STEPS,         /* USB screen instructions (empty-state body) */
+    S_USB_WAIT,          /* USB subtitle: brought up, waiting for the PC */
+    S_USB_CONNECTED,     /* USB subtitle: host has connected */
+    S_USB_FAIL,          /* toast: couldn't bring USB device mode up */
+    S_USB_RECEIVING,     /* USB subtitle: a file is arriving from the PC */
+    S_USB_XFER,          /* USB row right: "%d%%  %s / %s" (pct, done, total) */
+    S_USB_FAILED,        /* USB row right: this file's transfer failed */
+    S_USB_EXTRACTING,    /* USB row right: unpacking a received archive, "%d%%" */
+    S_USB_BUSY_NAV,      /* toast: can't leave mid-transfer, cancel (B) first */
+    S_INSTALL_PC_CHOOSE, /* Install-from-PC chooser dialog body */
+    S_INSTALL_PC_WIRELESS, /* chooser option: LAN/Wi-Fi receiver */
+    S_INSTALL_PC_USB,    /* chooser option: USB MTP drive */
+
+    /* ---- an emulator .nro updated in place from the app utility ---- */
+    S_EMU_UPD_CONFIRM,   /* dialog body: overwrite <app> with v%s? (app, ver) */
+    S_EMU_UPD_DONE,      /* toast: <app> updated to v%s */
+    S_EMU_UPD_MISSING,   /* toast: the target app wasn't found on the SD card */
+    S_TITLE_INSTALL,     /* dialog title: Install app */
+    S_EMU_INSTALL_CONFIRM, /* dialog body: install <app> v%s now? (app, ver) */
+    S_EMU_INSTALL_DONE,  /* toast: <app> v%s installed */
+
+    /* ---- Tools: on-device emulator / app update manager ---- */
+    S_APPMAN_MENU,        /* Tools slide-out row: shortcut to Settings -> Updates */
+    S_UPDSRC_PUSHED,      /* toast: desktop pushed the shared update manifest */
+    S_APPMAN_EMUS,        /* Updates row + section title: Emulators */
+    S_APPMAN_APPS,        /* Updates row + section title: Apps */
+    S_APPMAN_EMPTY,       /* section empty-state (no entries of this kind) */
+    S_APPMAN_LIST_HINT,   /* section list footer hint */
+    S_APPMAN_INSTALLED,   /* list status: installed (version unknown) */
+    S_APPMAN_NOT_INSTALLED, /* list status: not installed */
+    S_APPMAN_NO_SOURCE,   /* list status suffix: no update source set */
+    S_APPMAN_SRC_UNREACHABLE, /* list status: source set but releases unreachable */
+    S_APPMAN_RATE_LIMITED,    /* list status: GitHub rate limit hit */
+    S_APPMAN_OFFLINE,         /* list status: no network / can't reach GitHub */
+    S_APPMAN_RATE_LIMITED_MSG,/* dialog: rate limited, set a token / wait */
+    S_APPMAN_OFFLINE_MSG,     /* dialog: no connection to GitHub */
+    S_APPMAN_CHECK_CANCEL,    /* checking subtitle hint: B to cancel */
+    S_APPMAN_NEEDS_SOURCE,/* dialog body: %s has no source; set one? */
+    S_APPMAN_SET_SOURCE,  /* button: set the GitHub update source */
+    S_APPMAN_CHANGE_SOURCE, /* entry action: change the update source */
+    S_APPMAN_REPO_GUIDE,  /* swkbd guide: GitHub repo owner/name */
+    S_APPMAN_SOURCE_SAVED,/* toast: update source saved */
+    S_APPMAN_CHECKING,    /* toast: checking for the latest release */
+    S_APPMAN_CHECK_FAIL,  /* dialog: couldn't reach GitHub for this app */
+    S_APPMAN_UPDATE_AVAIL,/* body: installed %s, update to %s available */
+    S_APPMAN_UPDATE_TO,   /* button: update to %s */
+    S_APPMAN_UP_TO_DATE,  /* body: up to date (%s) */
+    S_APPMAN_REINSTALL,   /* button: reinstall %s */
+    S_APPMAN_NOT_INST_LATEST, /* body: not installed, latest is %s */
+    S_APPMAN_INSTALL_V,   /* button: install %s */
+    S_APPMAN_REVERT,      /* entry action: revert to a backup */
+    S_APPMAN_REVERT_PICK, /* revert list body: choose a build to restore */
+    S_APPMAN_NO_BACKUPS,  /* dialog: no backups stored yet */
+    S_APPMAN_REVERT_NOTINST, /* dialog: not installed, nothing to replace */
+    S_APPMAN_REVERTED,    /* toast: %s reverted */
+    S_APPMAN_PUSH_PC,     /* Updates row: push the sources/list to the PC */
+    S_PCSYNC_PUSH_LIST,   /* PC Sync row: push emulator+app list (with repo) to PC */
+    S_APPMAN_PC_CONNECTED,/* right cell: a companion is connected */
+    S_APPMAN_PC_OFFLINE,  /* right cell: no companion connected */
+    S_APPMAN_PUSH_SENT,   /* toast: the companion will pick up the pushed list */
+    S_APPMAN_PUSH_NOCONN, /* dialog: connect a companion (Wi-Fi or USB) first */
+    S_APPMAN_UNCHECKED,   /* list status: installed+sourced, not yet checked */
+    S_APPMAN_CHECK_UPDATES, /* entry menu action: check GitHub for a newer release */
+    S_APPMAN_SOURCE_LINE, /* entry menu body: "Source: owner/repo" under the name */
+    S_APPMAN_LOADING,     /* spinner text while the list builds (no network) */
+    S_APPMAN_NEVER_CHECKED, /* last-checked suffix when never checked this build */
+    S_APPMAN_JUST_NOW,    /* last-checked suffix: within the last minute */
+    S_APPMAN_MIN_AGO,     /* last-checked suffix: "%dm ago" */
+    S_APPMAN_HR_AGO,      /* last-checked suffix: "%dh ago" */
+    S_APPMAN_DAY_AGO,     /* last-checked suffix: "%dd ago" */
+    S_APPMAN_SCAN_ALL,    /* footer/menu: check every entry for updates (X) */
+    S_APPMAN_SCAN_ONE,    /* footer: check the selected entry (Y) */
 
     S__COUNT
 };

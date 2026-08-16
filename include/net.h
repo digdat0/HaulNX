@@ -29,6 +29,14 @@ typedef uint64_t (*net_rate_cb)(void *userdata);
 char *http_get(const char *url, long *http_code, size_t *out_len);
 
 /*
+ * Set the GitHub personal-access token sent as a Bearer Authorization header on
+ * api.github.com GETs (and only those hosts), so the update checks aren't capped
+ * by GitHub's 60-req/hr unauthenticated limit. Pass NULL/"" to clear it. Copied
+ * internally; safe to call from the UI thread while GETs run on workers.
+ */
+void net_set_github_token(const char *tok);
+
+/*
  * A private connection for parallel GETs (e.g. bulk metadata refresh). Each
  * handle owns its own TLS connection, so several workers can fetch at once
  * without serializing on http_get()'s shared handle. Not thread-shared: use one

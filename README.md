@@ -2,15 +2,19 @@
 
 > Please report issues on the [GitHub Issues](https://github.com/digdat0/HaulNX/issues) page.
 
-A Nintendo Switch homebrew that browses and downloads game files from
-[archive.org](https://archive.org) into its own centralized ROM library at
-`sdmc:/roms/<console>/`, decompressing archives along the way. Point your
-emulators at that folder and your games show up. Built for the devkitPro /
-libnx toolchain using Claude Code. **Yes, this is 100% AI created, but it
+A **ROM library manager for Nintendo Switch homebrew**. HaulNX builds and maintains
+one central library at `sdmc:/roms/<console>/` — you fill it from several sources
+(download from [archive.org](https://archive.org), or send files from your PC over
+USB or Wi-Fi), and it keeps that library **organized, verified, and tidy**: checked
+against No-Intro/Redump DATs, deduplicated, misfiled files sorted, folders per
+console. Point your emulators at `sd:/roms` once and
+everything you add shows up. It also keeps your **installed emulators and apps up to
+date** from GitHub, and ships with a **companion you run on your PC**. Built for the
+devkitPro / libnx toolchain using Claude Code. **Yes, this is 100% AI created, but it
 works.**
 
 > HaulNX ships **no ROMs, no collections, and no
-> credentials** — it's an empty downloader. **You provide your own** archive.org
+> credentials** — it's an empty library. **You provide your own** archive.org
 > item ids (and optionally your own archive.org keys for restricted items). No
 > links to any content are bundled.
 >
@@ -23,95 +27,125 @@ works.**
 
 ## What it does
 
-HaulNX is a background download manager for archive.org game files that installs
-them into one central ROM library — `sdmc:/roms/<console>/` — across **53
-supported console folders**. You point your emulators at that folder once, and
-everything you download from then on just appears.
+HaulNX manages one central ROM library — `sdmc:/roms/<console>/`, across **53
+supported console folders**. Get files in from wherever (archive.org, or your PC),
+and HaulNX handles the rest: it extracts archives, verifies dumps against the
+official DATs, files everything under the right console, and cleans up duplicates and
+strays. Point your emulators at `sd:/roms` once, and the library takes care of
+itself. A **desktop companion** and the on-device tools cover the whole loop —
+acquire, organize, verify, and maintain.
 
 ---
 
 ## Features
 
-**Browse & search**
-- Archive.org collections grouped by console, with full console names; a console
-  can hold several repos when one set is incomplete
-- **Global search** across every cached repo — results tagged with their console,
-  marked `*` if you already have the file, and queueable straight from the results
-- Filter and sort any file list, pin favourites to the top, and show or hide
-  consoles you don't collect for
-
-**Bulk downloads**
-- **Mark files with Y**, then queue the whole set with **A**. The selection is
-  keyed to the file rather than the row, so you can filter, mark, change the
-  filter and mark again to build one set across several passes
-- Before anything starts you get the totals: **how many files, how many bytes,
-  free space, what the queue already owes, and how many were skipped as already
-  installed.** If the set doesn't fit you can take only what fits, or queue it
-  anyway
-- **Skip installed** (default on) drops files you already have from a marked
-  selection — a single deliberate **A** on one file is never filtered
+**Get ROMs into the library**
+- **Download from archive.org** — collections grouped by console, with **global
+  search** across every cached repo (results tagged with their console and marked `*`
+  if you already have the file), bulk-mark with **Y** and queue with **A**
+- **Send from your PC** — push files straight to the console over a **USB cable** or
+  over **Wi-Fi** (no cable), from the [desktop companion](#the-desktop-companion).
+  Incoming files land in an inbox and are auto-sorted to the right console
+- Everything routes through one **Queue tab** — downloads, PC transfers, and app
+  updates all show the same progress rows
 
 **Download queue**
-- Holds **256 items** and runs up to **10 at once** by default; change the limit and it
-  applies immediately — lowering it pauses the excess, which resume where they
-  stopped as slots free up
-- Resumable, and **persists across app restarts** — interrupted downloads pick up
-  automatically on the next launch
-- **Network-loss aware**: if the connection drops, active downloads pause keeping
-  their partial files, and everything resumes in order when it comes back
-- **Waits for free space** instead of failing item after item as the card fills,
-  and retries transient server errors with backoff
+- Holds **256 items** and runs **3 at once** by default (adjustable up to 10);
+  lowering the limit pauses the excess, which resume as slots free up
+- Resumable and **persists across app restarts**; **network-loss aware** (pauses and
+  resumes in order when the connection drops), **waits for free space** rather than
+  failing item after item, and retries transient server errors with backoff
 - Pipelined extraction — the next download starts while the previous archive unpacks
-- Progress, speed, ETA, cancel, reorder; a **Y** menu to retry every failed item
-  or clear the finished ones at once
-- Download history with one-press **re-download from the log**
+- Progress, speed, ETA, cancel, reorder; a **Y** menu to retry every failed item or
+  clear finished ones; download history with one-press **re-download from the log**
+- Before a bulk queue starts you get the totals — **files, bytes, free space, what the
+  queue already owes, and how many were skipped as already installed** — and can take
+  only what fits
 
-**Extraction & verification**
-- `.zip` / `.7z` / `.rar` / `.tar.*` unpacked into the console folder; plain files
-  moved as-is
-- Verified by size and MD5 where the source publishes them, so a corrupt or
-  truncated download is rejected rather than installed
+**Organize & verify**
+- **Verify against DATs** — checks each ROM's size and hash against No-Intro / Redump
+  DATs (auto-downloaded, or sent from your PC). Byte-order and header quirks are
+  normalized, and single-file archives are hashed *inside the zip*, so a good dump
+  matches whether loose or zipped
+- **Have-vs-missing view** — see what a set is missing and jump straight to an
+  archive.org search to acquire it
+- **Tidy library** — finds misfiled files (wrong console folder) and exact duplicates;
+  **report-only, confirm each** — nothing is moved or deleted without your say-so
+- **Reduce to 1G1R** — flag clone/region duplicates down to one game per title
+- **Per-file options** (**X** in the library) — rename in place, sort, delete, or
+  **move a game to another console folder**
 
 **Installed library**
-- Browse what you have by console, sorted by name or size with pinned folders on top
+- Browse what you have by console, sorted by name or size with pinned folders on top,
+  with an **on-device badge** so you can see at a glance what's already installed
 - **Search installed games** across every ROM folder; open a result to jump to it
 - Multi-select to delete, or rename in place
 
-**In-app self-update**
-- **Settings → Check for updates** pulls the newest release from GitHub in one tap
-- Or push a build **over Wi-Fi** from the [App Utility](#collections-config--the-app-utility) — no USB
-  cable, and the same version as installed is accepted so you can test new builds
-- Either way the build is validated and staged, so an interrupted install can't
-  corrupt the app
+**Keep emulators & apps updated**
+- **Settings → Emulator & app updates** scans everything under `sdmc:/switch`, checks
+  each against its **GitHub release**, and installs or updates it in place — with
+  per-app backups so you can revert
+- Update sources live in one shared manifest you can edit on the console **or** from
+  the desktop companion, and sync either direction over USB or Wi-Fi
 
 **Custom install folders**
-- The whole library lives at `sdmc:/roms/<console>/` by default, but you can
-  **move it anywhere** (Settings → Storage → ROM Download Folder) or send
-  **individual consoles to their own folders** while the rest stay put
-  (Settings → Storage → Install folders → *Custom per console*). Handy when one
-  emulator insists on its own directory or you keep a system on a separate card.
-  Full walkthrough on the
+- The library lives at `sdmc:/roms/<console>/` by default, but you can **move it
+  anywhere** (Settings → Storage → ROM Download Folder) or send **individual consoles
+  to their own folders** (Settings → Storage → Install folders → *Custom per
+  console*). Handy when one emulator insists on its own directory, or you keep a system
+  on a separate card. Full walkthrough on the
   **[Custom Folders](https://github.com/digdat0/HaulNX/wiki/Reference-Custom-Folders)**
   wiki page.
 
 **Also** — an optional card view, full touch control, 25 languages, light and dark
-themes, and a live network/space/battery header.
-**Settings → Manage data** refreshes or clears cached metadata, cleans up the
-temporary downloads folder, and takes a collection sent over Wi-Fi from the
-[App Utility](#collections-config--the-app-utility).
+themes, and a live network/space/battery header. **Settings → Manage data** refreshes
+or clears cached metadata and cleans up the temporary downloads folder.
+
+---
+
+## The desktop companion
+
+Building collections and shuffling files with the Switch's on-screen keyboard gets old
+fast, so HaulNX pairs with a **companion you run on your PC**. It comes in two forms:
+
+- **App Utility** — a single self-contained HTML file, **attached to every release**,
+  that you open in any browser. Build whole collections with a real keyboard, preview
+  an item's file list before you commit to it, push the result to the console over
+  Wi-Fi, and inventory what the device already has.
+- **Native desktop app (Windows)** — the fuller companion, in [`desktop/`](desktop/),
+  built with Rust + Tauri. On top of everything the HTML utility does it adds native
+  powers a browser can't have: it **auto-discovers your Switch on the network** (no
+  typing an IP), talks to it over a **USB cable**, downloads from archive.org **free of
+  browser CORS limits** (including restricted items with your S3 keys), **extracts
+  zip/7z/rar**, **sends games to the console** over
+  USB or Wi-Fi, and **manages and updates your installed emulators and apps** from
+  GitHub. It self-updates, too.
+
+The wiki has the details:
+
+- **[App Utility](https://github.com/digdat0/HaulNX/wiki/Reference-App-Utility)** —
+  building collections on a PC, sending them across, and updating the app.
+- **[Configuration](https://github.com/digdat0/HaulNX/wiki/Reference-Configuration)** —
+  the `dl_sources.json` schema, `credentials.json`, the 53 supported console folders,
+  and every file HaulNX keeps on the card.
+
+Restricted archive.org items need your own S3 keys
+(<https://archive.org/account/s3.php>); public collections need none. Keys live
+only on your SD card and are sent only to archive.org, only over HTTPS — **none
+are bundled.**
 
 ---
 
 ## Using it with your emulators
 
 HaulNX doesn't play anything — it fills a library that your emulators read from.
-Every download lands in `sdmc:/roms/<console>/`:
+Everything lands in `sdmc:/roms/<console>/`:
 
 ```
 sd:/roms/snes/    sd:/roms/psx/    sd:/roms/gba/    sd:/roms/nds/  ...
 ```
 
-**Point each emulator at `sd:/roms` rather than moving downloads to suit one
+**Point each emulator at `sd:/roms` rather than moving files to suit one
 emulator** — that way a single library is shared by all of them.
 
 The **[HaulNX wiki](https://github.com/digdat0/HaulNX/wiki)** has a setup page per
@@ -146,7 +180,7 @@ and **[troubleshooting](https://github.com/digdat0/HaulNX/wiki/Reference-Trouble
 Two things trip up almost everyone:
 
 - **RetroArch doesn't notice new files by itself** — rescan `sd:/roms` after a
-  HaulNX session or the playlists won't show what you just downloaded.
+  HaulNX session or the playlists won't show what you just added.
 - **NetherSX2, DraStic and Cemu won't launch from the homebrew menu normally.**
   They need the full memory of a game override: hold **R** while opening an
   installed game, then start the emulator from the menu that appears.
@@ -177,9 +211,9 @@ and an emulator or two — see
    ```
 3. Launch it from the homebrew menu.
 
-Each release also attaches **`appUtility-<version>.html`** — the companion
-[App Utility](#collections-config--the-app-utility) you open in a browser on your
-computer to build collections and push files to the console.
+Each release also attaches **`appUtility-<version>.html`** — the
+[App Utility](#the-desktop-companion) you open in a browser on your computer to build
+collections and push files to the console.
 
 On first run it seeds an **empty** `dl_sources.json` containing only the list of
 supported console folders — **no collections or links are included**. Add your
@@ -210,13 +244,11 @@ you'll see its file list. Repeat **Y** to add more collections — a console can
 hold several.
 
 **Building more than a couple of these? Use the
-[App Utility](#collections-config--the-app-utility) instead.** Typing item ids on
-the Switch's on-screen keyboard gets old fast. The utility is a single HTML file
-that ships with every release — open it in a browser on your PC, build the whole
-collection with a real keyboard, preview any item's file list before you commit to
-it, and send the result straight to the console over your network. No SD card
-swapping, and no re-typing. It can also pull the collection the console is
-currently running back into the editor, so you can fetch, edit and send it on
+[desktop companion](#the-desktop-companion) instead.** Typing item ids on the
+Switch's on-screen keyboard gets old fast. Build the whole collection with a real
+keyboard, preview any item's file list before you commit to it, and send the result
+straight to the console over your network. It can also pull the collection the console
+is currently running back into the editor, so you can fetch, edit and send it on
 again.
 
 (You can also edit `dl_sources.json` on the SD card by hand — see
@@ -239,55 +271,36 @@ for **restricted** items that require an archive.org account.
 Keys live only on your SD card (`sdmc:/switch/HaulNX/config/credentials.json`) and
 are sent only to archive.org hosts, and only over HTTPS.
 
-### 3. Download
+### 3. Fill the library
 
-1. On **Browse**, open a console (**A**) and pick a repo to browse its files.
-   (Repo metadata loads in the background with a brief "Loading…" indicator.)
-2. Highlight a file and press **A** to queue it. For more than one, mark files
-   with **Y** and then press **A** — you'll get the totals (files, bytes, free
-   space) before anything starts. **X** opens the filter, sort, and *select all
-   shown*.
-3. Switch to the **Queue** tab (**L/R**) to watch progress. Completed downloads
+1. **From archive.org:** on **Browse**, open a console (**A**) and pick a repo to
+   browse its files. Highlight a file and press **A** to queue it; for more than one,
+   mark files with **Y** and then press **A**. **X** opens the filter, sort, and
+   *select all shown*.
+2. **From your PC:** open the [companion](#the-desktop-companion), connect to the
+   console, and send files over USB or Wi-Fi — they arrive in the inbox and sort to the
+   right console.
+3. Switch to the **Queue** tab (**L/R**) to watch progress. Completed items
    extract/move into `sdmc:/roms/<console>/` automatically.
 
 ### 4. Point an emulator at the library
 
-Downloads are now in `sdmc:/roms/<console>/`. Set your emulator's ROM folder to
+Everything is now in `sdmc:/roms/<console>/`. Set your emulator's ROM folder to
 `sd:/roms` (or the per-system subfolder it wants) and your games appear — see
 **[using it with your emulators](#using-it-with-your-emulators)** for the per-app
 steps.
 
 ---
 
-## Collections, config & the App Utility
-
-You add collections in-app (**Y** on the Browse tab), but the easy way is the
-**App Utility** — a self-contained HTML file, attached to every release, that you
-open in a browser on your PC to build collections with a real keyboard and send
-them to the console over Wi-Fi.
-
-The wiki has the details:
-
-- **[App Utility](https://github.com/digdat0/HaulNX/wiki/Reference-App-Utility)** —
-  building collections on a PC, sending them across, and updating the app.
-- **[Configuration](https://github.com/digdat0/HaulNX/wiki/Reference-Configuration)** —
-  the `dl_sources.json` schema, `credentials.json`, the 53 supported console
-  folders, and every file HaulNX keeps on the card.
-
-Restricted archive.org items need your own S3 keys
-(<https://archive.org/account/s3.php>); public collections need none. Keys live
-only on your SD card and are sent only to archive.org, only over HTTPS — **none
-are bundled.**
-
----
-
 ## Updating
 
 **Settings → Check for updates** pulls the newest release from GitHub in one tap,
-or accepts a build pushed **over Wi-Fi** from the App Utility (no USB cable). The
+or accepts a build pushed **over Wi-Fi** from the companion (no USB cable). The
 build is validated and staged with a backup, so an interrupted install can't
 corrupt the app; you get a **Restart now** option to relaunch straight into it.
-Full walkthrough on the
+
+HaulNX can also keep your **installed emulators and apps** updated the same way —
+see **Keep emulators & apps updated** above. Full walkthrough on the
 [App Utility wiki page](https://github.com/digdat0/HaulNX/wiki/Reference-App-Utility#updating-the-app).
 
 ---
@@ -304,6 +317,9 @@ git clone --recursive https://github.com/digdat0/HaulNX
 cd HaulNX
 make            # builds the Plutonium submodule, then HaulNX.nro
 ```
+
+The desktop companion is a separate Rust + Tauri project under
+[`desktop/`](desktop/) with its own build.
 
 The prerequisites, the Windows/MSYS2 shell invocation, a note on why networking
 only works on real hardware, and a map of the source tree are on the
@@ -325,14 +341,24 @@ rebuilding). Bug reports and PRs go to
 
 ## License
 
-Released under the [MIT License](LICENSE) — free to use, modify and
-redistribute. The only condition is that the copyright notice and license stay
-included, so **please keep the credit**.
+Released under the [GNU General Public License, version 3 or later](LICENSE)
+— free to use, study, modify and redistribute, provided derivatives stay
+under the GPL and ship their source. The full license text is bundled at
+[`licenses/GPL-3.0.txt`](licenses/GPL-3.0.txt).
 
-HaulNX's own code and the [Plutonium](https://github.com/XorTroll/Plutonium) UI
-library it builds on are both MIT-licensed, so the project is cleanly permissive.
-Third-party license notices (Plutonium © XorTroll, jsmn, and the bundled Noto
-Sans font subset under the SIL Open Font License) are collected in
+Two features pull in code that requires this: the native RAR3 filter-decoder
+fallback ports a slice of the LGPLv3-licensed [unarr](https://github.com/zeniko/unarr)
+project, and the embedded USB MTP responder's protocol layer follows the
+pattern of [cmtp-responder](https://github.com/cmtp-responder/cmtp-responder)
+(Apache-2.0) — both require GPLv3 for the combined work, which is why HaulNX
+moved there (from GPLv2, itself an earlier relicense from MIT for a since-
+replaced MTP implementation). Details and full attribution are in
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
+
+The other bundled and linked components stay under their own, GPL-compatible
+licenses: [Plutonium](https://github.com/XorTroll/Plutonium) © XorTroll and the
+vendored jsmn tokenizer (both MIT), and the bundled Noto Sans font subset under
+the SIL Open Font License 1.1. Their notices are collected in
 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md); the full OFL text ships at
 [`licenses/OFL-1.1.txt`](licenses/OFL-1.1.txt). These accompany any
 distribution.
@@ -347,5 +373,8 @@ distribution.
   [jsmn](https://github.com/zserge/jsmn) tokenizer (MIT).
 - Graphical UI powered by [Plutonium](https://github.com/XorTroll/Plutonium) by
   [XorTroll](https://github.com/XorTroll).
-- Inspired by [TicoBro](https://github.com/StonedModder/Ticobro) — I wanted a
-  simple downloader whose only job was to download, with some enhancements.
+- Started as a simple archive.org downloader inspired by
+  [TicoBro](https://github.com/StonedModder/Ticobro), and grew into a full ROM
+  library manager from there.
+</content>
+</invoke>

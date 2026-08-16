@@ -1,12 +1,15 @@
 #include "httpsrv.h"
 
 #include "config.h" /* SOURCES_PATH: the file this page uploads and exports */
+#include "fsutil.h" /* fs_log_rotate / fs_mkdir_p for the lifecycle trace */
 
 #include <arpa/inet.h>
 #include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <stdarg.h>
 #include <netinet/in.h>
+#include <netinet/tcp.h> /* TCP_NODELAY */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -26,8 +29,29 @@
  * — the socket buffer refills as fast as it drains — and freeze the render
  * thread until it finished (or the stalled connection died). Draining a bounded
  * slice and returning keeps the UI at frame rate, advances the progress bar, and
- * feeds the idle watchdog; the next poll resumes where this one left off. */
-#define STREAM_PER_POLL (512 * 1024)
+ * feeds the idle watchdog; the next poll resumes where this one left off. With
+ * the larger socket buffers (see net.c) a slice now clears the wire well within a
+ * frame, so a 1M ceiling roughly doubles the per-frame throughput without the
+ * poll overrunning its budget. */
+#define STREAM_PER_POLL (1024 * 1024)
+
+/* A streamed push is drained on a dedicated thread (see rx_thread_fn) so the
+ * socket is emptied continuously rather than once per render frame — the
+ * frame-gated drain was capped near (receive window / frame period). The thread
+ * runs below the main thread's priority (0x2C) so rendering never starves,
+ * matching the download workers in queue.c. */
+#define RX_STACK 0x20000
+#define RX_PRIO  0x30
+/* Ring of buffers handed between the two pump threads. The net thread fills a
+ * slot with recv while the writer thread drains a different one with fwrite, so
+ * the socket keeps draining during the slow SD write instead of stalling the TCP
+ * window on it — the same recv/write overlap the USB/MTP path uses
+ * (responder.cpp:840). 4 x 256K = 1 MB in flight, matching the tuned socket
+ * buffer (net.c), and the 256K writes hit the SD card far better than 64K dribs. */
+#define RX_NBUF  4
+#define RX_SLOT  (256 * 1024)
+/* Receive-thread outcome, reported via HttpSrv.rx_status once rx_done is set. */
+enum { RX_RUNNING = 0, RX_OK, RX_PEERCLOSED, RX_WRITEERR, RX_ERR, RX_CANCELLED };
 
 /* Requests are read incrementally, a slice per poll, so the UI thread keeps
  * rendering during a large upload and can show its progress. Responses are
@@ -38,8 +62,14 @@
  * blocks the UI thread for its full timeout. */
 #define RECV_TIMEOUT_MS 2000
 #define SEND_TIMEOUT_MS 1000
-/* Watchdog for a client that connects and then goes quiet mid-request. */
-#define CLIENT_IDLE_NS  5000000000ULL /* ~5s without a byte drops the client */
+/* Watchdog for a client that connects and then goes quiet mid-request. The
+ * server is polled once per render frame, so a "quiet" client can also just be
+ * one the render thread hasn't gotten back to: a heavy UI action (e.g. the
+ * Library tab re-walking a console's file sizes) can stall polling for a few
+ * seconds mid-transfer. 5s was tight enough that such a hitch dropped an
+ * otherwise-healthy LAN upload; 12s rides those out while still noticing a truly
+ * dead peer promptly. TCP backpressure simply pauses the sender in the meantime. */
+#define CLIENT_IDLE_NS  12000000000ULL /* ~12s without a byte drops the client */
 /* The idle watchdog resets on every byte, so it alone doesn't bound a peer that
  * dribbles one byte every few seconds — that peer holds the single connection
  * slot indefinitely and the real upload can never get in. A request head is a
@@ -172,14 +202,39 @@ static const char PAGE_NRO[] =
     "<div><h1>Haul<span>NX</span></h1><p>Update app</p></div></header>"
     "<ol>"
     "<li>Find the <b>HaulNX .nro</b> build to install &mdash; the same "
-    "version as installed is fine.</li>"
+    "version as installed is fine. A zip/RAR/7z containing it works too, "
+    "it's unpacked on the Switch before installing.</li>"
     "<li>Drop it below, or click to browse for it. (The app utility can "
     "also push it: <b>Send to Switch &rsaquo; App update</b>.)</li>"
     "<li>Send it, then confirm the install on your Switch.</li>"
     "</ol>"
     "<form method=post enctype=multipart/form-data>"
     "<label id=drop><b>Drop HaulNX.nro here</b>or click to choose a file"
-    "<input type=file name=f accept=\".nro\" required>"
+    "<input type=file name=f accept=\".nro,.zip,.rar,.7z\" required>"
+    "</label>"
+    "<button id=go disabled>Send to Switch</button>"
+    "</form>" UPLOAD_SCRIPT "</div>";
+
+/* The DAT upload page, shown while a per-console "Receive DAT" screen is open.
+ * A DAT is a small XML catalog, so it rides the same buffered multipart path as
+ * the collection import; the console saves it for the console this screen was
+ * opened from, so there is nothing to choose here but the file. */
+static const char PAGE_DAT[] =
+    "<!doctype html><meta charset=utf-8>"
+    "<meta name=viewport content=\"width=device-width,initial-scale=1\">"
+    "<title>HaulNX - Send a DAT</title>" PAGE_CSS UPLOAD_CSS
+    "<div class=card>"
+    "<header><img src=\"/logo.png\" alt=\"\">"
+    "<div><h1>Haul<span>NX</span></h1><p>Send a DAT</p></div></header>"
+    "<ol>"
+    "<li>Find the <b>No-Intro/Redump .dat</b> for any console.</li>"
+    "<li>Drop it below, or click to browse for it.</li>"
+    "<li>Send it &mdash; the Switch reads which console it's for from the "
+    "file, then asks you to confirm.</li>"
+    "</ol>"
+    "<form method=post enctype=multipart/form-data>"
+    "<label id=drop><b>Drop a .dat file here</b>or click to choose a file"
+    "<input type=file name=f accept=\".dat,.xml\" required>"
     "</label>"
     "<button id=go disabled>Send to Switch</button>"
     "</form>" UPLOAD_SCRIPT "</div>";
@@ -192,33 +247,40 @@ static const char PAGE_NRO[] =
  * and, because the response is a plain 200 rather than a redirect, stay on this
  * page afterwards. The console decides which folder it lands in (the screen was
  * opened for one console), so there is nothing to choose here but the file. */
+/* Multiple files are sent one after another over their own POSTs: the console's
+ * receiver stays open across files, so the browser just uploads the selected
+ * list sequentially, advancing to the next once each 200 lands. */
 #define ROM_SCRIPT                                                             \
     "<script>"                                                                 \
     "var d=document.getElementById('drop'),i=d.querySelector('input'),"        \
     "b=document.getElementById('go'),n=d.querySelector('b'),"                   \
-    "st=document.getElementById('st'),bar=document.getElementById('bar'),f=0;" \
-    "function s(){if(i.files.length){f=i.files[0];n.textContent=f.name;"        \
-    "b.disabled=false;}}"                                                       \
+    "st=document.getElementById('st'),bar=document.getElementById('bar'),fs=[];"\
+    "function s(){fs=i.files;if(fs.length){n.textContent=fs.length==1?"         \
+    "fs[0].name:fs.length+' files';b.disabled=false;}}"                        \
     "i.addEventListener('change',s);"                                          \
     "['dragenter','dragover'].forEach(function(e){d.addEventListener(e,"        \
     "function(v){v.preventDefault();d.classList.add('over');});});"            \
     "['dragleave','drop'].forEach(function(e){d.addEventListener(e,"           \
     "function(v){v.preventDefault();d.classList.remove('over');});});"         \
     "d.addEventListener('drop',function(v){i.files=v.dataTransfer.files;s();});"\
-    "b.addEventListener('click',function(){if(!f)return;b.disabled=true;"       \
-    "i.disabled=true;var x=new XMLHttpRequest();"                              \
+    "b.addEventListener('click',function(){if(!fs.length)return;"               \
+    "b.disabled=true;i.disabled=true;var k=0;"                                 \
+    "function nx(){if(k>=fs.length){bar.style.width='100%';"                   \
+    "st.textContent='All sent ('+fs.length+'). Confirm on your Switch.';"       \
+    "return;}var f=fs[k],x=new XMLHttpRequest();"                              \
     "x.open('POST',location.pathname.replace(/\\/+$/,''));"                    \
     "x.setRequestHeader('X-Filename',encodeURIComponent(f.name));"             \
     "x.upload.onprogress=function(e){if(e.lengthComputable){var p="            \
     "Math.round(e.loaded*100/e.total);bar.style.width=p+'%';"                  \
-    "st.textContent='Sending '+p+'%';}};"                                      \
-    "x.onload=function(){if(x.status>=200&&x.status<300){bar.style.width="     \
-    "'100%';st.textContent='Sent. Confirm on your Switch.';}else{"             \
-    "st.textContent='Refused (HTTP '+x.status+'). Re-open the receive screen "  \
-    "and use the address it shows.';b.disabled=false;i.disabled=false;}};"     \
+    "st.textContent='Sending '+(k+1)+'/'+fs.length+' \\u2014 '+f.name+' '+p+"   \
+    "'%';}};"                                                                  \
+    "x.onload=function(){if(x.status>=200&&x.status<300){k++;nx();}else{"       \
+    "st.textContent='Refused (HTTP '+x.status+') on '+f.name+'. Re-open the "   \
+    "receive screen and use the address it shows.';b.disabled=false;"          \
+    "i.disabled=false;}};"                                                     \
     "x.onerror=function(){st.textContent='Network error \\u2014 is the "        \
     "receive screen still open?';b.disabled=false;i.disabled=false;};"         \
-    "x.send(f);});"                                                            \
+    "x.send(f);}nx();});"                                                      \
     "</script>"
 
 static const char PAGE_ROM[] =
@@ -235,13 +297,13 @@ static const char PAGE_ROM[] =
     "<header><img src=\"/logo.png\" alt=\"\">"
     "<div><h1>Haul<span>NX</span></h1><p>Send a game</p></div></header>"
     "<ol>"
-    "<li>Drop the game file below, or click to browse for it.</li>"
-    "<li>Send it &mdash; it copies into the folder for the console you opened "
+    "<li>Drop the game files below, or click to browse for them.</li>"
+    "<li>Send them &mdash; they copy into the folder for the console you opened "
     "this screen from.</li>"
-    "<li>Confirm on your Switch if it would replace a file already there.</li>"
+    "<li>Confirm on your Switch if one would replace a file already there.</li>"
     "</ol>"
-    "<label id=drop><b>Drop a game file here</b>or click to choose a file"
-    "<input type=file name=f required>"
+    "<label id=drop><b>Drop game files here</b>or click to choose files"
+    "<input type=file name=f multiple required>"
     "</label>"
     "<button id=go disabled>Send to Switch</button>"
     "<div class=pbar><div id=bar></div></div>"
@@ -418,6 +480,31 @@ static bool sanitize_filename(const char *in, char *out, size_t out_sz) {
     return j > 0;
 }
 
+/* Like sanitize_filename but for the X-App-Path update target: a full device
+ * path to an installed .nro. Percent-decode (keeping the slashes), then require
+ * the sdmc:/switch/ prefix and reject any ".." so the write can never escape the
+ * apps tree. False if the result isn't a safe .nro path there. */
+static bool sanitize_app_path(const char *in, char *out, size_t out_sz) {
+    size_t o = 0;
+    for (const char *p = in; *p && p[0] != '\r' && p[0] != '\n' &&
+                             o + 1 < out_sz;
+         p++) {
+        if (p[0] == '%' && isxdigit((unsigned char)p[1]) &&
+            isxdigit((unsigned char)p[2])) {
+            char h[3] = {p[1], p[2], '\0'};
+            out[o++] = (char)strtol(h, NULL, 16);
+            p += 2;
+        } else {
+            out[o++] = p[0];
+        }
+    }
+    out[o] = '\0';
+    if (strncmp(out, "sdmc:/switch/", 13) != 0 || strstr(out, "..")) {
+        return false;
+    }
+    return o > 4 && strcasecmp(out + o - 4, ".nro") == 0;
+}
+
 /* Send a file from romfs/SD as a complete response. With `dl_name` set the
  * browser saves it under that name instead of rendering it, and the response is
  * marked uncacheable — an exported config must never come from a stale copy.
@@ -553,8 +640,40 @@ static bool multipart_slice(char *body, size_t *len, const char *ctype) {
 
 /* Drop the in-flight connection and everything read so far. Never touches
  * s->body — a completed upload stays owned by the caller. */
+/* Lifecycle trace into debug.log (which diag_bundle_write captures), so a
+ * connection that never gets accepted -- or one reset before it becomes a
+ * Queue-tab item -- still leaves a record. Two prior Wi-Fi-push fixes were
+ * theories that a hardware log later disproved (see wifi-push-extract-blocking
+ * memory); this exists so the next multi-file test *names* the culprit instead
+ * of another guess. Each line carries the listener port (to tell the always-on
+ * inventory server apart from the ROM/import ones) and a monotonic millisecond
+ * clock, so the gap between one push finishing and the next connection arriving
+ * is visible. Racy across threads by design -- the pump threads never call it,
+ * and a torn diagnostic line is a fine price. */
+static void inv_trace(const HttpSrv *s, const char *fmt, ...) {
+    static unsigned tick = 0;
+    if ((tick++ & 63u) == 0) {
+        fs_log_rotate(LOG_PATH, LOG_ROTATE_DEBUG);
+    }
+    fs_mkdir_p(LOGS_DIR);
+    FILE *f = fopen(LOG_PATH, "a");
+    if (!f) {
+        return;
+    }
+    unsigned long long ms = armTicksToNs(armGetSystemTick()) / 1000000ULL;
+    fprintf(f, "httpsrv    :%u t=%llums ", s ? s->port : 0, ms);
+    va_list ap;
+    va_start(ap, fmt);
+    vfprintf(f, fmt, ap);
+    va_end(ap);
+    fputc('\n', f);
+    fclose(f);
+}
+
 static void client_reset(HttpSrv *s) {
     if (s->client_fd >= 0) {
+        inv_trace(s, "reset fd=%d err=%s", s->client_fd,
+                  s->last_err[0] ? s->last_err : "(clean)");
         close(s->client_fd);
         s->client_fd = -1;
     }
@@ -568,6 +687,13 @@ static void client_reset(HttpSrv *s) {
         if (s->part_path[0]) {
             remove(s->part_path);
         }
+    }
+    /* A pull interrupted before its last slice (peer dropped, or the server was
+     * closed mid-stream): close the source we were reading from. */
+    if (s->src) {
+        fclose(s->src);
+        s->src = NULL;
+        s->src_left = 0;
     }
     free(s->head);
     s->head = NULL;
@@ -622,6 +748,96 @@ static bool path_is_token(const HttpSrv *s, const char *p, size_t pl) {
     return pl == tl + 1 && p[0] == '/' && strncmp(p + 1, s->token, tl) == 0;
 }
 
+/* Percent-decode a query value (%xx only; '+' is left literal, as our own
+ * requests encode space as %20 and never use '+' for it). Writes at most
+ * out_sz-1 bytes and NUL-terminates. */
+static void pct_decode(const char *in, size_t inlen, char *out, size_t out_sz) {
+    size_t o = 0;
+    for (size_t i = 0; i < inlen && o + 1 < out_sz; i++) {
+        if (in[i] == '%' && i + 2 < inlen && isxdigit((unsigned char)in[i + 1]) &&
+            isxdigit((unsigned char)in[i + 2])) {
+            char h[3] = {in[i + 1], in[i + 2], '\0'};
+            out[o++] = (char)strtol(h, NULL, 16);
+            i += 2;
+        } else {
+            out[o++] = in[i];
+        }
+    }
+    out[o] = '\0';
+}
+
+/* True if the path contains a ".." segment (bounded by '/' or the ends). The
+ * roots below are plain prefixes, so without this a path like
+ * "<root>/../../switch/x" would pass the prefix test yet escape the root. */
+static bool has_dotdot(const char *p) {
+    for (const char *q = strstr(p, ".."); q; q = strstr(q + 2, "..")) {
+        char before = (q == p) ? '/' : q[-1];
+        char after = q[2];
+        if (before == '/' && (after == '/' || after == '\0')) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/* True if `path` is `root` itself or a file/dir under it. `root`'s trailing
+ * slashes are ignored so a configured folder with or without one both match. */
+static bool path_under_root(const char *root, size_t rl, const char *path) {
+    while (rl > 0 && root[rl - 1] == '/') {
+        rl--;
+    }
+    if (rl == 0 || strncmp(path, root, rl) != 0) {
+        return false;
+    }
+    char after = path[rl];
+    return after == '\0' || after == '/';
+}
+
+/* Gate for the file/delete endpoints: the decoded path must be an sdmc: path,
+ * free of ".." segments, and inside one of the newline-separated roots the app
+ * handed us (the console folders + inbox). Anything else is refused, so a LAN
+ * peer with the code can still only reach the folders HaulNX manages. */
+static bool path_allowed(const HttpSrv *s, const char *path) {
+    if (!s->roots || !path[0] || strncmp(path, "sdmc:/", 6) != 0 ||
+        has_dotdot(path)) {
+        return false;
+    }
+    for (const char *r = s->roots; *r;) {
+        const char *nl = strchr(r, '\n');
+        size_t len = nl ? (size_t)(nl - r) : strlen(r);
+        if (len > 0 && path_under_root(r, len, path)) {
+            return true;
+        }
+        if (!nl) {
+            break;
+        }
+        r = nl + 1;
+    }
+    return false;
+}
+
+/* Match "/<token>/<leaf>?p=<value>" and return the still-encoded <value> (with
+ * its length in *vlen), or NULL. The token is part of the match, so a request
+ * that reaches a real value has already cleared the code gate. */
+static const char *route_pval(const HttpSrv *s, const char *p, size_t pl,
+                              const char *leaf, size_t *vlen) {
+    size_t tl = strlen(s->token);
+    size_t pre = 1 + tl + 1; /* "/<token>/" */
+    if (pl < pre || p[0] != '/' || strncmp(p + 1, s->token, tl) != 0 ||
+        p[1 + tl] != '/') {
+        return NULL;
+    }
+    const char *q = p + pre;
+    size_t rem = pl - pre;
+    size_t ll = strlen(leaf);
+    if (rem < ll + 3 || strncmp(q, leaf, ll) != 0 ||
+        strncmp(q + ll, "?p=", 3) != 0) {
+        return NULL;
+    }
+    *vlen = rem - ll - 3;
+    return q + ll + 3;
+}
+
 /* Reject a request whose Host header names anyone but this console. A browser
  * lured to a DNS-rebinding page reaches this IP with the attacker's hostname
  * still in Host: — refusing it cuts that class off wholesale. A missing Host
@@ -643,7 +859,7 @@ static bool host_ok(const HttpSrv *s, const char *head) {
         n--;
     }
     char want[64];
-    int wl = snprintf(want, sizeof(want), "%s:%d", s->ip, HTTPSRV_PORT);
+    int wl = snprintf(want, sizeof(want), "%s:%d", s->ip, s->port);
     if ((size_t)wl == n && strncasecmp(h, want, n) == 0) {
         return true;
     }
@@ -678,6 +894,8 @@ static int respond_simple(HttpSrv *s, int fd, const char *head) {
     const char *p;
     size_t pl = req_path(head, &p);
     size_t tl = strlen(s->token) + 1; /* "/<token>" */
+    const char *fval = NULL; /* set by the file-pull route below */
+    size_t fvlen = 0;
     if (strncmp(head, "OPTIONS ", 8) == 0) {
         send_preflight(fd);
     } else if (!host_ok(s, head)) {
@@ -701,21 +919,121 @@ static int respond_simple(HttpSrv *s, int fd, const char *head) {
             page = PAGE_EXPORT;
         } else if (s->mode == HTTPSRV_MODE_ROM) {
             page = PAGE_ROM;
+        } else if (s->mode == HTTPSRV_MODE_DAT) {
+            page = PAGE_DAT;
+        } else if (s->mode == HTTPSRV_MODE_INVENTORY) {
+            page = PAGE_HINT; /* read-only API: nothing to show a browser here */
         }
         send_resp(fd, "200 OK", "text/html; charset=utf-8", page);
-    } else if (s->mode == HTTPSRV_MODE_EXPORT && pl == tl + 16 && p[0] == '/' &&
+    } else if ((s->mode == HTTPSRV_MODE_EXPORT ||
+                s->mode == HTTPSRV_MODE_INVENTORY) &&
+               pl == tl + 16 && p[0] == '/' &&
                strncmp(p + 1, s->token, tl - 1) == 0 &&
                strncmp(p + tl, "/dl_sources.json", 16) == 0) {
-        /* Export, at "/<token>/dl_sources.json": hand back the collection the
-         * console is running on, so it can be edited and sent straight back.
-         * Token-gated (it lists the user's repos) and only while the Export
-         * screen is open — import and update have no business exporting. */
+        /* Export (and the read-only inventory server), at
+         * "/<token>/dl_sources.json": hand back the collection the console is
+         * running on, so it can be edited and sent straight back. Token-gated
+         * (it lists the user's repos). */
         bool sent = send_file(fd, SOURCES_PATH, "application/json",
                               "dl_sources.json");
         if (!sent) {
             send_resp(fd, "404 Not Found", "text/plain", "no config");
         }
         ret = sent ? 3 : 0;
+    } else if (s->mode == HTTPSRV_MODE_INVENTORY && pl == tl + 15 &&
+               p[0] == '/' && strncmp(p + 1, s->token, tl - 1) == 0 &&
+               strncmp(p + tl, "/inventory.json", 15) == 0) {
+        /* The device inventory the desktop companion reads. Regenerated
+         * app-side; the server only serves the file (see WriteInventoryJson).
+         * Stamp the poll so the console can show a live "connected" state. */
+        s->last_inv_ns = armTicksToNs(armGetSystemTick());
+        if (!send_file(fd, INVENTORY_PATH, "application/json", NULL)) {
+            send_resp(fd, "404 Not Found", "text/plain", "no inventory");
+        }
+    } else if (s->mode == HTTPSRV_MODE_INVENTORY && pl == tl + 17 &&
+               p[0] == '/' && strncmp(p + 1, s->token, tl - 1) == 0 &&
+               strncmp(p + tl, "/credentials.json", 17) == 0) {
+        /* The device's saved archive.org S3 keys, so the desktop companion can
+         * adopt them on connect rather than re-typing them. Token-gated like the
+         * rest of this server; 404 until the user has saved credentials. */
+        if (!send_file(fd, CREDS_PATH, "application/json", NULL)) {
+            send_resp(fd, "404 Not Found", "text/plain", "no credentials");
+        }
+    } else if (s->mode == HTTPSRV_MODE_INVENTORY && pl == tl + 17 &&
+               p[0] == '/' && strncmp(p + 1, s->token, tl - 1) == 0 &&
+               strncmp(p + tl, "/debug_bundle.txt", 17) == 0) {
+        /* The desktop companion's "pull device logs" button. Regenerated fresh
+         * on every request (a handful of small text logs, cheap) so a sync
+         * always gets current logs instead of a stale manual export -- see
+         * diag_bundle_write (config.c) and MainApplication::ExportBundle. */
+        diag_bundle_write();
+        if (!send_file(fd, DIAG_BUNDLE_PATH, "text/plain", NULL)) {
+            send_resp(fd, "404 Not Found", "text/plain", "no logs yet");
+        }
+    } else if (s->mode == HTTPSRV_MODE_INVENTORY && pl == tl + 20 &&
+               p[0] == '/' && strncmp(p + 1, s->token, tl - 1) == 0 &&
+               strncmp(p + tl, "/update_sources.json", 20) == 0) {
+        /* The shared emulator/app update manifest (id/kind/detect + each entry's
+         * GitHub repo). Served so the desktop companion can show and manage the
+         * same list the on-device update manager uses. Token-gated like the rest
+         * of this server; 404 until the manager has seeded it. */
+        if (!send_file(fd, UPDSRC_PATH, "application/json", NULL)) {
+            send_resp(fd, "404 Not Found", "text/plain", "no update sources");
+        }
+    } else if (s->mode == HTTPSRV_MODE_INVENTORY &&
+               (fval = route_pval(s, p, pl, "file", &fvlen)) != NULL) {
+        /* Pull one game to the PC: "/<token>/file?p=<abs path>", confined by
+         * path_allowed to the console folders + inbox. Handed back as an
+         * attachment under its basename (header-sanitised) so the browser saves
+         * it rather than trying to render a multi-GB file. */
+        char path[1024];
+        pct_decode(fval, fvlen, path, sizeof(path));
+        const char *base = path;
+        for (const char *q = path; *q; q++) {
+            if (*q == '/') {
+                base = q + 1;
+            }
+        }
+        char dl[256];
+        size_t j = 0;
+        for (const char *q = base; *q && j + 1 < sizeof(dl); q++) {
+            unsigned char c = (unsigned char)*q;
+            dl[j++] = (c < 0x20 || c == '"') ? '_' : (char)c;
+        }
+        dl[j] = '\0';
+        FILE *src = path_allowed(s, path) ? fopen(path, "rb") : NULL;
+        long sz = -1;
+        if (src) {
+            fseek(src, 0, SEEK_END);
+            sz = ftell(src); /* long is 64-bit here, so multi-GB games fit */
+            fseek(src, 0, SEEK_SET);
+        }
+        if (!src || sz < 0) {
+            if (src) {
+                fclose(src);
+            }
+            send_resp(fd, "404 Not Found", "text/plain", "no file");
+        } else {
+            /* Send the header now, then hand the body to stream_out over the
+             * following polls — the file never buffers in RAM. */
+            char head[384];
+            int hn = snprintf(head, sizeof(head),
+                              "HTTP/1.1 200 OK\r\n"
+                              "Content-Type: application/octet-stream\r\n"
+                              "Content-Length: %ld\r\n"
+                              "Content-Disposition: attachment; filename=\"%s\"\r\n"
+                              "Access-Control-Allow-Origin: *\r\n"
+                              "Connection: close\r\n\r\n",
+                              sz, dl);
+            if (!head_ok(hn, sizeof(head)) || !send_all(fd, head, (size_t)hn)) {
+                fclose(src);
+                client_reset(s);
+                return 0;
+            }
+            s->src = src;
+            s->src_left = (unsigned long long)sz;
+            return 0; /* body streams next poll; keep the connection (no reset) */
+        }
     } else {
         /* No (or a wrong) one-time code: explain, without echoing anything a
          * probing script could learn from. */
@@ -725,11 +1043,357 @@ static int respond_simple(HttpSrv *s, int fd, const char *head) {
     return ret;
 }
 
-/* Advance the in-flight connection by whatever has arrived. Called once per
- * poll; returns the httpsrv_poll codes. */
+/* Push the next slice of a file pull (GET /file) to the PC. Bounded to
+ * STREAM_PER_POLL a poll — the same ceiling the upload path uses — so a large
+ * game streams over many frames instead of freezing the render thread for the
+ * whole transfer. The header already went out (see respond_simple); this only
+ * moves the body. On completion or any error it closes the source and the
+ * connection. Returns a benign poll code (nothing for the caller to apply). */
+static int stream_out(HttpSrv *s) {
+    int fd = s->client_fd;
+    /* Static (not on the stack): httpsrv_poll only ever runs on the UI thread,
+     * so this scratch is never re-entered, and it keeps the frame small. */
+    static char buf[STREAM_BUF];
+    size_t sent = 0;
+    while (s->src_left > 0 && sent < STREAM_PER_POLL) {
+        size_t want = s->src_left < sizeof(buf) ? (size_t)s->src_left
+                                                : sizeof(buf);
+        size_t got = fread(buf, 1, want, s->src);
+        if (got == 0 || !send_all(fd, buf, got)) {
+            /* Short read (the file shrank/vanished under us) or the peer stopped
+             * draining: give up. The browser sees a truncated body against the
+             * promised Content-Length and reports the failed download. */
+            client_reset(s);
+            return 0;
+        }
+        s->src_left -= got;
+        sent += got;
+    }
+    if (s->src_left == 0) {
+        client_reset(s); /* closes s->src and the connection */
+        return 2;        /* delivered in full; nothing pending */
+    }
+    return 0; /* more slices next poll */
+}
+
+/* Shared state for the two-thread streamed-push pump. Heap-allocated and hung off
+ * HttpSrv.rx_thread (a void* so <switch.h> stays out of the header); freed by
+ * rx_finalize / rx_join. The net thread is the producer (recv), the writer thread
+ * the consumer (fwrite); a bounded ring between them lets the socket drain during
+ * the SD write. Whichever thread exits last computes rx_status and flags rx_done,
+ * so the UI thread joins both only once everything has stopped. */
+typedef struct {
+    HttpSrv *s;
+    Thread   net_thr;     /* recv producer */
+    Thread   wr_thr;      /* fwrite consumer */
+    Mutex    lock;
+    CondVar  can_produce; /* a slot was freed by the writer */
+    CondVar  can_consume; /* a slot was filled by the net thread */
+    uint8_t *slot[RX_NBUF];
+    size_t   len[RX_NBUF];
+    int      head;        /* next slot the writer drains */
+    int      tail;        /* next slot the net thread fills */
+    int      count;       /* filled slots in the ring */
+    size_t   received;    /* bytes recv'd (producer-owned); cbody_len tracks written */
+    int      live;        /* running threads; the one that zeroes it sets rx_done */
+    bool     net_done;    /* producer has stopped filling the ring */
+    int      net_status;  /* RX_* from the producer */
+    int      wr_status;   /* RX_* from the consumer */
+} RxCtx;
+
+/* Free the ring buffers and the context; threads must already be joined. */
+static void rx_ctx_free(RxCtx *c) {
+    for (int i = 0; i < RX_NBUF; i++) {
+        free(c->slot[i]);
+    }
+    free(c);
+}
+
+/* Allocate + init the pump context (ring buffers, mutex, condvars). NULL on OOM,
+ * in which case the caller falls back to the inline per-frame drain. */
+static RxCtx *rx_ctx_new(HttpSrv *s) {
+    RxCtx *c = calloc(1, sizeof(RxCtx));
+    if (!c) {
+        return NULL;
+    }
+    for (int i = 0; i < RX_NBUF; i++) {
+        c->slot[i] = malloc(RX_SLOT);
+        if (!c->slot[i]) {
+            rx_ctx_free(c);
+            return NULL;
+        }
+    }
+    c->s = s;
+    c->received = s->cbody_len; /* the over-read head bytes are already on disk */
+    c->net_status = RX_OK;
+    c->wr_status = RX_OK;
+    mutexInit(&c->lock);
+    condvarInit(&c->can_produce);
+    condvarInit(&c->can_consume);
+    return c;
+}
+
+/* Called by each pump thread as it exits: the last one out turns the two
+ * per-thread outcomes into rx_status (a write error wins) and flags rx_done. */
+static void rx_thread_exit(RxCtx *c) {
+    HttpSrv *s = c->s;
+    mutexLock(&c->lock);
+    if (--c->live == 0) {
+        s->rx_status = (c->wr_status != RX_OK) ? c->wr_status : c->net_status;
+        __sync_synchronize(); /* status must be visible before rx_done */
+        s->rx_done = true;
+    }
+    mutexUnlock(&c->lock);
+}
+
+/* Producer: recv the body into ring slots, filling each as full as the remaining
+ * body allows before publishing it so the writer gets large contiguous chunks.
+ * The only thread that reads the socket. */
+static void rx_net_fn(void *arg) {
+    RxCtx *c = (RxCtx *)arg;
+    HttpSrv *s = c->s;
+    int fd = s->client_fd;
+
+    /* This thread owns the socket for the transfer, so it may block: switch to a
+     * blocking socket with a short recv timeout. The timeout keeps the cancel
+     * check responsive and doubles as a stall watchdog — a live LAN sender
+     * returns data at once, so it only fires when the peer goes quiet. */
+    int fl = fcntl(fd, F_GETFL, 0);
+    if (fl >= 0) {
+        fcntl(fd, F_SETFL, fl & ~O_NONBLOCK);
+    }
+    struct timeval tv = {0, 500 * 1000}; /* 500 ms */
+    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+
+    int stalls = 0;
+    const int stall_max = 12; /* ~6 s of silence ends a dead transfer */
+    int status = RX_OK;
+    while (c->received < s->cbody_total) {
+        if (s->rx_cancel) {
+            status = RX_CANCELLED;
+            break;
+        }
+        /* Claim a free slot, waiting if the writer is behind. */
+        mutexLock(&c->lock);
+        while (c->count == RX_NBUF && !s->rx_cancel) {
+            condvarWait(&c->can_produce, &c->lock);
+        }
+        int idx = c->tail;
+        bool cancel = s->rx_cancel;
+        mutexUnlock(&c->lock);
+        if (cancel) {
+            status = RX_CANCELLED;
+            break;
+        }
+
+        uint8_t *buf = c->slot[idx];
+        size_t filled = 0;
+        bool stop = false;
+        while (filled < RX_SLOT && c->received + filled < s->cbody_total) {
+            if (s->rx_cancel) {
+                status = RX_CANCELLED;
+                stop = true;
+                break;
+            }
+            size_t want = s->cbody_total - c->received - filled;
+            if (want > RX_SLOT - filled) {
+                want = RX_SLOT - filled;
+            }
+            ssize_t r = recv(fd, buf + filled, want, 0);
+            if (r > 0) {
+                filled += (size_t)r;
+                stalls = 0;
+                continue;
+            }
+            if (r == 0) {
+                status = RX_PEERCLOSED;
+                stop = true;
+                break;
+            }
+            if (r < 0 && errno == EINTR) {
+                continue;
+            }
+            if (r < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+                if (++stalls >= stall_max) {
+                    status = RX_ERR;
+                    stop = true;
+                    break;
+                }
+                continue;
+            }
+            status = RX_ERR;
+            stop = true;
+            break;
+        }
+
+        if (filled > 0) {
+            mutexLock(&c->lock);
+            c->len[idx] = filled;
+            c->tail = (idx + 1) % RX_NBUF;
+            c->count++;
+            c->received += filled;
+            condvarWakeOne(&c->can_consume);
+            mutexUnlock(&c->lock);
+        }
+        if (stop) {
+            break;
+        }
+    }
+
+    mutexLock(&c->lock);
+    c->net_status = status;
+    c->net_done = true;
+    condvarWakeOne(&c->can_consume); /* wake a writer parked on an empty ring */
+    mutexUnlock(&c->lock);
+    rx_thread_exit(c);
+}
+
+/* Consumer: fwrite filled ring slots to the sink and advance cbody_len (the
+ * on-disk progress the UI shows). The only thread that touches the sink. */
+static void rx_wr_fn(void *arg) {
+    RxCtx *c = (RxCtx *)arg;
+    HttpSrv *s = c->s;
+    int status = RX_OK;
+
+    for (;;) {
+        mutexLock(&c->lock);
+        while (c->count == 0 && !c->net_done && !s->rx_cancel) {
+            condvarWait(&c->can_consume, &c->lock);
+        }
+        if (c->count == 0) { /* drained and the producer is done, or cancelled */
+            mutexUnlock(&c->lock);
+            break;
+        }
+        int idx = c->head;
+        size_t len = c->len[idx];
+        mutexUnlock(&c->lock);
+
+        if (fwrite(c->slot[idx], 1, len, s->sink) != len) {
+            status = RX_WRITEERR;
+            s->rx_cancel = true; /* stop the producer; the .part is discarded */
+            mutexLock(&c->lock);
+            condvarWakeOne(&c->can_produce);
+            mutexUnlock(&c->lock);
+            break;
+        }
+        s->cbody_len += len;
+
+        mutexLock(&c->lock);
+        c->head = (idx + 1) % RX_NBUF;
+        c->count--;
+        condvarWakeOne(&c->can_produce);
+        mutexUnlock(&c->lock);
+    }
+
+    c->wr_status = status;
+    rx_thread_exit(c);
+}
+
+/* Join and free the pump threads. Sets rx_cancel first (and wakes any parked
+ * thread) so a still-running transfer stops early; safe whether or not one is
+ * running. */
+static void rx_join(HttpSrv *s) {
+    if (!s->rx_running) {
+        return;
+    }
+    RxCtx *c = (RxCtx *)s->rx_thread;
+    s->rx_cancel = true;
+    mutexLock(&c->lock);
+    condvarWakeAll(&c->can_produce);
+    condvarWakeAll(&c->can_consume);
+    mutexUnlock(&c->lock);
+    threadWaitForExit(&c->net_thr);
+    threadClose(&c->net_thr);
+    threadWaitForExit(&c->wr_thr);
+    threadClose(&c->wr_thr);
+    rx_ctx_free(c);
+    s->rx_thread = NULL;
+    s->rx_running = false;
+    s->rx_done = false;
+    s->rx_cancel = false;
+}
+
+/* UI-thread side of the streamed push: returns 0 while the pump threads are still
+ * running (cbody_len advances for the progress bar), and on completion joins them
+ * and turns rx_status into the httpsrv_poll code + HTTP response — the same finish
+ * the old inline drain did, just after the threads rather than inline. */
+static int rx_finalize(HttpSrv *s) {
+    if (!s->rx_done) {
+        return 0; /* still receiving */
+    }
+    __sync_synchronize(); /* pair with the barrier before rx_done */
+    int status = s->rx_status;
+    int fd = s->client_fd;
+    RxCtx *c = (RxCtx *)s->rx_thread;
+    threadWaitForExit(&c->net_thr);
+    threadClose(&c->net_thr);
+    threadWaitForExit(&c->wr_thr);
+    threadClose(&c->wr_thr);
+    rx_ctx_free(c);
+    s->rx_thread = NULL;
+    s->rx_running = false;
+    s->rx_done = false;
+    s->rx_cancel = false;
+
+    if (status == RX_OK) {
+        /* Streamed body complete: flush and close. A close error means buffered
+         * writes never reached the card, so treat it as a failed transfer. */
+        int cerr = fclose(s->sink);
+        s->sink = NULL; /* so client_reset keeps the finished file */
+        free(s->cbody);
+        s->cbody = NULL;
+        s->cbody_len = 0;
+        s->cbody_total = 0;
+        make_blocking(fd);
+        if (cerr != 0) {
+            remove(s->part_path);
+            send_resp(fd, "507 Insufficient Storage", "text/plain",
+                      "write failed");
+            snprintf(s->last_err, sizeof(s->last_err),
+                     "flush failed (card full?)");
+            client_reset(s);
+            return 4;
+        }
+        send_resp(fd, "200 OK", "text/plain", "received");
+        s->body = NULL; /* streamed straight to disk; nothing in RAM */
+        s->body_len = 0;
+        client_reset(s);
+        return 1;
+    }
+
+    /* Any failure: record a short reason and drop the connection. client_reset
+     * closes the still-open sink and removes the partial ".part". */
+    if (status == RX_WRITEERR) {
+        make_blocking(fd);
+        send_resp(fd, "507 Insufficient Storage", "text/plain", "write failed");
+        snprintf(s->last_err, sizeof(s->last_err), "write failed (card full?)");
+    } else if (status == RX_PEERCLOSED) {
+        snprintf(s->last_err, sizeof(s->last_err), "peer closed at %zu/%zu",
+                 s->cbody_len, s->cbody_total);
+    } else if (status == RX_CANCELLED) {
+        snprintf(s->last_err, sizeof(s->last_err), "cancelled");
+    } else {
+        snprintf(s->last_err, sizeof(s->last_err), "recv failed");
+    }
+    client_reset(s);
+    return 4;
+}
+
 static int client_step(HttpSrv *s) {
     int fd = s->client_fd;
     bool got_data = false;
+
+    /* A pull in progress owns the connection until its body is fully sent. */
+    if (s->src) {
+        return stream_out(s);
+    }
+
+    /* A streamed push is being pumped on its own thread (see rx_thread_fn); don't
+     * re-enter the request parser. Report in-progress each frame until it finishes,
+     * then join and finalize here on the UI thread. */
+    if (s->rx_running) {
+        return rx_finalize(s);
+    }
 
     /* Phase 1: the request head. The body (if any) starts in whatever the
      * last recv over-read, and is carried into phase 2 below. */
@@ -783,6 +1447,85 @@ static int client_step(HttpSrv *s) {
             client_reset(s);
             return 0;
         }
+        /* Delete one game: "POST /<token>/rm?p=<abs path>" (no body), confined
+         * by path_allowed to the console folders + inbox. Answered and closed
+         * here — no body to read — before the upload handling below. */
+        if (s->mode == HTTPSRV_MODE_INVENTORY) {
+            const char *p;
+            size_t pl = req_path(s->head, &p);
+            size_t vlen = 0;
+            const char *val = route_pval(s, p, pl, "rm", &vlen);
+            if (val) {
+                make_blocking(fd);
+                if (!host_ok(s, s->head)) {
+                    send_resp(fd, "403 Forbidden", "text/plain", "wrong host");
+                } else {
+                    char path[1024];
+                    pct_decode(val, vlen, path, sizeof(path));
+                    if (path_allowed(s, path) && remove(path) == 0) {
+                        send_resp(fd, "200 OK", "text/plain", "deleted");
+                    } else {
+                        send_resp(fd, "403 Forbidden", "text/plain", "denied");
+                    }
+                }
+                client_reset(s);
+                return 0;
+            }
+            /* Rename or move one game: "POST /<token>/mv?p=<abs src>&d=<abs dest>"
+             * (no body). The client percent-encodes each path, so a literal '&'
+             * in a name arrives as %26 and the first "&d=" is the separator.
+             * Both ends must clear path_allowed, so a move can only land inside
+             * the console folders + inbox; an occupied destination is refused
+             * rather than clobbered (a pure case-change rename is exempt, since
+             * FAT sees the source and target as the same file). */
+            size_t mlen = 0;
+            const char *mval = route_pval(s, p, pl, "mv", &mlen);
+            if (mval) {
+                make_blocking(fd);
+                const char *sep = NULL;
+                for (size_t i = 0; i + 3 <= mlen; i++) {
+                    if (mval[i] == '&' && mval[i + 1] == 'd' &&
+                        mval[i + 2] == '=') {
+                        sep = mval + i;
+                        break;
+                    }
+                }
+                if (!host_ok(s, s->head)) {
+                    send_resp(fd, "403 Forbidden", "text/plain", "wrong host");
+                } else if (!sep) {
+                    send_resp(fd, "400 Bad Request", "text/plain", "need dest");
+                } else {
+                    char src[1024], dst[1024];
+                    pct_decode(mval, (size_t)(sep - mval), src, sizeof(src));
+                    pct_decode(sep + 3, (size_t)((mval + mlen) - (sep + 3)), dst,
+                               sizeof(dst));
+                    bool occupied = false;
+                    if (strcasecmp(src, dst) != 0) {
+                        FILE *ex = fopen(dst, "rb");
+                        if (ex) {
+                            fclose(ex);
+                            occupied = true;
+                        }
+                    }
+                    if (!path_allowed(s, src) || !path_allowed(s, dst)) {
+                        send_resp(fd, "403 Forbidden", "text/plain", "denied");
+                    } else if (occupied) {
+                        send_resp(fd, "409 Conflict", "text/plain", "exists");
+                    } else if (rename(src, dst) == 0) {
+                        send_resp(fd, "200 OK", "text/plain", "moved");
+                    } else {
+                        send_resp(fd, "500 Internal Server Error", "text/plain",
+                                  "failed");
+                    }
+                }
+                client_reset(s);
+                return 0;
+            }
+        }
+        /* The inventory server serves GET read-only, but accepts one write: a
+         * collection pushed from the app utility. It is buffered like an import
+         * (mode isn't ROM) and the caller applies it with a backup; the token
+         * gate just below is the only thing authorising it. */
         /* Uploads only land on the one-time path from the console's screen.
          * Checked before the body is read: an unauthorized POST is refused
          * for the cost of its headers, not 16 MB of its payload. */
@@ -806,9 +1549,41 @@ static int client_step(HttpSrv *s) {
             client_reset(s);
             return 0;
         }
-        long long maxb = (s->mode == HTTPSRV_MODE_ROM)
-                             ? (long long)HTTPSRV_MAX_ROM
-                             : (long long)HTTPSRV_MAX_BODY;
+        /* The always-on inventory server also accepts a game streamed straight
+         * to disk (into the inbox): it arrives as a raw body with an X-Filename
+         * header, whereas the buffered collection/nro push is multipart with
+         * none, so that tells them apart. ROM mode always streams. */
+        bool stream_to_disk = (s->mode == HTTPSRV_MODE_ROM);
+        if (s->mode == HTTPSRV_MODE_INVENTORY) {
+            const char *ict = hdr_val(s->head, "content-type:");
+            bool mp = ict && strncasecmp(ict, "multipart/form-data", 19) == 0;
+            s->recv_app[0] = '\0';      /* cleared unless this is an app-update push */
+            s->recv_app_path[0] = '\0';
+            s->recv_app_new = false;
+            s->recv_folder[0] = '\0';   /* cleared unless this is a Library game push */
+            /* A DAT push (companion › DAT Files) carries X-Dat and must buffer so
+             * the caller can read its header and file it by console — never route
+             * it to the streamed-to-inbox path even though it has an X-Filename. */
+            s->recv_dat = (hdr_val(s->head, "x-dat:") != NULL);
+            if (!s->recv_dat && hdr_val(s->head, "x-filename:") && !mp) {
+                stream_to_disk = true;
+            } else {
+                /* A buffered push (collection or .nro) doesn't stream to a
+                 * .part, so recv_name is otherwise blank and the live receive
+                 * row shows "…". A multipart .nro push carries its name in
+                 * X-Filename; adopt it (cleared first so a nameless collection
+                 * push doesn't inherit the last build's name). part_path stays
+                 * empty, so this never routes to the streamed-file handler. */
+                const char *fn = hdr_val(s->head, "x-filename:");
+                char nm[256];
+                s->recv_name[0] = '\0';
+                if (fn && sanitize_filename(fn, nm, sizeof(nm))) {
+                    snprintf(s->recv_name, sizeof(s->recv_name), "%s", nm);
+                }
+            }
+        }
+        long long maxb = stream_to_disk ? (long long)HTTPSRV_MAX_ROM
+                                        : (long long)HTTPSRV_MAX_BODY;
         if ((long long)clen > maxb) {
             make_blocking(fd);
             send_resp(fd, "413 Payload Too Large", "text/plain", "too big");
@@ -834,7 +1609,7 @@ static int client_step(HttpSrv *s) {
             have = (size_t)clen;
         }
 
-        if (s->mode == HTTPSRV_MODE_ROM) {
+        if (stream_to_disk) {
             /* ROM upload: stream the raw body straight to <dest_dir>/<name>.part
              * so a multi-GB game never has to fit in RAM. The ROM page posts the
              * file as the whole body (no multipart) precisely for this; reject a
@@ -856,6 +1631,37 @@ static int client_step(HttpSrv *s) {
                 return 0;
             }
             snprintf(s->recv_name, sizeof(s->recv_name), "%s", name);
+            /* An Emulators-tab update rides the same stream but carries the target
+             * app in X-App-Target; capture it (sanitized) so the caller installs
+             * the body as that app instead of filing it in the inbox. */
+            if (s->mode == HTTPSRV_MODE_INVENTORY) {
+                const char *at = hdr_val(s->head, "x-app-target:");
+                char an[256];
+                if (at && sanitize_filename(at, an, sizeof(an))) {
+                    snprintf(s->recv_app, sizeof(s->recv_app), "%s", an);
+                }
+                /* An exact device path (X-App-Path) takes precedence over the
+                 * name: it disambiguates a same-named .nro in another subfolder. */
+                const char *ap = hdr_val(s->head, "x-app-path:");
+                if (ap && !sanitize_app_path(ap, s->recv_app_path,
+                                             sizeof(s->recv_app_path))) {
+                    s->recv_app_path[0] = '\0'; /* invalid path: fall back to name */
+                }
+                /* A fresh install (Emulators-tab "Install") writes recv_app_path as
+                 * a brand-new app; only meaningful with a valid path in hand. */
+                if (s->recv_app_path[0]) {
+                    const char *ai = hdr_val(s->head, "x-app-install:");
+                    s->recv_app_new = (ai && ai[0] == '1');
+                }
+                /* A Library-tab game push carries the console it's filed under
+                 * in X-Dest-Folder; an app-update push never sets both, but if
+                 * it somehow did, recv_app above still wins in InvApplyFile. */
+                const char *df = hdr_val(s->head, "x-dest-folder:");
+                char dn[64];
+                if (df && sanitize_filename(df, dn, sizeof(dn))) {
+                    snprintf(s->recv_folder, sizeof(s->recv_folder), "%s", dn);
+                }
+            }
             int pn = snprintf(s->part_path, sizeof(s->part_path), "%s/%s.part",
                               s->dest_dir, name);
             if (pn <= 0 || (size_t)pn >= sizeof(s->part_path)) {
@@ -877,6 +1683,15 @@ static int client_step(HttpSrv *s) {
                           "cannot write");
                 client_reset(s);
                 return 0;
+            }
+            /* Preallocate the .part to its final size so FAT/exFAT lays down a
+             * contiguous cluster run up front instead of extending the chain on
+             * every 64K write — the same win the USB/MTP receive path gets from
+             * ftruncate (see mtp/responder.cpp). Best-effort; every failure path
+             * removes the file whole, so a preallocated tail never survives, and
+             * a complete body is exactly clen bytes so no trim is needed. */
+            if (clen > 0) {
+                (void)ftruncate(fileno(s->sink), (off_t)clen);
             }
             /* Write the over-read bytes before freeing the head they point into. */
             if (have > 0 && fwrite(body_start, 1, have, s->sink) != have) {
@@ -909,6 +1724,56 @@ static int client_step(HttpSrv *s) {
         free(s->head);
         s->head = NULL;
         s->head_len = 0;
+
+        /* Streamed push: hand the rest of the body to a dedicated recv thread and
+         * a dedicated writer thread (see rx_net_fn / rx_wr_fn) so the socket keeps
+         * draining during the SD write instead of once per frame. This block only
+         * runs during head setup (cbody is NULL here), so the spawn is attempted
+         * exactly once. If the threads can't start — or the whole body already
+         * arrived with the head — fall through to the inline per-frame drain below,
+         * which still works, just at the old rate. */
+        if (s->sink && s->cbody_len < s->cbody_total) {
+            s->rx_cancel = false;
+            s->rx_done = false;
+            s->rx_status = RX_RUNNING;
+            RxCtx *rc = rx_ctx_new(s);
+            if (rc) {
+                s->rx_thread = rc;
+                rc->live = 2;
+                bool made = R_SUCCEEDED(threadCreate(&rc->wr_thr, rx_wr_fn, rc,
+                                                     NULL, RX_STACK, RX_PRIO, -2)) &&
+                            R_SUCCEEDED(threadCreate(&rc->net_thr, rx_net_fn, rc,
+                                                     NULL, RX_STACK, RX_PRIO, -2));
+                if (made) {
+                    /* Start the writer first (it just parks on the empty ring),
+                     * then the net thread. The net thread is the only socket
+                     * reader, so if its start fails nothing has been consumed and
+                     * the inline drain below can still take over. */
+                    if (R_SUCCEEDED(threadStart(&rc->wr_thr))) {
+                        if (R_SUCCEEDED(threadStart(&rc->net_thr))) {
+                            s->rx_running = true;
+                            return 0; /* pumping on both threads; finalize later */
+                        }
+                        /* Writer is live but the net thread never started: unblock
+                         * and join the writer, then fall back to inline. */
+                        mutexLock(&rc->lock);
+                        rc->net_done = true;
+                        s->rx_cancel = true;
+                        condvarWakeOne(&rc->can_consume);
+                        mutexUnlock(&rc->lock);
+                        threadWaitForExit(&rc->wr_thr);
+                        threadClose(&rc->wr_thr);
+                        threadClose(&rc->net_thr); /* created, never started */
+                    } else {
+                        threadClose(&rc->wr_thr);
+                        threadClose(&rc->net_thr);
+                    }
+                }
+                rx_ctx_free(rc);
+                s->rx_thread = NULL;
+                s->rx_cancel = false; /* hand a clean slate to the inline drain */
+            }
+        }
     }
 
     /* Phase 2: the body, as much as has arrived. */
@@ -1044,30 +1909,66 @@ bool httpsrv_local_ip(char *out, size_t out_sz) {
     return true;
 }
 
-bool httpsrv_open(HttpSrv *s) {
-    memset(s, 0, sizeof(*s));
-    s->listen_fd = -1;
-    s->client_fd = -1;
-
+/* Create a non-blocking listening socket bound to `port` on all interfaces, or
+ * -1 on failure. Shared by open (fresh server) and rebind (same port, after the
+ * network interface bounced), so both get the same buffer/REUSEADDR tuning. */
+static int listen_socket(uint16_t port) {
     int fd = socket(AF_INET, SOCK_STREAM, 0);
     if (fd < 0) {
-        return false;
+        return -1;
     }
     int one = 1;
     setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
+
+    /* Grow the socket buffers on the *listener* so accepted connections inherit
+     * them and TCP window scaling is negotiated at the SYN. This is the real cap
+     * on the push path: the PC can only send as much as fits in our receive
+     * window before it must wait for the render loop to drain it (once a frame),
+     * so a small window throttles a push to ~(window / frame period). The init
+     * config raises the pool's ceiling (tcp_rx_buf_max_size) but this stack does
+     * not auto-grow the per-socket window, so ask for it explicitly. Best-effort:
+     * the stack clamps to tcp_{rx,tx}_buf_max_size and a failure just leaves the
+     * old (working, slower) buffers. */
+    int bufsz = 1024 * 1024;
+    setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &bufsz, sizeof(bufsz));
+    setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &bufsz, sizeof(bufsz));
 
     struct sockaddr_in addr;
     memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET;
     addr.sin_addr.s_addr = INADDR_ANY;
-    addr.sin_port = htons(HTTPSRV_PORT);
+    addr.sin_port = htons(port);
+    /* Backlog was 2, which is tight: the companion runs a background inventory
+     * poll (every ~5s) against this same single-client server while a push queue
+     * is draining, so a real connection can arrive with one already queued. A
+     * serialized push client only ever has one push connection outstanding, but
+     * the poll + a reconnect can briefly need more than two slots; a full backlog
+     * on this stack drops the SYN, which reads as a reset on the far end. 16 is
+     * cheap and leaves plenty of headroom. */
     if (bind(fd, (struct sockaddr *)&addr, sizeof(addr)) != 0 ||
-        listen(fd, 2) != 0) {
+        listen(fd, 16) != 0) {
         close(fd);
-        return false;
+        return -1;
     }
     /* accept() is called from the render loop and must never block it. */
     fcntl(fd, F_SETFL, fcntl(fd, F_GETFL, 0) | O_NONBLOCK);
+    return fd;
+}
+
+bool httpsrv_open(HttpSrv *s) {
+    return httpsrv_open_port(s, HTTPSRV_PORT);
+}
+
+bool httpsrv_open_port(HttpSrv *s, uint16_t port) {
+    memset(s, 0, sizeof(*s));
+    s->listen_fd = -1;
+    s->client_fd = -1;
+    s->port = port;
+
+    int fd = listen_socket(port);
+    if (fd < 0) {
+        return false;
+    }
     s->listen_fd = fd;
 
     /* The one-time code for this session's URL, from the console's CSPRNG.
@@ -1098,6 +1999,13 @@ int httpsrv_poll(HttpSrv *s) {
     if (s->client_fd < 0) {
         int fd = accept(s->listen_fd, NULL, NULL);
         if (fd < 0) {
+            /* EAGAIN/EWOULDBLOCK is the normal "nobody waiting" on a non-blocking
+             * listener. Anything else (the kernel reset a queued connection, ran
+             * out of descriptors, ...) is exactly the kind of thing that would
+             * silently drop the 2nd file of a queue -- trace it. */
+            if (errno != EAGAIN && errno != EWOULDBLOCK) {
+                inv_trace(s, "accept errno=%d", errno);
+            }
             return 0; /* nobody waiting */
         }
         /* The listener is non-blocking so accept() can't stall the render
@@ -1108,6 +2016,11 @@ int httpsrv_poll(HttpSrv *s) {
         if (fl >= 0) {
             fcntl(fd, F_SETFL, fl | O_NONBLOCK);
         }
+        /* We already send in large slices, so Nagle only adds latency: disable it
+         * so each slice goes out immediately instead of waiting to coalesce —
+         * keeps the send window full and the pull path at wire speed. */
+        int one = 1;
+        setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
         s->client_fd = fd;
         s->head = malloc(HDR_MAX + 1);
         if (!s->head) {
@@ -1119,6 +2032,7 @@ int httpsrv_poll(HttpSrv *s) {
         s->last_err[0] = '\0';
         s->last_data_ns = armTicksToNs(armGetSystemTick());
         s->conn_start_ns = s->last_data_ns;
+        inv_trace(s, "accept fd=%d", fd);
     }
     return client_step(s);
 }
@@ -1134,7 +2048,17 @@ bool httpsrv_receiving(const HttpSrv *s, size_t *now, size_t *total) {
     return on;
 }
 
+void httpsrv_abort(HttpSrv *s) {
+    /* Stop a running pump thread before client_reset closes the socket/sink it
+     * owns, then client_reset drops the client, closes/removes an in-flight
+     * ".part" sink and any outgoing pull, and clears the head/body-in-progress —
+     * exactly a cancel. listen_fd is left open so the caller can keep serving. */
+    rx_join(s);
+    client_reset(s);
+}
+
 void httpsrv_close(HttpSrv *s) {
+    rx_join(s);
     client_reset(s);
     if (s->listen_fd >= 0) {
         close(s->listen_fd);
@@ -1143,4 +2067,35 @@ void httpsrv_close(HttpSrv *s) {
     free(s->body);
     s->body = NULL;
     s->body_len = 0;
+}
+
+bool httpsrv_rebind(HttpSrv *s) {
+    /* When the console sleeps, Wi-Fi drops and the listening socket is bound to
+     * an interface that no longer exists; on wake accept() on it never yields a
+     * connection again, so the server looks "on" but is deaf. Recreating the
+     * socket on the same port re-attaches it to the freshly-associated interface.
+     * Everything else in the struct is preserved (mode, token, dest_dir, roots,
+     * last_inv_ns...), so the server keeps its identity — only the dead socket is
+     * swapped for a live one. Any connection that was in flight when we slept is
+     * already dead, so drop it. */
+    rx_join(s);
+    client_reset(s);
+    if (s->listen_fd >= 0) {
+        close(s->listen_fd);
+        s->listen_fd = -1;
+    }
+    int fd = listen_socket(s->port);
+    if (fd < 0) {
+        return false; /* leave listen_fd = -1; the caller retries next poll */
+    }
+    s->listen_fd = fd;
+    /* A rebind closes the old listener, which resets every connection still
+     * queued on it -- if one fires between two files of a push, it silently
+     * kills the next one. Trace it so a mid-queue rebind shows up in the bundle. */
+    inv_trace(s, "rebind ok new_listen_fd=%d", fd);
+    /* Refresh the advertised address: a wake can hand us a different DHCP lease. */
+    if (!httpsrv_local_ip(s->ip, sizeof(s->ip))) {
+        s->ip[0] = '\0';
+    }
+    return true;
 }

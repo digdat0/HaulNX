@@ -3,6 +3,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 #include <stdio.h>
 
 #ifdef __cplusplus
@@ -24,6 +25,10 @@ extern "C" {
  * to a file under a caller-set folder rather than buffered into s->body. */
 
 #define HTTPSRV_PORT     8080
+/* The always-on read-only inventory server (HTTPSRV_MODE_INVENTORY) binds its
+ * own port so it can coexist with the transfer server on 8080 — the transfer
+ * screens open/close 8080 per-session while this one stays up. */
+#define HTTPSRV_INV_PORT 8081
 /* Buffered-in-RAM modes (collection/nro): big enough for an app build, small
  * enough to refuse runaway uploads. ROM mode streams to disk and is bounded by
  * HTTPSRV_MAX_ROM (and, ultimately, free space on the card) instead. */
@@ -54,10 +59,13 @@ typedef enum {
     HTTPSRV_MODE_EXPORT,     /* hand this console's collection to a PC (GET) */
     HTTPSRV_MODE_NRO,        /* receive an app .nro build (update page) */
     HTTPSRV_MODE_ROM,        /* receive a game file, streamed into dest_dir */
+    HTTPSRV_MODE_DAT,        /* receive a verification DAT (buffered like import) */
+    HTTPSRV_MODE_INVENTORY,  /* read-only: serve inventory.json / dl_sources.json (GET only) */
 } HttpSrvMode;
 
 typedef struct {
     int listen_fd;   /* -1 when closed */
+    uint16_t port;   /* the port this instance bound; set by open */
     HttpSrvMode mode; /* set by the caller after open; see HttpSrvMode */
     char token[HTTPSRV_TOKEN_LEN + 1]; /* set by open; caller shows it in the URL */
     char ip[46];     /* our own address, for the Host-header check (may be "") */
@@ -85,7 +93,66 @@ typedef struct {
     FILE *sink;
     char part_path[1088];
     char recv_name[256];
+    /* Inventory mode only: the target app name from an X-App-Target header on a
+     * streamed push (the Emulators-tab one-click update). Empty for a normal game
+     * push. When set, the caller installs the finished body as that app instead of
+     * filing it in the inbox. Sanitized like recv_name. */
+    char recv_app[256];
+    /* Inventory mode only: the exact device path (sdmc:/switch/.../x.nro) from an
+     * X-App-Path header. When set it takes precedence over recv_app, so a same-named
+     * .nro in a different subfolder can be updated independently. Validated to stay
+     * under sdmc:/switch. Empty for a normal game push or a name-only update. */
+    char recv_app_path[768];
+    /* Inventory mode only: X-App-Install was set alongside recv_app_path — the
+     * companion's Emulators-tab "Install" for an app not yet on the device, so the
+     * caller writes the body as a NEW app at recv_app_path rather than rejecting it
+     * as a missing update target. False for updates and game pushes. */
+    bool recv_app_new;
+    /* Inventory mode only: an X-Dest-Folder header on a streamed game push (the
+     * Library tab's per-game "send to Switch") names the console it came from,
+     * e.g. "switch" or "3ds" — the same short target key config.h consoles use.
+     * When it resolves to a real configured console the caller files the game
+     * straight into that console's folder (extracting an archive on arrival,
+     * same as a USB drop there) instead of the inbox. Empty, or one that
+     * doesn't match any configured console, falls back to the inbox untouched
+     * — the desktop's USB push already had this via WPD's own folder walk;
+     * this is the Wi-Fi equivalent. Sanitized like recv_app. */
+    char recv_folder[64];
+    /* Inventory mode only: an X-Dat header marked this buffered POST as a
+     * verification DAT (the companion's DAT Files tab › push). It forces the body
+     * to buffer in RAM (a DAT is small XML) rather than stream to the inbox, so
+     * the caller can parse its header and file it into DATS_DIR by console. Reset
+     * per connection; see InvApplyDat. */
+    bool recv_dat;
     char last_err[64]; /* why a ROM stream aborted, for the caller to log */
+    /* Inventory mode only: system tick (ns) of the last inventory.json GET, i.e.
+     * the last time a companion polled us. 0 = never. Lets the console show
+     * "companion connected" vs "waiting" instead of just "listening". Survives
+     * client_reset (per-connection), cleared only by (re)open's memset. */
+    unsigned long long last_inv_ns;
+    /* Inventory mode only: borrowed, newline-separated list of absolute folders
+     * (each console's install folder plus the inbox) the pull/delete endpoints
+     * are confined to. Set by the app when it (re)builds the inventory; a
+     * requested path outside every root is refused. NULL leaves those endpoints
+     * off. Not owned — points into an app-side string that outlives the server. */
+    const char *roots;
+    /* A file being streamed OUT to the PC (a game pull, GET /file). Its header is
+     * sent up front, then the body goes a bounded slice per poll — like the ROM
+     * upload in reverse — so a multi-GB game never buffers in RAM or freezes the
+     * render thread. NULL when no pull is in flight; src_left is the bytes to go. */
+    FILE *src;
+    unsigned long long src_left;
+    /* A streamed push (ROM/inventory raw body) is pumped off the render thread by
+     * a recv thread and a writer thread, so the socket keeps draining during the
+     * SD write instead of stalling the TCP window on it once per frame. The UI
+     * thread only reads cbody_len for progress and finalizes (fclose, response,
+     * move-into-place) once rx_done flips. rx_thread is a heap-allocated pump
+     * context (void* to keep <switch.h> out of this header). */
+    void *rx_thread;          /* NULL when no receive threads are running */
+    volatile bool rx_running; /* threads started, not yet joined */
+    volatile bool rx_done;    /* threads finished; UI thread joins + finalizes */
+    volatile bool rx_cancel;  /* UI (or the writer) asks the pump to stop early */
+    volatile int rx_status;   /* RX_* outcome, valid once rx_done is set */
 } HttpSrv;
 
 /* The console's LAN address as a dotted quad, e.g. "192.168.1.42".
@@ -94,6 +161,19 @@ bool httpsrv_local_ip(char *out, size_t out_sz);
 
 /* Bind HTTPSRV_PORT on all interfaces. False if the port is unavailable. */
 bool httpsrv_open(HttpSrv *s);
+
+/* As httpsrv_open, but binds an explicit port (e.g. HTTPSRV_INV_PORT for the
+ * inventory server). httpsrv_open is this with HTTPSRV_PORT. */
+bool httpsrv_open_port(HttpSrv *s, uint16_t port);
+
+/* Recreate the listening socket on the same port, preserving all server state
+ * (mode, token, dest_dir, roots, ...). Use after the network interface bounced
+ * — e.g. the console slept and woke — so the server re-attaches to the new
+ * interface instead of listening on a dead one. Any in-flight connection is
+ * dropped (it died with the old interface). False if the rebind failed (port
+ * momentarily unavailable, Wi-Fi not up yet); the server is left closed
+ * (listen_fd == -1) so the caller can retry on a later poll. */
+bool httpsrv_rebind(HttpSrv *s);
 
 /* Service the connection a slice at a time and return immediately: this is
  * called once per frame from the UI thread, so it never waits for a client —
@@ -113,6 +193,12 @@ int httpsrv_poll(HttpSrv *s);
 /* True while a POST body is arriving; *now / *total (either may be NULL)
  * report the bytes so far and the Content-Length, for a progress line. */
 bool httpsrv_receiving(const HttpSrv *s, size_t *now, size_t *total);
+
+/* Abort the connection currently in flight (a receive or a pull) but keep the
+ * server listening: the in-progress ".part" is removed and the client dropped,
+ * so a receive can be cancelled from the console without tearing the whole
+ * server down. No-op when nothing is in flight. */
+void httpsrv_abort(HttpSrv *s);
 
 /* Close the socket and free any received body. Safe on an unopened server. */
 void httpsrv_close(HttpSrv *s);

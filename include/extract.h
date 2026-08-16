@@ -2,6 +2,7 @@
 #define EXTRACT_H
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #ifdef __cplusplus
@@ -11,6 +12,14 @@ extern "C" {
 /* True if the filename looks like a supported archive (by extension):
  * .zip .7z .rar .tar .tgz .tbz .tbz2 .txz .tar.gz .tar.bz2 .tar.xz */
 bool is_archive_name(const char *filename);
+
+/* Sanitize an archive entry path into a safe relative SD path: drop leading
+ * slashes, normalize backslashes, replace FAT-illegal chars, keep '/' as the
+ * separator, and refuse ".." path-traversal segments. Returns false if the
+ * entry should be skipped entirely. Shared with source/rar3/ so the fallback
+ * RAR3 decoder (see rar3.h) applies the exact same path safety libarchive
+ * extraction does, rather than a second hand-rolled copy. */
+bool sanitize_rel(const char *in, char *out, size_t out_sz);
 
 /* Progress callback during extraction: called per data block and per finished
  * entry. `done` = entries completed so far; `bytes_read` = raw bytes consumed

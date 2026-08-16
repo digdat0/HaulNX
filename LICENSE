@@ -1,21 +1,44 @@
-MIT License
-
+HaulNX
 Copyright (c) 2026 digdat0
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+This program is free software: you can redistribute it and/or modify it under
+the terms of the GNU General Public License, version 3 (or, at your option,
+any later version), as published by the Free Software Foundation.
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+This program is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+PARTICULAR PURPOSE. See the GNU General Public License for more details.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+You should have received a copy of the GNU General Public License along with
+this program. The full, verbatim text of version 3 is bundled at
+licenses/GPL-3.0.txt; it is also available at
+<https://www.gnu.org/licenses/gpl-3.0.txt>.
+
+Why GPLv3 (and not GPLv2, which HaulNX carried briefly):
+Two features incorporate code under licenses that require it. The native RAR3
+filter-decoder fallback (include/rar3.h, source/rar3/) ports the relevant slice
+of the LGPLv3-licensed unarr project (github.com/zeniko/unarr); combining
+LGPLv3 code into this project requires the combined work be conveyed under
+GPLv3 terms. Separately, the embedded USB MTP responder's protocol/command
+layer (include/mtp/, source/mtp/) follows the container-framing and dispatch
+pattern used by cmtp-responder (github.com/cmtp-responder/cmtp-responder),
+which is Apache-2.0 — a license that combines cleanly into a GPLv3 work but not
+a GPLv2-only one. GPLv3 is the smallest license that legitimately
+accommodates both, so the whole project moved there. HaulNX briefly carried
+GPLv2 (relicensed from MIT) for an earlier version of the MTP responder that
+adapted GPLv2-only code from Atmosphère's Haze; that code has since been
+replaced with an independent implementation (see THIRD-PARTY-NOTICES.md), so
+nothing in the current tree requires GPLv2 specifically.
+
+Portions of source/rar3/ and include/rar3.h are:
+  Copyright (c) 2015 the unarr project authors, used and adapted under the
+  terms of the LGPLv3 — see licenses/LGPL-3.0.txt.
+
+The container/dispatch pattern in include/mtp/ and source/mtp/ follows
+cmtp-responder, Copyright (c) 2012, 2013 Samsung Electronics Co., Ltd. and
+Copyright (c) 2019 Collabora Ltd, used under the terms of the Apache License,
+version 2.0 — see licenses/Apache-2.0.txt.
+
+Other bundled or linked components remain under their own, GPL-compatible
+licenses (Plutonium and jsmn under MIT, the Noto Sans font subset under the SIL
+Open Font License 1.1). Their notices are collected in THIRD-PARTY-NOTICES.md.

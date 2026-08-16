@@ -13,6 +13,26 @@
 
 #define USER_AGENT "HaulNX/1.0 (libnx)"
 
+/* Bigger socket buffers than socketInitializeDefault (tx 32K / rx 64K, max 256K,
+ * sb_efficiency 4). The default starves the *serve* path in particular: when the
+ * inventory server streams a game to the PC (GET /file), send() is bounded by the
+ * tx window, so a small tx buffer caps a pull at a few MB/s while a push (the PC
+ * feeds our rx buffer) runs far faster — exactly the asymmetry users hit. Raising
+ * the tx/rx buffers and their ceilings lets the send window grow to the LAN's
+ * bandwidth-delay product. The transfer memory pool grows with these, so on any
+ * failure we fall back to the stock config below — never worse than before. */
+static const SocketInitConfig g_sock_cfg = {
+    .tcp_tx_buf_size = 0x20000,      /* 128K (default 32K) */
+    .tcp_rx_buf_size = 0x20000,      /* 128K (default 64K) */
+    .tcp_tx_buf_max_size = 0x100000, /* 1M   (default 256K) */
+    .tcp_rx_buf_max_size = 0x100000, /* 1M   (default 256K) */
+    .udp_tx_buf_size = 0x2400,
+    .udp_rx_buf_size = 0xA500,
+    .sb_efficiency = 8, /* default 4 */
+    .num_bsd_sessions = 3,
+    .bsd_service_type = BsdServiceType_User,
+};
+
 static bool g_ready = false;
 
 /* One reused easy handle for the small metadata/API GETs (http_get). curl keeps
@@ -23,6 +43,18 @@ static bool g_ready = false;
  * file transfers (http_download) keep their own per-call handle. */
 static CURL *g_get_handle = NULL;
 static Mutex g_get_mtx;
+
+/* Optional GitHub PAT, attached as a Bearer header on api.github.com GETs only
+ * (set via net_set_github_token). Empty = anonymous requests, as before. */
+static char g_github_token[128];
+
+void net_set_github_token(const char *tok) {
+    if (tok) {
+        snprintf(g_github_token, sizeof(g_github_token), "%s", tok);
+    } else {
+        g_github_token[0] = '\0';
+    }
+}
 
 /* Append a line to the debug log so failures are diagnosable on-device. This is
  * the busiest writer in the app (two lines per HTTP request, from several worker
@@ -51,7 +83,18 @@ bool net_init(void) {
     if (g_ready) {
         return true;
     }
-    Result rc = socketInitializeDefault();
+    /* Prefer the tuned buffers; if that pool can't be allocated, fall back to the
+     * stock config so networking still comes up exactly as it did before. */
+    Result rc = socketInitialize(&g_sock_cfg);
+    if (R_FAILED(rc)) {
+        /* The tuned pool couldn't be allocated: fall back to stock. Logged so a
+         * "why is it still slow" report can be answered without guessing whether
+         * the big buffers ever took effect. */
+        net_log("net_init   tuned socket cfg failed (0x%x), using default", rc);
+        rc = socketInitializeDefault();
+    } else {
+        net_log("net_init   tuned socket cfg active (tx/rx 128K, max 1M)");
+    }
     if (R_FAILED(rc)) {
         return false;
     }
@@ -214,6 +257,20 @@ static char *http_get_impl(CURL *c, const char *url, long *http_code,
     curl_easy_setopt(c, CURLOPT_CONNECTTIMEOUT, 20L);
     /* Keep the connection alive between fetches so it stays in the cache. */
     curl_easy_setopt(c, CURLOPT_TCP_KEEPALIVE, 1L);
+    /* Authenticate GitHub API GETs when a token is set, so the update checks
+     * get the 5000/hr authenticated budget instead of the shared 60/hr anon one
+     * (which a device behind a busy NAT can exhaust). Scoped to api.github.com
+     * so the token never rides along to archive.org or anywhere else. The API
+     * list endpoint answers 200 directly (no cross-host redirect), so the header
+     * can't leak onto a redirect target. */
+    struct curl_slist *hdrs = NULL;
+    if (g_github_token[0] &&
+        strncasecmp(url, "https://api.github.com/", 23) == 0) {
+        char auth[160];
+        snprintf(auth, sizeof(auth), "Authorization: Bearer %s", g_github_token);
+        hdrs = curl_slist_append(hdrs, auth);
+        curl_easy_setopt(c, CURLOPT_HTTPHEADER, hdrs);
+    }
     apply_tls(c);
 
     CURLcode rc = curl_easy_perform(c);
@@ -221,6 +278,9 @@ static char *http_get_impl(CURL *c, const char *url, long *http_code,
     curl_easy_getinfo(c, CURLINFO_RESPONSE_CODE, &code);
     if (http_code) {
         *http_code = code;
+    }
+    if (hdrs) {
+        curl_slist_free_all(hdrs);
     }
 
     net_log("GET %s -> curl=%d(%s) http=%ld len=%lu", url, (int)rc,

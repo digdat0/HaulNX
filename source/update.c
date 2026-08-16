@@ -1,6 +1,7 @@
 #include "update.h"
 #include "net.h"
 #include "jsonutil.h"
+#include "extract.h"
 
 #include <switch.h>
 #include <stdbool.h>
@@ -8,6 +9,21 @@
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
+
+/* Case-insensitive substring test (strcasestr isn't in this libc). True when
+ * `hay` contains `needle`; an empty needle matches. */
+static bool ci_contains(const char *hay, const char *needle) {
+    if (!needle || !needle[0]) {
+        return true;
+    }
+    size_t nl = strlen(needle);
+    for (; *hay; hay++) {
+        if (strncasecmp(hay, needle, nl) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
 
 static void parse_ver(const char *s, int *a, int *b, int *c) {
     while (*s && !(*s >= '0' && *s <= '9')) {
@@ -33,15 +49,31 @@ int version_cmp(const char *a, const char *b) {
     return 0;
 }
 
-/* Find the .nro asset's download URL on one release object (token index `rel`).
- * Writes into out (empty if none). */
+/* Find an installable asset's download URL on one release object (token index
+ * `rel`). An asset is installable if it's a `.nro` OR an archive we can unzip to
+ * get one (many homebrew ship the .nro inside a .zip). A direct .nro always wins
+ * over an archive; within each kind a name containing `hint` is preferred, else
+ * the first seen. Writes the URL into out (empty if none) and, when non-NULL, the
+ * chosen asset's file name into name_out (its extension tells the caller whether
+ * it must be unzipped). */
 static void asset_nro_url(const char *body, const jsmntok_t *tok, int rel,
-                          char *out, size_t out_sz) {
+                          const char *hint, char *out, size_t out_sz,
+                          char *name_out, size_t name_sz) {
     out[0] = '\0';
+    if (name_out) {
+        name_out[0] = '\0';
+    }
     int ai = json_obj_get(body, tok, rel, "assets");
     if (ai < 0 || tok[ai].type != JSMN_ARRAY) {
         return;
     }
+    bool have_hint = hint && hint[0];
+    /* Best direct .nro and best archive, tracked separately so a plain .nro is
+     * preferred when a release offers both. Each keeps the first match unless a
+     * hinted one turns up. */
+    char nro_url[1024] = "", nro_name[256] = "";
+    char arc_url[1024] = "", arc_name[256] = "";
+    bool nro_hinted = false, arc_hinted = false;
     int cnt = tok[ai].size;
     int child = ai + 1;
     for (int i = 0; i < cnt; i++) {
@@ -50,21 +82,54 @@ static void asset_nro_url(const char *body, const jsmntok_t *tok, int rel,
             json_copy(body, tok, json_obj_get(body, tok, child, "name"), name,
                       sizeof(name));
             size_t ln = strlen(name);
-            if (ln > 4 && strcasecmp(name + ln - 4, ".nro") == 0) {
+            bool is_nro = (ln > 4 && strcasecmp(name + ln - 4, ".nro") == 0);
+            bool is_arc = !is_nro && is_archive_name(name);
+            if (is_nro || is_arc) {
+                char url[1024];
                 json_copy(body, tok,
                           json_obj_get(body, tok, child, "browser_download_url"),
-                          out, out_sz);
-                return;
+                          url, sizeof(url));
+                bool h = have_hint && ci_contains(name, hint);
+                char *u = is_nro ? nro_url : arc_url;
+                char *nm = is_nro ? nro_name : arc_name;
+                bool *hf = is_nro ? &nro_hinted : &arc_hinted;
+                if (!u[0] || (h && !*hf)) {
+                    snprintf(u, 1024, "%s", url);
+                    snprintf(nm, 256, "%s", name);
+                    *hf = h;
+                }
             }
         }
         child = json_tok_skip(tok, child);
+    }
+    const char *purl = nro_url[0] ? nro_url : arc_url;
+    const char *pnm = nro_url[0] ? nro_name : arc_name;
+    if (purl[0]) {
+        snprintf(out, out_sz, "%s", purl);
+        if (name_out) {
+            snprintf(name_out, name_sz, "%s", pnm);
+        }
     }
 }
 
 bool update_fetch_latest(const char *repo, char *tag, size_t tag_sz, char *url,
                          size_t url_sz, volatile int *attempt) {
+    return update_fetch_latest_asset(repo, NULL, tag, tag_sz, url, url_sz, NULL,
+                                     0, attempt, NULL);
+}
+
+bool update_fetch_latest_asset(const char *repo, const char *asset_hint,
+                               char *tag, size_t tag_sz, char *url,
+                               size_t url_sz, char *asset, size_t asset_sz,
+                               volatile int *attempt, long *last_code) {
     tag[0] = '\0';
     url[0] = '\0';
+    if (asset) {
+        asset[0] = '\0';
+    }
+    if (last_code) {
+        *last_code = 0;
+    }
 
     /* Use the releases *list*, not /releases/latest: the latter has been seen
      * returning intermittent 504s, and it relies on GitHub's "latest" flag
@@ -90,6 +155,11 @@ bool update_fetch_latest(const char *repo, char *tag, size_t tag_sz, char *url,
         body = NULL;
         svcSleepThread(700000000ULL); /* ~0.7s before retrying */
     }
+    /* Report the last HTTP status so the caller can tell a rate limit (403/429,
+     * body present) from an offline device (code stays 0, no response). */
+    if (last_code) {
+        *last_code = code;
+    }
     if (!body) {
         return false;
     }
@@ -104,6 +174,7 @@ bool update_fetch_latest(const char *repo, char *tag, size_t tag_sz, char *url,
 
     char best_tag[64] = "";
     char best_url[1024] = "";
+    char best_name[256] = "";
     int nrel = tok[0].size;
     int rel = 1;
     for (int r = 0; r < nrel; r++) {
@@ -116,15 +187,18 @@ bool update_fetch_latest(const char *repo, char *tag, size_t tag_sz, char *url,
             json_bool(body, tok, json_obj_get(body, tok, rel, "prerelease"));
         char rtag[64] = "";
         char rurl[1024] = "";
+        char rname[256] = "";
         if (!skip) {
             json_copy(body, tok, json_obj_get(body, tok, rel, "tag_name"), rtag,
                       sizeof(rtag));
-            asset_nro_url(body, tok, rel, rurl, sizeof(rurl));
+            asset_nro_url(body, tok, rel, asset_hint, rurl, sizeof(rurl), rname,
+                          sizeof(rname));
         }
         if (!skip && rtag[0] && rurl[0] &&
             (!best_tag[0] || version_cmp(rtag, best_tag) > 0)) {
             snprintf(best_tag, sizeof(best_tag), "%s", rtag);
             snprintf(best_url, sizeof(best_url), "%s", rurl);
+            snprintf(best_name, sizeof(best_name), "%s", rname);
         }
         rel = json_tok_skip(tok, rel);
     }
@@ -137,5 +211,8 @@ bool update_fetch_latest(const char *repo, char *tag, size_t tag_sz, char *url,
     }
     snprintf(tag, tag_sz, "%s", best_tag);
     snprintf(url, url_sz, "%s", best_url);
+    if (asset && asset_sz) {
+        snprintf(asset, asset_sz, "%s", best_name);
+    }
     return true;
 }

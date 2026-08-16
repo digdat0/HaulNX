@@ -1,11 +1,49 @@
 #include "config.h"
 #include "jsonutil.h"
 #include "fsutil.h"
+#include "version.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
+
+/* ---- diagnostics bundle ------------------------------------------------ */
+
+/* Copy one log's whole contents into the bundle, headed by a "==== label
+ * (path) ====" marker so it's easy to find in a pasted report. Missing is not
+ * an error (most logs only exist once their feature has run). */
+static void bundle_append(FILE *out, const char *label, const char *path) {
+    FILE *in = fopen(path, "rb");
+    fprintf(out, "==== %s (%s) ====\n", label, path);
+    if (!in) {
+        fprintf(out, "(not present)\n\n");
+        return;
+    }
+    char buf[4096];
+    size_t n;
+    while ((n = fread(buf, 1, sizeof(buf), in)) > 0) {
+        fwrite(buf, 1, n, out);
+    }
+    fprintf(out, "\n\n");
+    fclose(in);
+}
+
+bool diag_bundle_write(void) {
+    fs_mkdir_p(LOGS_DIR);
+    FILE *out = fopen(DIAG_BUNDLE_PATH, "wb");
+    if (!out) {
+        return false;
+    }
+    fprintf(out, "HaulNX v%s debug bundle\n\n", APP_VERSION_STR);
+    bundle_append(out, "debug", LOG_PATH);
+    bundle_append(out, "transfers", XFERLOG_PATH);
+    bundle_append(out, "speedtest", SPEEDLOG_PATH);
+    bundle_append(out, "downloads", DLLOG_PATH);
+    bundle_append(out, "extract-bench", EXBENCH_PATH);
+    bundle_append(out, "queue-state", QUEUE_STATE_PATH);
+    return fclose(out) == 0;
+}
 
 /* Bounded string copy. A plain byte loop (not snprintf) so the compiler doesn't
  * warn about member-to-member copies within the same struct. */
@@ -737,6 +775,8 @@ void creds_load(Credentials *c) {
                   sizeof(c->access_key));
         json_copy(js, tok, json_obj_get(js, tok, 0, "secret"), c->secret,
                   sizeof(c->secret));
+        json_copy(js, tok, json_obj_get(js, tok, 0, "githubToken"),
+                  c->github_token, sizeof(c->github_token));
     }
     free(tok);
     free(js);
@@ -759,6 +799,8 @@ bool creds_save(const Credentials *c) {
     json_write_escaped(f, c->access_key);
     fputs(",\n  \"secret\": ", f);
     json_write_escaped(f, c->secret);
+    fputs(",\n  \"githubToken\": ", f);
+    json_write_escaped(f, c->github_token);
     fputs("\n}\n", f);
     return commit_staged(f, CREDS_TMP_PATH, CREDS_PATH);
 }
@@ -779,6 +821,7 @@ void prefs_load(Prefs *p) {
     p->lang[0] = '\0';
     strcpy(p->theme, "dark");
     p->card_view = true;
+    p->group_sets = true;
     p->roms_override[0] = '\0';
     p->custom_folders = false;
     p->pinned_dir_count = 0;
@@ -788,6 +831,12 @@ void prefs_load(Prefs *p) {
     p->ex_bench = false;     /* benchmarking off by default */
     p->ex_prealloc = true;   /* shipped behavior: preallocate output files */
     p->ex_chunk_mb = 1;      /* shipped behavior: 1 MB write chunks */
+    p->inv_server = false;   /* companion inventory server off by default */
+    p->inv_code[0] = '\0';
+    p->keep_archives = false; /* extract downloaded archives by default */
+    p->convert_import = true; /* apply the post-import converter when present */
+    strcpy(p->region_order, "WUEJ"); /* World, USA, Europe, Japan */
+    p->mtp_enabled = true;   /* USB file transfer available by default */
     prefs_ext_seed_defaults(p);
     size_t len = 0;
     char *js = json_read_file(PREFS_PATH, &len);
@@ -844,6 +893,10 @@ void prefs_load(Prefs *p) {
         if (idx >= 0) {
             p->card_view = json_bool(js, tok, idx);
         }
+        idx = json_obj_get(js, tok, 0, "groupSets");
+        if (idx >= 0) {
+            p->group_sets = json_bool(js, tok, idx);
+        }
         idx = json_obj_get(js, tok, 0, "romsOverride");
         if (idx >= 0 && tok[idx].type == JSMN_STRING) {
             json_copy(js, tok, idx, p->roms_override,
@@ -873,6 +926,39 @@ void prefs_load(Prefs *p) {
         if (idx >= 0) {
             int v = (int)json_u64(js, tok, idx);
             if (v == 1 || v == 2 || v == 4) p->ex_chunk_mb = v;
+        }
+        idx = json_obj_get(js, tok, 0, "invServer");
+        if (idx >= 0) {
+            p->inv_server = json_bool(js, tok, idx);
+        }
+        idx = json_obj_get(js, tok, 0, "invCode");
+        if (idx >= 0 && tok[idx].type == JSMN_STRING) {
+            json_copy(js, tok, idx, p->inv_code, sizeof(p->inv_code));
+        }
+        idx = json_obj_get(js, tok, 0, "keepArchives");
+        if (idx >= 0) {
+            p->keep_archives = json_bool(js, tok, idx);
+        }
+        idx = json_obj_get(js, tok, 0, "convertImport");
+        if (idx >= 0) {
+            p->convert_import = json_bool(js, tok, idx);
+        }
+        idx = json_obj_get(js, tok, 0, "regionOrder");
+        if (idx >= 0 && tok[idx].type == JSMN_STRING) {
+            char v[8] = {0};
+            json_copy(js, tok, idx, v, sizeof(v));
+            /* Must be exactly the four letters, each once, or a corrupt/hand-
+             * edited value silently falls back to the shipped default rather
+             * than feeding onegr_score a ranking with a missing or doubled
+             * region. */
+            if (strlen(v) == 4 && strchr(v, 'W') && strchr(v, 'U') &&
+                strchr(v, 'E') && strchr(v, 'J')) {
+                strcpy(p->region_order, v);
+            }
+        }
+        idx = json_obj_get(js, tok, 0, "mtpEnabled");
+        if (idx >= 0) {
+            p->mtp_enabled = json_bool(js, tok, idx);
         }
         idx = json_obj_get(js, tok, 0, "excludeExts");
         if (idx >= 0 && tok[idx].type == JSMN_ARRAY) {
@@ -943,6 +1029,7 @@ bool prefs_save(const Prefs *p) {
     fputs(",\n  \"theme\": ", f);
     json_write_escaped(f, p->theme);
     fprintf(f, ",\n  \"cardView\": %s", p->card_view ? "true" : "false");
+    fprintf(f, ",\n  \"groupSets\": %s", p->group_sets ? "true" : "false");
     fputs(",\n  \"romsOverride\": ", f);
     json_write_escaped(f, p->roms_override);
     fprintf(f, ",\n  \"customFolders\": %s",
@@ -956,12 +1043,20 @@ bool prefs_save(const Prefs *p) {
     }
     fprintf(f, "],\n  \"skipInstalled\": %s,\n  \"filterExts\": %s,\n"
                "  \"exBench\": %s,\n  \"exPrealloc\": %s,\n  \"exChunkMb\": %d,\n"
-               "  \"excludeExts\": [",
+               "  \"invServer\": %s,\n  \"invCode\": ",
             p->skip_installed ? "true" : "false",
             p->filter_exts ? "true" : "false",
             p->ex_bench ? "true" : "false",
             p->ex_prealloc ? "true" : "false",
-            p->ex_chunk_mb);
+            p->ex_chunk_mb,
+            p->inv_server ? "true" : "false");
+    json_write_escaped(f, p->inv_code);
+    fprintf(f, ",\n  \"keepArchives\": %s", p->keep_archives ? "true" : "false");
+    fprintf(f, ",\n  \"convertImport\": %s", p->convert_import ? "true" : "false");
+    fputs(",\n  \"regionOrder\": ", f);
+    json_write_escaped(f, p->region_order);
+    fprintf(f, ",\n  \"mtpEnabled\": %s", p->mtp_enabled ? "true" : "false");
+    fputs(",\n  \"excludeExts\": [", f);
     for (int i = 0; i < p->exclude_ext_count; i++) {
         if (i) {
             fputs(", ", f);

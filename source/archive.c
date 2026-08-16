@@ -281,6 +281,95 @@ void ia_file_url(const ArchiveItem *item, const ArchiveFile *file,
     snprintf(out, out_sz, "%s/%s", base, enc);
 }
 
+/* ---- catalogue search ----------------------------------------------- */
+
+/* Percent-encode a full query component: keep only unreserved characters and
+ * encode everything else (spaces, quotes, ':' in field queries, ...). */
+static void url_encode_query(const char *in, char *out, size_t out_sz) {
+    static const char hex[] = "0123456789ABCDEF";
+    size_t o = 0;
+    for (const unsigned char *p = (const unsigned char *)in;
+         *p && o + 4 < out_sz; p++) {
+        unsigned char c = *p;
+        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+            (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' ||
+            c == '~') {
+            out[o++] = (char)c;
+        } else {
+            out[o++] = '%';
+            out[o++] = hex[c >> 4];
+            out[o++] = hex[c & 0xF];
+        }
+    }
+    out[o] = '\0';
+}
+
+int ia_search(void *conn, const char *query, ArchiveSearchItem *out, int max) {
+    if (!query || !out || max <= 0) {
+        return -1;
+    }
+    char eq[600];
+    url_encode_query(query, eq, sizeof(eq));
+    char url[1024];
+    snprintf(url, sizeof(url),
+             "https://archive.org/advancedsearch.php?q=%s"
+             "&fl[]=identifier&fl[]=title&fl[]=mediatype&fl[]=downloads"
+             "&sort[]=downloads+desc&rows=%d&page=1&output=json",
+             eq, max);
+
+    long code = 0;
+    size_t len = 0;
+    char *body = conn ? http_get_on(conn, url, &code, &len)
+                      : http_get(url, &code, &len);
+    if (!body) {
+        return -1;
+    }
+    if (code != 200 || len < 2) {
+        free(body);
+        return -1;
+    }
+
+    int ntok = 0;
+    jsmntok_t *tok = json_parse_alloc(body, len, &ntok);
+    if (!tok || tok[0].type != JSMN_OBJECT) {
+        free(tok);
+        free(body);
+        return -1;
+    }
+    int resp = json_obj_get(body, tok, 0, "response");
+    int docs = resp >= 0 ? json_obj_get(body, tok, resp, "docs") : -1;
+    if (docs < 0 || tok[docs].type != JSMN_ARRAY) {
+        free(tok);
+        free(body);
+        return -1;
+    }
+
+    int count = tok[docs].size;
+    int child = docs + 1;
+    int added = 0;
+    for (int i = 0; i < count && added < max; i++) {
+        if (tok[child].type == JSMN_OBJECT) {
+            ArchiveSearchItem *s = &out[added];
+            memset(s, 0, sizeof(*s));
+            json_copy(body, tok, json_obj_get(body, tok, child, "identifier"),
+                      s->identifier, sizeof(s->identifier));
+            json_copy(body, tok, json_obj_get(body, tok, child, "title"),
+                      s->title, sizeof(s->title));
+            json_copy(body, tok, json_obj_get(body, tok, child, "mediatype"),
+                      s->mediatype, sizeof(s->mediatype));
+            int di = json_obj_get(body, tok, child, "downloads");
+            s->downloads = di >= 0 ? json_u64(body, tok, di) : 0;
+            if (s->identifier[0]) {
+                added++;
+            }
+        }
+        child = json_tok_skip(tok, child);
+    }
+    free(tok);
+    free(body);
+    return added;
+}
+
 void ia_free(ArchiveItem *item) {
     if (item && item->files) {
         free(item->files);

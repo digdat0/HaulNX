@@ -64,6 +64,20 @@ typedef struct {
     long http_code;
     char fail_reason[24]; /* short reason shown on a failed item, e.g. "HTTP 404" */
     int overwrote;        /* # existing files this install replaced (0 = all new) */
+    /* An "external" item is one the Queue tab displays and tracks but the
+     * download/extract workers never drive: a self-update download, a DAT sync,
+     * or a PC->Switch receive. Its progress is pushed in by whoever owns the
+     * transfer (see queue_ext_*). Never persisted (can't resume across launch).
+     * xkind picks the status verb shown: 0 = download, 1 = receive/incoming,
+     * 2 = install/update. */
+    bool external;
+    uint8_t xkind;
+    /* External items only: last progress sample, so queue_ext_progress can
+     * derive bytes/sec itself (like dl_progress does for real downloads) and
+     * every receive shows a rate without its owner tracking one. In-memory,
+     * never persisted. */
+    uint64_t x_last_now;
+    uint64_t x_last_tick;
 } QueueItem;
 
 /* A snapshot entry: a copy of the item plus its stable slot index. */
@@ -71,6 +85,18 @@ typedef struct {
     QueueItem item;
     int slot;
 } QueueView;
+
+/* Optional post-import hook. If set, a worker calls it right after an item
+ * lands successfully, before the item is marked done: for a plain file with
+ * path = the installed file and is_dir = false; for an extracted archive with
+ * path = the destination directory and is_dir = true. It may reprocess what
+ * landed (updating it->status/now/total for the UI) and should clear it->cancel
+ * if it consumed one. NULL by default; the core carries no dependency on it. */
+extern void (*queue_post_import)(QueueItem *it, const char *path, bool is_dir);
+
+/* Enable/disable the post-import hook at runtime (user preference). When off,
+ * queue_post_import is not invoked even if a module registered it. Default on. */
+void queue_set_post_import_enabled(bool on);
 
 /* Start/stop the background worker threads. Call after net_init / before net_exit.
  * roms_root is the base ROM directory (e.g. "sdmc:/roms"); the pointer must
@@ -93,6 +119,10 @@ void queue_set_max_dl(int n);
  * and finish, with a small floor so a tiny budget can't stall a transfer. */
 void queue_set_rate_limits(int all_bps, int item_bps);
 
+/* When on, a downloaded archive is saved compressed (as-is) instead of being
+ * extracted. Off by default. Affects items queued after the call. */
+void queue_set_keep_archives(bool on);
+
 /* Enqueue a download. Returns false if the queue is full. md5 may be "" or NULL
  * when no checksum is known. dest may be "" or NULL to install into the default
  * <roms_root>/<target>; pass a resolved absolute directory to install a console
@@ -100,6 +130,42 @@ void queue_set_rate_limits(int all_bps, int item_bps);
 bool queue_add(const char *url, const char *name, const char *target,
                const char *auth, uint64_t size, bool is_archive,
                const char *md5, const char *dest);
+
+/* ---- external transfers ---------------------------------------------------
+ * Entries the Queue tab shows alongside real downloads but the workers ignore:
+ * app self-update, DAT sync, PC->Switch receives. The owning code creates one,
+ * pushes progress into it each frame, and marks it done/failed. They are never
+ * persisted and can't be reordered/retried (they're driven from outside). */
+
+/* Create an external transfer entry. xkind: 0 download, 1 receive, 2 install,
+ * 3 sync, 4 extracting (see queue_ext_set_kind). Returns its slot index (pass
+ * to the calls below), or -1 if the queue is full. */
+int queue_ext_add(const char *name, const char *target, uint8_t xkind);
+
+/* Switch an in-progress external item's shown verb (e.g. 1 "receive" -> 4
+ * "extracting") without touching its progress or status. For a transfer whose
+ * owner unpacks the file after it lands (a USB/MTP drop straight into a
+ * console folder) and wants the Queue-tab card to say so instead of still
+ * reading "receive" while the byte counter resets to 0 and climbs again for
+ * the unpacked size — which otherwise looks exactly like the transfer
+ * restarting. No-op if slot isn't a live external item. */
+void queue_ext_set_kind(int slot, uint8_t xkind);
+
+/* Update an external item's live counters (bytes so far / total / bytes-per-sec;
+ * pass 0 for any unknown). No-op if slot isn't a live external item. */
+void queue_ext_progress(int slot, uint64_t now, uint64_t total, uint64_t speed);
+
+/* Mark an external item finished: ok -> Q_DONE, else Q_FAILED with an optional
+ * short reason (may be NULL). It then lingers like any finished item until
+ * queue_clear_finished. */
+void queue_ext_finish(int slot, bool ok, const char *fail_reason);
+
+/* Ask an external transfer to stop (Queue-tab cancel). Sets the item's cancel
+ * flag; the owner polls queue_ext_cancelled and tears its transfer down. */
+void queue_ext_cancel(int slot);
+
+/* True once queue_ext_cancel was called for this item — the owner's abort poll. */
+bool queue_ext_cancelled(int slot);
 
 /* How many more items queue_add can accept right now. Lets a bulk add tell the
  * user "only 40 of your 500 fit" before it queues anything, instead of stopping
@@ -152,6 +218,18 @@ void queue_requeue(int slot, bool wipe);
  * Returns how many were re-queued. */
 int queue_retry_all(void);
 
+/* Pause the whole queue: park any in-flight download (keeping its .part) and
+ * latch the scheduler off so nothing new starts until a resume. */
+void queue_pause_all(void);
+
+/* Cancel every non-finished item at once (queued, paused, or in flight). */
+void queue_cancel_all(void);
+
+/* Bulk retry/resume by current status: pass Q_PAUSED to resume all paused
+ * items in place, or Q_FAILED / Q_CANCELLED to restart those from zero.
+ * Returns how many items were re-queued. */
+int queue_retry_status(QStatus want);
+
 /* Move an item one row up (dir=-1) or down (dir=+1) in the list. The active
  * download can't be moved and nothing can move above it. Returns true if the
  * order actually changed. */
@@ -175,6 +253,12 @@ void queue_clear_finished(void);
 
 /* Number of items still pending or in progress (for sleep-prevention). */
 int queue_active_count(void);
+
+/* True while any item is actively moving bytes (downloading, verifying, or
+ * extracting) — i.e. contending for the SD card / network right now. Unlike
+ * queue_active_count this excludes queued/paused items, so callers can gate
+ * expensive background work (e.g. the inventory rescan) on real I/O only. */
+bool queue_io_active(void);
 
 /* Count how many queued/active items have a .part file matching `partname`
  * (the bare filename, e.g. "foo.zip.part"). If `do_cancel` is true, cancel

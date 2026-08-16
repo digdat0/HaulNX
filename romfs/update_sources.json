@@ -1,0 +1,24 @@
+{
+  "sources": [
+    {"id": "haulnx", "name": "HaulNX", "kind": "app", "detect": "haulnx", "repo": "digdat0/HaulNX", "asset": ""},
+    {"id": "retroarch", "name": "RetroArch", "kind": "emulator", "detect": "retroarch", "repo": "", "asset": ""},
+    {"id": "tico", "name": "TICO", "kind": "emulator", "detect": "tico", "repo": "", "asset": ""},
+    {"id": "sccm-retro", "name": "SCCM-Retro", "kind": "emulator", "detect": "sccm-retro,sccm", "repo": "", "asset": ""},
+    {"id": "lakka", "name": "Lakka", "kind": "emulator", "detect": "lakka", "repo": "", "asset": ""},
+    {"id": "ppsspp", "name": "PPSSPP", "kind": "emulator", "detect": "ppsspp", "repo": "", "asset": ""},
+    {"id": "mgba", "name": "mGBA", "kind": "emulator", "detect": "mgba", "repo": "", "asset": ""},
+    {"id": "melonds", "name": "melonDS", "kind": "emulator", "detect": "melonds", "repo": "", "asset": ""},
+    {"id": "drastic", "name": "DraStic", "kind": "emulator", "detect": "drastic", "repo": "", "asset": ""},
+    {"id": "raikopon", "name": "Raikopon", "kind": "emulator", "detect": "raikopon", "repo": "", "asset": ""},
+    {"id": "dekopon", "name": "Dekopon", "kind": "emulator", "detect": "dekopon", "repo": "", "asset": ""},
+    {"id": "pfbn", "name": "pFBN (Final Burn Neo)", "kind": "emulator", "detect": "pfbn,fbneo,finalburn", "repo": "", "asset": ""},
+    {"id": "psnes-pnes", "name": "pSNES / pNES", "kind": "emulator", "detect": "psnes,pnes", "repo": "", "asset": ""},
+    {"id": "mame", "name": "MAME (MAME-NX)", "kind": "emulator", "detect": "mame", "repo": "", "asset": ""},
+    {"id": "flycast", "name": "Flycast", "kind": "emulator", "detect": "flycast", "repo": "", "asset": ""},
+    {"id": "duckstation", "name": "DuckStation", "kind": "emulator", "detect": "duckstation,swanstation", "repo": "", "asset": ""},
+    {"id": "yabasanshiro", "name": "Yaba Sanshiro", "kind": "emulator", "detect": "yabasanshiro,yaba", "repo": "", "asset": ""},
+    {"id": "nethersx2", "name": "NetherSX2", "kind": "emulator", "detect": "nethersx2,nether", "repo": "", "asset": ""},
+    {"id": "cemu", "name": "Cemu", "kind": "emulator", "detect": "cemu", "repo": "", "asset": ""},
+    {"id": "dolphin", "name": "Dolphin", "kind": "emulator", "detect": "dolphin", "repo": "", "asset": ""}
+  ]
+}

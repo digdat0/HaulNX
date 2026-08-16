@@ -28,6 +28,23 @@ typedef struct {
     int file_count;
 } ArchiveItem;
 
+/* One hit from an archive.org catalogue search (advancedsearch API). */
+typedef struct {
+    char identifier[256]; /* the item id — becomes a repo's id when added */
+    char title[256];      /* human title, "" if the item has none */
+    char mediatype[32];   /* "software", "collection", ... */
+    uint64_t downloads;   /* lifetime download count, for ranking/among-hits */
+} ArchiveSearchItem;
+
+/*
+ * Search archive.org for items matching `query`. Writes up to `max` hits into
+ * the caller-provided `out` array and returns the number written, or -1 on a
+ * transport/parse error. Results come back sorted by download count (most
+ * popular first). conn == NULL uses the shared handle; pass a caller-owned
+ * connection (net_conn_new) to run off the shared one.
+ */
+int ia_search(void *conn, const char *query, ArchiveSearchItem *out, int max);
+
 /*
  * Accepts a full archive.org URL (details/download/metadata form) or a bare
  * item id, and writes the identifier into out. Returns false if nothing

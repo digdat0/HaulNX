@@ -1,6 +1,7 @@
 #include "queue.h"
 #include "net.h"
 #include "extract.h"
+#include "rar3.h"
 #include "fsutil.h"
 #include "config.h"
 #include "jsonutil.h"
@@ -24,6 +25,10 @@ static int g_dl_count = 0;
  * started; idle ones just don't pick work. That way changing the setting
  * takes effect immediately instead of on the next launch. */
 static volatile int g_max_dl = 1;
+/* When true, a downloaded archive is kept compressed instead of being
+ * extracted: queue_add clears the item's is_archive flag so it lands as a plain
+ * file. Off by default (extract as usual). Set from the Downloads setting. */
+static bool g_keep_archives = false;
 /* Download-rate limits in bytes/sec (0 = unlimited). g_rate_all_bps is the
  * combined budget across all active downloads; g_rate_item_bps caps each one.
  * g_active_dl tracks how many transfers are running right now, so the global
@@ -41,6 +46,10 @@ static volatile int g_active_dl = 0;
 #define RATE_FLOOR_BPS 4096
 static Thread g_ex_thread;
 static volatile bool g_run = false;
+/* User "pause all": a persistent latch the scheduler checks before picking any
+ * new work. Unlike a per-item Q_PAUSED (which the scheduler auto-resumes), this
+ * keeps everything parked until a "retry all paused" (resume) clears it. */
+static volatile bool g_paused = false;
 /* Set while a worker has declined to start an item because the card is nearly
  * full. The item stays queued — the hold clears by itself once space appears. */
 static volatile bool g_space_hold = false;
@@ -205,6 +214,13 @@ static int dl_progress(void *ud, uint64_t now, uint64_t total) {
     return (it->cancel || it->pause || !g_run) ? 1 : 0;
 }
 
+/* Optional post-import hook (see queue.h). NULL unless an add-on module sets it. */
+void (*queue_post_import)(QueueItem *it, const char *path, bool is_dir) = NULL;
+
+/* Runtime enable flag for the post-import hook (user preference). */
+static bool g_post_import_enabled = true;
+void queue_set_post_import_enabled(bool on) { g_post_import_enabled = on; }
+
 static bool ex_progress(void *ud, const char *entry, int done,
                         uint64_t bytes_read) {
     QueueItem *it = (QueueItem *)ud;
@@ -227,6 +243,7 @@ static void md5_progress(void *ud, uint64_t done, uint64_t total) {
         it->total = total;
     }
 }
+
 
 /* Append a download outcome to the history log shown in Settings. */
 static void log_download(const QueueItem *it, const char *status) {
@@ -338,6 +355,9 @@ static void save_locked(void) {
     bool first = true;
     for (int i = 0; i < QUEUE_MAX; i++) {
         QStatus s = g_items[i].status;
+        if (g_items[i].external) {
+            continue; /* external transfers can't resume across a launch */
+        }
         if (s != Q_QUEUED && s != Q_PAUSED && s != Q_DOWNLOADING &&
             s != Q_VERIFYING && s != Q_AWAIT_EXTRACT && s != Q_EXTRACTING) {
             continue; /* only persist outstanding work */
@@ -810,8 +830,9 @@ static void process_item(QueueItem *it) {
     bool existed = fs_exists(dest);
     if (fs_move(tmp, dest)) {
         it->overwrote = existed ? 1 : 0;
-        it->status = Q_DONE;
         log_download(it, "done");
+        if (g_post_import_enabled && queue_post_import) queue_post_import(it, dest, false);
+        it->status = Q_DONE;
     } else {
         set_fail(it, "write error");
     }
@@ -858,9 +879,38 @@ static void install_item(QueueItem *it) {
     if (n > 0) {
         remove(tmp);
         it->overwrote = ow;
-        it->status = Q_DONE;
         log_download(it, "done");
+        if (g_post_import_enabled && queue_post_import) queue_post_import(it, destdir, true);
+        it->status = Q_DONE;
         return;
+    }
+    /* libarchive failed and this is a .rar: try the fallback RAR3 decoder
+     * before giving up. It exists for exactly one gap -- RAR3's "programmable
+     * filter" entries, which libarchive's RAR reader has never implemented
+     * (see rar3.h) -- so it only fires here, after the primary path has
+     * already had its shot. Anything rar3_extract() also can't handle
+     * (password-protected, split volumes, a genuinely custom filter program)
+     * falls through to the raw-save below exactly as it always has. */
+    size_t safelen = strlen(safe);
+    if (safelen > 4 && strcasecmp(safe + safelen - 4, ".rar") == 0) {
+        it->now = 0;
+        it->ex_files = 0;
+        ow = 0; /* separate attempt from the failed extract_archive() call above */
+        boost_acquire();
+        int n2 = rar3_extract(tmp, destdir, ex_progress, it, &ow);
+        boost_release();
+        if (it->cancel) {
+            finish_cancel(it, tmp);
+            return;
+        }
+        if (n2 > 0) {
+            remove(tmp);
+            it->overwrote = ow;
+            log_download(it, "done");
+            if (g_post_import_enabled && queue_post_import) queue_post_import(it, destdir, true);
+            it->status = Q_DONE;
+            return;
+        }
     }
     /* Couldn't extract: keep the raw archive as a plain file. */
     char dest[2048];
@@ -889,6 +939,9 @@ static void dl_worker(void *arg) {
         int active = 0, blocked = 0;
         for (int i = 0; i < QUEUE_MAX; i++) {
             QStatus s = g_items[i].status;
+            if (g_items[i].external) {
+                continue; /* a receive/update isn't a queue download slot */
+            }
             if (s == Q_DOWNLOADING || s == Q_VERIFYING) {
                 active++;
             } else if ((s == Q_QUEUED || s == Q_PAUSED) &&
@@ -896,7 +949,7 @@ static void dl_worker(void *arg) {
                 blocked++;
             }
         }
-        if (online && active < g_max_dl) {
+        if (online && !g_paused && active < g_max_dl) {
             for (int i = 0; i < QUEUE_MAX; i++) {
                 QStatus s = g_items[i].status;
                 /* Items parked for want of space are skipped, not blocking:
@@ -1039,6 +1092,8 @@ void queue_set_max_dl(int n) {
     mutexUnlock(&g_mtx);
 }
 
+void queue_set_keep_archives(bool on) { g_keep_archives = on; }
+
 void queue_set_rate_limits(int all_bps, int item_bps) {
     if (all_bps < 0) all_bps = 0;
     if (item_bps < 0) item_bps = 0;
@@ -1162,12 +1217,136 @@ bool queue_add(const char *url, const char *name, const char *target,
     /* Backstop: every download enters here, whatever route the caller took to
      * find a size, so the space guard's arithmetic is bounded at one place. */
     it->size = size > JSON_SIZE_MAX ? JSON_SIZE_MAX : size;
-    it->is_archive = is_archive;
+    /* "Keep archives compressed": drop the archive flag so this file skips the
+     * extract worker and lands as-is (the raw .zip/.7z) in the console folder. */
+    it->is_archive = is_archive && !g_keep_archives;
     it->seq = g_seq++;
     it->status = Q_QUEUED;
     save_locked();
     mutexUnlock(&g_mtx);
     return true;
+}
+
+/* ---- external transfers ---------------------------------------------------
+ * See queue.h. These entries share the item array (so the Queue tab renders
+ * them for free) but carry external=true, so the worker scheduler, the space
+ * accounting, and the persistence all skip them (guards above). The owning code
+ * drives now/total/status through the calls below. */
+
+int queue_ext_add(const char *name, const char *target, uint8_t xkind) {
+    mutexLock(&g_mtx);
+    int slot = -1;
+    for (int i = 0; i < QUEUE_MAX; i++) {
+        if (g_items[i].status == Q_FREE) {
+            slot = i;
+            break;
+        }
+    }
+    if (slot < 0) {
+        mutexUnlock(&g_mtx);
+        return -1;
+    }
+    QueueItem *it = &g_items[slot];
+    memset(it, 0, sizeof(*it));
+    snprintf(it->name, sizeof(it->name), "%s", name ? name : "");
+    snprintf(it->target, sizeof(it->target), "%s", target ? target : "");
+    it->external = true;
+    it->xkind = xkind;
+    it->seq = g_seq++;
+    it->status = Q_DOWNLOADING; /* "in progress"; xkind picks the shown verb */
+    mutexUnlock(&g_mtx);
+    return slot;
+}
+
+void queue_ext_set_kind(int slot, uint8_t xkind) {
+    if (slot < 0 || slot >= QUEUE_MAX) {
+        return;
+    }
+    mutexLock(&g_mtx);
+    QueueItem *it = &g_items[slot];
+    if (it->external && it->status == Q_DOWNLOADING) {
+        it->xkind = xkind;
+    }
+    mutexUnlock(&g_mtx);
+}
+
+void queue_ext_progress(int slot, uint64_t now, uint64_t total, uint64_t speed) {
+    if (slot < 0 || slot >= QUEUE_MAX) {
+        return;
+    }
+    mutexLock(&g_mtx);
+    QueueItem *it = &g_items[slot];
+    if (it->external && it->status == Q_DOWNLOADING) {
+        it->now = now;
+        it->total = total;
+        if (speed) {
+            it->speed = speed; /* owner supplied a rate: trust it */
+        } else {
+            /* Derive bytes/sec from the delta between samples, on the same ~2 Hz
+             * cadence dl_progress uses, so a receive shows a live rate just like a
+             * download. (A byte-count total, e.g. the DAT sync's console counts,
+             * isn't shown as speed by the renderer, so a bogus value is harmless.) */
+            uint64_t tick = armGetSystemTick();
+            if (it->x_last_tick == 0) {
+                it->x_last_tick = tick;
+                it->x_last_now = now;
+            } else {
+                uint64_t dt = armTicksToNs(tick - it->x_last_tick);
+                if (dt >= 500000000ULL) {
+                    uint64_t db =
+                        (now >= it->x_last_now) ? now - it->x_last_now : 0;
+                    it->speed = db * 1000000000ULL / dt;
+                    it->x_last_now = now;
+                    it->x_last_tick = tick;
+                }
+            }
+        }
+    }
+    mutexUnlock(&g_mtx);
+}
+
+void queue_ext_finish(int slot, bool ok, const char *fail_reason) {
+    if (slot < 0 || slot >= QUEUE_MAX) {
+        return;
+    }
+    mutexLock(&g_mtx);
+    QueueItem *it = &g_items[slot];
+    /* Only finish an item still in progress: makes repeated calls idempotent
+     * (a per-frame mirror can call this every frame once a transfer reports
+     * done) and stops a teardown "fail all" from downgrading an already-done
+     * item to failed. */
+    if (it->external && it->status == Q_DOWNLOADING) {
+        it->speed = 0;
+        if (ok) {
+            it->status = Q_DONE;
+        } else {
+            snprintf(it->fail_reason, sizeof(it->fail_reason), "%s",
+                     fail_reason ? fail_reason : "");
+            it->status = Q_FAILED;
+        }
+    }
+    mutexUnlock(&g_mtx);
+}
+
+void queue_ext_cancel(int slot) {
+    if (slot < 0 || slot >= QUEUE_MAX) {
+        return;
+    }
+    mutexLock(&g_mtx);
+    if (g_items[slot].external) {
+        g_items[slot].cancel = true; /* owner polls queue_ext_cancelled */
+    }
+    mutexUnlock(&g_mtx);
+}
+
+bool queue_ext_cancelled(int slot) {
+    if (slot < 0 || slot >= QUEUE_MAX) {
+        return false;
+    }
+    mutexLock(&g_mtx);
+    bool c = g_items[slot].external && g_items[slot].cancel;
+    mutexUnlock(&g_mtx);
+    return c;
 }
 
 void queue_batch_begin(void) {
@@ -1207,6 +1386,9 @@ uint64_t queue_pending_bytes(void) {
     mutexLock(&g_mtx);
     for (int i = 0; i < QUEUE_MAX; i++) {
         QStatus s = g_items[i].status;
+        if (g_items[i].external) {
+            continue; /* not bytes the queue itself has to fetch */
+        }
         if (s == Q_FREE || s == Q_DONE || s == Q_SAVED || s == Q_FAILED ||
             s == Q_CANCELLED) {
             continue; /* finished or failed: no longer needs space */
@@ -1275,19 +1457,28 @@ void queue_retry(int slot) {
     }
     mutexLock(&g_mtx);
     QStatus s = g_items[slot].status;
-    if (s == Q_FAILED || s == Q_CANCELLED) {
+    if (s == Q_FAILED || s == Q_CANCELLED || s == Q_PAUSED) {
         QueueItem *it = &g_items[slot];
         it->cancel = false;
         it->pause = false;
-        it->now = 0;
-        it->total = 0;
-        it->speed = 0;
-        it->ex_files = 0;
-        it->http_code = 0;
-        it->fail_reason[0] = '\0';
+        /* A paused item resumes in place from its .part (progress preserved);
+         * a failed/cancelled one restarts from zero. */
+        if (s != Q_PAUSED) {
+            it->now = 0;
+            it->total = 0;
+            it->speed = 0;
+            it->ex_files = 0;
+            it->http_code = 0;
+            it->fail_reason[0] = '\0';
+        }
         /* Keep the original seq so the item resumes in its current list
          * position (and is picked promptly) instead of jumping to the bottom. */
         it->status = Q_QUEUED;
+        /* An explicit per-item retry also lifts a global "pause all" latch —
+         * otherwise the re-queued item stays stuck behind the pause and never
+         * gets picked. (The scheduler resumes any remaining paused items too;
+         * there is no per-item bypass of the global latch.) */
+        g_paused = false;
         save_locked();
     }
     mutexUnlock(&g_mtx);
@@ -1346,6 +1537,87 @@ int queue_retry_all(void) {
         }
     }
     if (n > 0) {
+        save_locked();
+    }
+    mutexUnlock(&g_mtx);
+    return n;
+}
+
+void queue_pause_all(void) {
+    mutexLock(&g_mtx);
+    g_paused = true; /* latch the scheduler off until an explicit resume */
+    for (int i = 0; i < QUEUE_MAX; i++) {
+        QStatus s = g_items[i].status;
+        if (s == Q_QUEUED) {
+            g_items[i].status = Q_PAUSED;
+        } else if (s == Q_DOWNLOADING) {
+            /* Park the in-flight transfer (keeps its .part), like max-dl=0. */
+            g_items[i].pause = true;
+        }
+    }
+    save_locked();
+    mutexUnlock(&g_mtx);
+}
+
+void queue_cancel_all(void) {
+    /* Slots whose cancel we own (nothing else will log them). */
+    int to_log[QUEUE_MAX];
+    int nlog = 0;
+    bool changed = false;
+    mutexLock(&g_mtx);
+    g_paused = false; /* cancelling clears any global pause */
+    for (int i = 0; i < QUEUE_MAX; i++) {
+        QStatus s = g_items[i].status;
+        if (s == Q_QUEUED || s == Q_PAUSED) {
+            g_items[i].status = Q_CANCELLED; /* no worker owns it -> log below */
+            to_log[nlog++] = i;
+            changed = true;
+        } else if (s == Q_DOWNLOADING || s == Q_VERIFYING ||
+                   s == Q_EXTRACTING || s == Q_AWAIT_EXTRACT) {
+            g_items[i].cancel = true; /* worker marks + logs it CANCELLED */
+        }
+    }
+    if (changed) {
+        save_locked();
+    }
+    mutexUnlock(&g_mtx);
+    /* Log outside the lock so the file IO never blocks the workers/UI. */
+    for (int k = 0; k < nlog; k++) {
+        QueueItem snap;
+        mutexLock(&g_mtx);
+        snap = g_items[to_log[k]];
+        mutexUnlock(&g_mtx);
+        log_download(&snap, "cancelled");
+    }
+}
+
+/* Bulk retry/resume by current status. Paused items resume in place keeping
+ * their .part (progress preserved); failed/cancelled items restart from zero.
+ * Returns how many items were re-queued. */
+int queue_retry_status(QStatus want) {
+    int n = 0;
+    mutexLock(&g_mtx);
+    if (want == Q_PAUSED) {
+        g_paused = false; /* resume: let the scheduler pick work again */
+    }
+    for (int i = 0; i < QUEUE_MAX; i++) {
+        if (g_items[i].status == want) {
+            QueueItem *it = &g_items[i];
+            it->cancel = false;
+            it->pause = false;
+            if (want != Q_PAUSED) {
+                it->now = 0;
+                it->total = 0;
+                it->speed = 0;
+                it->ex_files = 0;
+                it->http_code = 0;
+                it->fail_reason[0] = '\0';
+            }
+            it->status = Q_QUEUED; /* keep seq: resumes in place */
+            n++;
+        }
+    }
+    if (n > 0 || want == Q_PAUSED) {
         save_locked();
     }
     mutexUnlock(&g_mtx);
@@ -1484,8 +1756,8 @@ bool queue_active_info(char *name, size_t name_sz, QStatus *status,
             continue;
         }
         total_items++;
-        if (!found && (s == Q_DOWNLOADING || s == Q_VERIFYING ||
-                       s == Q_EXTRACTING)) {
+        if (!found && !g_items[i].external &&
+            (s == Q_DOWNLOADING || s == Q_VERIFYING || s == Q_EXTRACTING)) {
             const QueueItem *it = &g_items[i];
             if (name && name_sz) {
                 snprintf(name, name_sz, "%s", it->name);
@@ -1548,6 +1820,25 @@ int queue_active_count(void) {
     }
     mutexUnlock(&g_mtx);
     return c;
+}
+
+bool queue_io_active(void) {
+    bool r = false;
+    mutexLock(&g_mtx);
+    for (int i = 0; i < QUEUE_MAX; i++) {
+        QStatus s = g_items[i].status;
+        /* Only the states that actually touch the SD card or network right now
+         * (this includes every external receive/USB/live-link item, which ride
+         * as Q_DOWNLOADING). Q_QUEUED/Q_PAUSED are intentionally excluded so a
+         * parked queue can't block the inventory refresh indefinitely. */
+        if (s == Q_DOWNLOADING || s == Q_VERIFYING ||
+            s == Q_AWAIT_EXTRACT || s == Q_EXTRACTING) {
+            r = true;
+            break;
+        }
+    }
+    mutexUnlock(&g_mtx);
+    return r;
 }
 
 int queue_cancel_by_part(const char *partname, bool do_cancel) {

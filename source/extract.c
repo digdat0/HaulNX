@@ -92,8 +92,9 @@ bool is_archive_name(const char *filename) {
 
 /* Sanitize an archive entry path into a safe relative SD path: drop leading
  * slashes, normalize backslashes, replace FAT-illegal chars, keep '/' as the
- * separator. Returns false if the entry should be skipped (e.g. traversal). */
-static bool sanitize_rel(const char *in, char *out, size_t out_sz) {
+ * separator. Returns false if the entry should be skipped (e.g. traversal).
+ * Declared in extract.h and shared with source/rar3/rar3_extract.c. */
+bool sanitize_rel(const char *in, char *out, size_t out_sz) {
     /* Refuse path traversal, but only when ".." is a whole path segment: a
      * substring test would also drop legitimate names like "Zelda..Oracle.zip". */
     for (const char *p = in; *p; p++) {

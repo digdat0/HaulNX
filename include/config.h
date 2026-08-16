@@ -44,8 +44,49 @@ extern "C" {
  * so they live with the other state in config/, not with the logs. */
 #define QUEUE_STATE_PATH DATA_DIR "/queue.json"
 #define INST_SIZES_PATH  DATA_DIR "/inst_sizes.json"
+/* Device inventory served to the desktop companion over the LAN. Regenerated
+ * app-side while the inventory server pref is on; the server just serves this
+ * file (see httpsrv.c HTTPSRV_MODE_INVENTORY). A staging file keeps a reader
+ * from ever seeing a half-written document. */
+#define INVENTORY_PATH     DATA_DIR "/inventory.json"
+#define INVENTORY_TMP_PATH DATA_DIR "/inventory.tmp.json"
+/* Shared emulator/app update manifest: the id/kind/detect list plus each entry's
+ * GitHub release repo. Single source of truth for the on-device update manager
+ * (Tools) and the desktop companion, which reads/writes it over the LAN. Seeded
+ * from romfs:/update_sources.json on first run (see updman.c). */
+#define UPDSRC_PATH   DATA_DIR "/update_sources.json"
+/* When each update entry was last checked against its GitHub release, keyed by
+ * id ("id\tepoch" per line). The update manager no longer auto-checks on open;
+ * this remembers the last manual check so the list can show "checked 5m ago"
+ * across launches. Best-effort, app-side only (the desktop never touches it). */
+#define UPDCHK_PATH   DATA_DIR "/update_checks.txt"
+/* Previous builds of updated/installed apps, kept so the manager can roll back:
+ * BACKUPS_DIR/<id>/<version>.nro, the two most recent per app. */
+#define BACKUPS_DIR   CONFIG_DIR "/backups"
 #define LANG_DIR      CONFIG_DIR "/lang"
 #define CACHE_DIR     CONFIG_DIR "/cache"
+/* Persistent file-hash cache for DAT verification: (path,size,mtime) -> CRC/SHA1,
+ * so re-verifying an unchanged library skips re-reading every byte off the SD.
+ * v2: entries hold the digest of the ROM *inside* a single-file archive, not the
+ * archive container. v3: digests are the No-Intro canonical form (header-stripped
+ * NES/FDS/Lynx/7800, N64 reordered to .z64), so the name is bumped again to
+ * discard any v2 entries that predate normalisation and would now mismatch. */
+#define HASH_CACHE_PATH CACHE_DIR "/hashes3.tsv"
+/* Persistent per-file verify status (verified/bad/unknown), so the Installed
+ * browser can show a lasting badge after a verify pass instead of that result
+ * evaporating with the transient VerifyJob. See vfystatus.h. */
+#define VFYSTATUS_PATH  CACHE_DIR "/vfystatus.tsv"
+/* No-Intro/Redump DAT files for library verification, one per console folder:
+ * DATS_DIR/<target>.dat. User-supplied — the app ships none. */
+#define DATS_DIR      CONFIG_DIR "/dats"
+/* Exported verify reports (one per console, overwritten each export):
+ * REPORTS_DIR/<target>-verify.txt. A user-facing deliverable to read on a PC,
+ * so it lives in its own folder rather than under logs/. */
+#define REPORTS_DIR   CONFIG_DIR "/reports"
+/* Staging area for games arriving from a PC (USB or the LAN receiver) that have
+ * not been sorted into a console folder yet. The inbox sorter identifies each
+ * file (see idgame.h) and files it into <roms_root>/<target> — or asks. */
+#define INBOX_DIR     CONFIG_DIR "/inbox"
 #define DL_TMP_DIR    CONFIG_DIR "/downloads"
 #define LOG_PATH      LOGS_DIR "/debug.log"
 /* Per-archive extraction throughput, appended one line per archive when the
@@ -62,6 +103,14 @@ extern "C" {
 #define SPEEDLOG_PATH LOGS_DIR "/speedtest.log"
 #define DLLOG_PATH    LOGS_DIR "/downloads.log"
 #define DLLOG_JSON    LOGS_DIR "/downloads.jsonl"
+/* Every log folded into one file for a bug report: debug.log, transfers.log,
+ * speedtest.log, downloads.log, exbench.log, queue.json. Written by
+ * diag_bundle_write() (config.c) -- Settings > Diagnostics > Export debug
+ * bundle calls it for a manual copy, and the inventory server's
+ * /debug_bundle.txt route (httpsrv.c) calls it fresh on every desktop-companion
+ * pull so a sync always gets current logs without the user copying anything
+ * off the SD card by hand. */
+#define DIAG_BUNDLE_PATH LOGS_DIR "/diag_bundle.txt"
 /* The app's own ROM library. Games install to <root>/<console>/. Users point
  * their emulators here (see the wiki); we no longer read any emulator's config. */
 #define DEFAULT_ROMS_ROOT  "sdmc:/roms"
@@ -110,6 +159,9 @@ typedef struct {
 typedef struct {
     char access_key[128];
     char secret[128];
+    char github_token[128]; /* optional GitHub PAT; when set, sent as a Bearer
+                               token on api.github.com update checks so the
+                               unauthenticated 60/hr rate limit doesn't stall them */
 } Credentials;
 
 #define MAX_PINNED_DIRS 32
@@ -137,6 +189,11 @@ typedef struct {
     char lang[16];       /* language code, e.g. "en", "es", "ja"; empty = English */
     char theme[16];      /* "dark" (default) or "light" */
     bool card_view;      /* true: console lists render as a card grid */
+    /* true (default): the Installed browser collapses a multi-file game — a
+     * .cue with its .bin tracks, a multi-disc set — into one row standing for
+     * every piece. Turning it off lists the raw files again, which is the way
+     * to reach a single track when a set is grouped wrongly. */
+    bool group_sets;
     /* Advanced override for the ROM install root. Empty = use the default
      * ROM root (DEFAULT_ROMS_ROOT). When set, this exact path is used instead. */
     char roms_override[512];
@@ -166,6 +223,33 @@ typedef struct {
     bool ex_bench;      /* append per-archive throughput to EXBENCH_PATH */
     bool ex_prealloc;   /* grow each output file to its final size up front */
     int  ex_chunk_mb;   /* write-coalescing chunk size in MB: 1, 2, or 4 */
+    /* Desktop-companion inventory server (read-only, port HTTPSRV_INV_PORT).
+     * When on, the app keeps a listener up while running so the app utility can
+     * pull a device inventory; inv_code is the persistent 4-digit code shown in
+     * Settings and required in the URL. inv_code is generated on first enable. */
+    bool inv_server;
+    char inv_code[5];   /* 4 digits + NUL; empty until first enabled */
+    /* Keep downloaded archives compressed: when true, a downloaded .zip/.7z is
+     * saved as-is in the console folder instead of being extracted (default
+     * false — extract as usual). See queue_set_keep_archives. */
+    bool keep_archives;
+    /* Run the optional post-import converter on freshly downloaded files (see
+     * queue_set_post_import_enabled). Only has an effect when a converter
+     * add-on module is present; default true so it applies automatically when
+     * available. */
+    bool convert_import;
+    /* 1G1R keep-preference order for the four named regions, most preferred
+     * first: a permutation of the letters W(orld) U(SA) E(urope) J(apan).
+     * A file tagged with a region not in this set (or none at all) always
+     * ranks below all four, same as before this was configurable. Default
+     * "WUEJ" reproduces the original fixed ranking exactly. See onegr_score. */
+    char region_order[5];
+    /* true (default): the MTP responder may come up over USB — either the
+     * user opening "Connect to PC over USB", or automatically in the
+     * background while inv_server is on and a cable is plugged in. false:
+     * the console never presents itself as a USB file-transfer device, so a
+     * cable plugged in "just to charge" can't be used to browse the library. */
+    bool mtp_enabled;
 } Prefs;
 
 /* Relocate app files left in the old flat layout (everything directly under
@@ -173,6 +257,13 @@ typedef struct {
  * call on every launch; run it once at startup before anything reads or writes
  * a config or log file. */
 void app_migrate_layout(void);
+
+/* Fold every log the app keeps into one file at DIAG_BUNDLE_PATH -- see its
+ * comment above. Pure file I/O (no UI); false only on a write failure (e.g.
+ * card full), in which case any partial bundle is left in place rather than
+ * torn down, same as a failed export today. Cheap enough (a handful of small
+ * text files) to call on every pull, not just a manual export. */
+bool diag_bundle_write(void);
 
 /* Load dl_sources.json; seeds from romfs:/dl_sources.json on first run if the
  * sdmc file is missing. Understands the grouped schema and falls back to the

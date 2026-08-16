@@ -3,14 +3,21 @@
 #include <pu/Plutonium>
 #include <atomic>
 #include <cmath>
+#include <functional>
 #include <string>
 #include <vector>
+#include <utility>
 #include <set>
+#include <map>
 #include <switch.h>
 #include "TableList.hpp"
 #include "CardGrid.hpp"
 #include "httpsrv.h"
 #include "net.h"
+#include "dat.h"
+#include "verify.h"
+#include "iarchive.h"
+#include "updman.h"
 
 // Draws a BORROWED texture (an icon owned by a shared cache) at a fixed size
 // and position. Used for the console icon shown next to the header title.
@@ -42,7 +49,7 @@ class IconElement : public pu::ui::elm::Element {
 };
 
 // A filled rounded rectangle at a settable position/size/colour. Used as the
-// active-tab "pill" behind the tab label.
+// accent underline beneath the active tab label (a short, thin rounded bar).
 class PillElement : public pu::ui::elm::Element {
     s32 x, y, w, h, radius;
     pu::ui::Color clr;
@@ -309,6 +316,14 @@ class FooterHintElement : public pu::ui::elm::Element {
         }
         return this->width;
     }
+    // Leading button glyph of this hint ("A", "X", "L/R", ...), "" if none.
+    // Used to make a touch on the footer act like pressing that button.
+    std::string Token() const {
+        size_t e = this->text.find(' ');
+        std::string first =
+            (e == std::string::npos) ? this->text : this->text.substr(0, e);
+        return IsButtonToken(first) ? first : std::string();
+    }
     void SetX(s32 nx) { this->x = nx; }
     s32 GetX() override { return this->x; }
     s32 GetY() override { return this->y; }
@@ -475,13 +490,20 @@ class MainLayout : public pu::ui::Layout {
     CardGrid::Ref grid;    // card view for the console lists
     bool cards_mode = false; // which of list/grid is active for this screen
     std::vector<pu::ui::elm::TextBlock::Ref> tabs;
-    PillElement::Ref tab_pill;        // rounded highlight behind the active tab
+    PillElement::Ref tab_pill;        // accent underline under the active tab
     GradientLineElement::Ref accent_line; // green->blue strip under the shell
     PulseDotElement::Ref queue_dot;   // "downloads running" pulse on the Queue tab
     PulseDotElement::Ref settings_dot; // "update available" pulse on the Settings tab
     IconElement::Ref empty_icon;      // big dimmed icon for empty states
     pu::ui::elm::TextBlock::Ref empty_text;
+    pu::ui::elm::TextBlock::Ref empty_code; // big transfer code under the URL
     pu::ui::elm::TextBlock::Ref empty_hint; // smaller "what to do" line
+    // Last font + unwrapped hint applied to empty_hint. Some screens (the Queue
+    // tab) re-assert their empty state every frame, and both SetFont and the
+    // word-wrap measuring pass are expensive enough to matter at 60fps — SetFont
+    // re-renders the texture unconditionally. Wrapping is skipped and the font
+    // left alone while neither input has changed.
+    std::string empty_hint_font, empty_hint_raw;
     // Accent chip under the empty-state hint (a filled rounded pill + its text),
     // used by the import page to call out the app-utility alternative. Hidden
     // unless SetEmptyState is given a note.
@@ -498,11 +520,14 @@ class MainLayout : public pu::ui::Layout {
     // (icon lifted, gap under the message, larger hint text).
     void SetEmptyState(pu::sdl2::Texture icon, const std::string &msg,
                        const std::string &hint = "", bool spacious = false,
-                       const std::string &note = "");
+                       const std::string &note = "", const std::string &code = "");
     void ClearEmptyState();
     // Loading spinner overlay.
     void ShowSpinner(const std::string &msg);
     void HideSpinner();
+    // Hit-test a touch against the footer hint chips: returns the HidNpadButton
+    // mask for the tapped hint (so a tap acts like pressing that button), or 0.
+    u64 FooterButtonAt(s32 tx, s32 ty) const;
 
     void SetTitle(const std::string &t);
     void SetTitleIcon(pu::sdl2::Texture tex); // console icon after the title
@@ -512,7 +537,7 @@ class MainLayout : public pu::ui::Layout {
     void SetBatInfo(const std::string &t);
     void SetSubtitle(const std::string &t);
     void SetRomInfo(const std::string &t);
-    void SetActiveTab(int idx); // 0=Browse 1=Installed 2=Queue 3=Settings
+    void SetActiveTab(int idx); // 0=Library 1=Add 2=Queue 3=Settings
     void SetQueueActivity(bool active); // pulse the Queue tab while downloading
     void SetUpdateAvailable(bool avail); // pulse the Settings tab when an update is up
     void RefreshTabs();
@@ -593,11 +618,11 @@ class MainApplication : public pu::ui::Application {
         Sources,   // settings submenu: manage consoles/repos + file-type filter
         Storage,   // settings submenu: SD space, ROM folder, temp + caches
         InstallFolders, // Storage sub-screen: per-console custom install folders
+        Backups,   // Storage sub-screen: emulator/app rollback backups (view/delete)
         Account,   // settings submenu: archive.org creds + startup net check
         Updates,   // settings submenu: check now + auto-check toggle
         Diagnostics, // settings submenu: logs, self-test, tuning, reset
         About,     // settings submenu: getting started, release notes, credits
-        ExtTuning, // Diagnostics sub-screen: extraction perf knobs (dev)
         SpeedTest, // Diagnostics sub-screen: live download/upload meters
         ViewLogs,  // settings submenu: download log + debug log
         DebugLog,  // debug.log viewer
@@ -605,12 +630,31 @@ class MainApplication : public pu::ui::Application {
         InstSearch, // search across installed games (roms folder)
         RomPicker, // SD-card folder browser for choosing a custom ROM root
         Import,    // waiting for a dl_sources.json upload over the LAN
+        LiveRecv,  // transient: a file is arriving over the always-on live link
         RecvConsole, // Settings' "Install from PC": pick which console to fill
         ReleaseNotes, // GitHub release list (version + date)
-        ReleaseNote   // one release's notes
+        ReleaseNote,  // one release's notes
+        Verify,       // DAT verification results for one console (Library tab)
+        VerifyMissing, // browsable list of DAT titles absent from the library
+        ArchiveSearch, // archive.org catalogue search: pick an item to add as a repo
+        Tidy,          // "tidy library" scan: misfiled + duplicate files to fix
+        VerifyAll,    // aggregate verify results, one row per console (Library tab)
+        SortInbox,    // inbox sorter results: one row per staged file + outcome
+        UsbMtp,       // embedded MTP: connect the console to a PC over USB
+        Dats,         // Storage sub-screen: DAT files + auto-download (Fresh1G1R)
+        RegionOrder,  // Dats sub-screen: 1G1R keep-preference region order
+        AppUpdates,   // Updates sub-screen: emulator/app list (check/update/revert)
+        LargestFiles, // Storage sub-screen: whole-library files, biggest first
+        DataFiles,    // settings submenu: hosts DAT files + metadata cache
+        MetaCache,    // Data Files sub-screen: cache on/off, browse, refresh all
+        InboxFiles    // Storage sub-screen: view/select/delete files staged in the Inbox
     };
-    enum class Pending { None, AddRepo, Manual };
-    enum class Tab { Browse = 0, Installed = 1, Queue = 2, Settings = 3 };
+    enum class Pending { None, AddRepo, Manual, SortAssign };
+    // Tab positions, left to right. The library is the front door of the app, so
+    // Installed sits at 0 (labelled "Library") and Browse at 1 (labelled "Add");
+    // Queue/Settings keep 2/3 so the notification-dot positions are unchanged.
+    // Enum member names still describe the screen each tab opens.
+    enum class Tab { Installed = 0, Browse = 1, Queue = 2, Settings = 3 };
 
   private:
     MainLayout::Ref layout;
@@ -621,10 +665,18 @@ class MainApplication : public pu::ui::Application {
     // screen and "new search" (Y) keeps the same scope. -1 = all.
     int search_ci = -1;
     int search_ri = -1;
+    // Set when this search was launched from the Missing Games "find &
+    // download" action: B should return to the Library tab, not to the
+    // console's repo list (search_ci is only a match *scope* there, not
+    // where the user actually came from).
+    bool search_from_missing = false;
     Pending pending;
     std::string pending_id;  // archive id for a Manual-URL download
     std::string inst_path;   // current dir in the installed browser
     std::string picker_path; // current dir in the ROM-folder picker
+    uint8_t appman_kind = 0; // Screen::AppUpdates section: UPD_KIND_EMU / _APP
+    std::vector<UpdSource> appman_list; // entries shown on Screen::AppUpdates
+    s32 appman_sel = 0;      // selection to restore after the list is (re)built
     int picker_console = -1; // ROM-folder picker target: -1 = the ROM root, else
                              // the console index whose custom install folder is
                              // being chosen (returns to that console's screen)
@@ -643,6 +695,7 @@ class MainApplication : public pu::ui::Application {
 
     // Remembered list positions, so backing out and returning keeps your place.
     int home_sel = 0;
+    int inst_sel = 0;   // Installed/Library root console list: last cursor row
     int repos_sel = 0;
     int repos_sel_ci = -1;
     int files_sel = 0;
@@ -693,6 +746,26 @@ class MainApplication : public pu::ui::Application {
     std::string upd_url;
     std::string upd_dl;
     std::string upd_tag;
+    int upd_xslot = -1; // queue-tab external item tracking this download (-1 = none)
+
+    // Tools update-manager install (same shape as the self-update above): a
+    // background download of a chosen emulator/app release, finalized in UmiTick.
+    BgTask umi;
+    std::atomic<bool> umi_ok{false};
+    std::atomic<bool> umi_cancel{false};
+    std::atomic<u64> umi_now{0};
+    std::atomic<u64> umi_total{0};
+    std::string umi_url;      // release asset download URL
+    std::string umi_dl;       // temp .part path
+    std::string umi_dest;     // final on-device .nro path
+    std::string umi_id;       // manifest id (backup folder)
+    std::string umi_name;     // display name (logs/queue item)
+    std::string umi_tag;      // version being installed
+    std::string umi_bakver;   // version being replaced (backup filename)
+    bool umi_fresh = false;   // true = fresh install, false = in-place update
+    bool umi_zip = false;     // asset is an archive: extract, then install the .nro inside
+    std::string umi_asset;    // release asset filename (its extension picks .nro vs zip)
+    int umi_xslot = -1;
 
     // Background update *check* (release-list fetch), so "Check for updates"
     // doesn't freeze the UI during retries. Shows the attempt number (1/3).
@@ -715,6 +788,29 @@ class MainApplication : public pu::ui::Application {
     bool update_installed = false; // new build staged this session; awaiting restart
     char bgchk_tag[64];
     char bgchk_url[1024];
+
+    // Background release check for the emulator/app update list (Screen::
+    // AppUpdates): a worker rebuilds appman_list, reads each installed build's
+    // version, and (for entries with a source) fetches the latest GitHub tag so
+    // every row shows a clear Update / Up-to-date badge instead of looking the
+    // same. The screen owns the UI (spinner + n/total) while it runs.
+    BgTask appchk;
+    std::atomic<bool> appchk_cancel{false};
+    std::atomic<bool> appchk_net{false};  // do the network release check this run?
+                                          // false = load versions only (open),
+                                          // true = "check all" (X on the list)
+    std::atomic<int> appchk_idx{0};   // network checks completed (progress)
+    std::atomic<int> appchk_total{0}; // network checks to run
+    std::vector<int8_t> appman_state; // per-entry APST_* (see AppChkThread)
+    std::vector<std::string> appman_ver;    // installed version per entry ("" none)
+    std::vector<std::string> appman_latest; // latest release tag per entry
+    std::vector<std::string> appman_url;    // cached release .nro/.zip url per entry
+    std::vector<std::string> appman_asset;  // cached asset hint per entry
+    // When each entry was last checked against GitHub, keyed by id (epoch secs).
+    // Persisted to UPDCHK_PATH so "checked N ago" survives leaving the screen and
+    // relaunching; loaded lazily on first use. See load/save_check_times.
+    std::map<std::string, uint64_t> appman_checked_at;
+    bool appman_checked_loaded = false;
 
     // Background network self-test (Diagnostics -> Network self-test): checks
     // the LAN address and reaches archive.org off the UI thread so a slow or
@@ -744,6 +840,28 @@ class MainApplication : public pu::ui::Application {
     std::atomic<int> ra_ok{0};
     std::atomic<int> ra_fail{0};
 
+    // Background DAT auto-download (Storage -> DAT files -> Refresh): fetches the
+    // Fresh1G1R McLean/no-intro listing once, then pulls the matching .dat for
+    // each configured console into DATS_DIR. Same progress/cancel handshake as
+    // the metadata refresh above.
+    BgTask dat;
+    std::atomic<bool> dat_cancel{false};
+    std::atomic<int> dat_idx{0};
+    std::atomic<int> dat_total{0};
+    std::atomic<int> dat_ok{0};
+    std::atomic<int> dat_fail{0};
+    std::atomic<bool> dat_listing_fail{false}; // couldn't fetch the repo listing
+    std::atomic<long> dat_listing_code{0}; // HTTP status of the failed listing GET
+    int dat_xslot = -1; // queue-tab external item tracking the DAT batch (-1 = none)
+
+    // Set when a Verify/Have-vs-Missing attempt found no DAT on the SD card but
+    // one is downloadable, and the user agreed to fetch it on the spot. DatSyncTick
+    // re-enters VerifyStart with these once that single-item sync lands, so
+    // "no DAT yet" resolves in one prompt instead of a dead end.
+    bool dat_sync_then_verify = false;
+    std::string dsv_folder, dsv_target, dsv_label;
+    bool dsv_force = false, dsv_goto_missing = false;
+
     // Background metadata (ia_fetch) load, so the file list doesn't freeze the
     // UI while a repo's metadata downloads. Shows an animated loading indicator.
     BgTask meta;
@@ -768,6 +886,16 @@ class MainApplication : public pu::ui::Application {
     // cache search above, so scanning a large ROM folder doesn't freeze the UI.
     BgTask isearch;
     std::atomic<bool> isearch_discard{false}; // B pressed: drop the scan result
+
+    // Background archive.org catalogue search (discover items to add as repos).
+    // Same threaded/cancellable model; the network request runs off the UI
+    // thread so the "Searching..." spinner animates instead of the app hanging.
+    BgTask arch;
+    std::atomic<bool> arch_discard{false};    // B pressed: drop the search result
+    std::string arch_query;                   // the query being searched
+    std::string arch_console;                 // console a picked item is added to
+    std::vector<ArchiveSearchItem> arch_hits; // results (worker writes, UI reads)
+    volatile int arch_count = 0;              // worker: hit count, or -1 on error
 
     // Background "move to parent folder" for one or more Installed files. Runs on
     // a worker so the progress overlay renders. Deliberately has no cancel: a
@@ -797,22 +925,143 @@ class MainApplication : public pu::ui::Application {
     // dl_sources.json to. No thread — it is polled once per frame and only
     // exists while the Import screen is open.
     HttpSrv imp_srv;
+    // Always-on read-only inventory server for the desktop companion. Distinct
+    // from imp_srv (its own port): it stays up while the pref is on and is polled
+    // every frame regardless of screen. inv_last_gen_ns throttles regeneration.
+    HttpSrv inv_srv;
+    bool inv_open = false;
+    uint64_t inv_last_gen_ns = 0;
+    // Set (to a tick) every time a push/pull request finishes on the inventory
+    // server, so the companion_active inventory rescan below never lands on the
+    // exact frame right after a completed request. WriteInventoryJson is a full
+    // recursive directory sweep -- cheap for one console, but easily long enough
+    // on a big library to miss a render frame -- and it runs on the very thread
+    // that also owns httpsrv_poll's accept(). A desktop push queue reconnects for
+    // its next file within milliseconds of the prior file's 200 OK, so without
+    // this a multi-file Wi-Fi push (each one resets inv_last_gen_ns to 0 to force
+    // a prompt regen) could have the rescan block accept() just long enough for
+    // the next file's freshly-accepted connection to get reset (os error 10054).
+    // See wifi-push-inventory-regen memory.
+    uint64_t inv_push_cd_tick = 0;
+    // Sleep/wake recovery for the always-on server. Sleeping drops Wi-Fi, which
+    // leaves inv_srv listening on a dead interface — "on" but unreachable — until
+    // the user toggles it. InvServerPoll watches the link (throttled by
+    // inv_link_ck_ns) and rebinds the socket on a down->up edge (inv_link_up
+    // tracks the last-seen state). See httpsrv_rebind.
+    bool inv_link_up = true;       // was the Wi-Fi link up at the last check?
+    uint64_t inv_link_ck_ns = 0;   // throttle the nifm poll (it is an IPC call)
+    // Resume-from-sleep detection. The link watcher above only rebinds on an
+    // observed down->up edge or a lease change, and neither happens on a short
+    // sleep that keeps the same DHCP lease: the app doesn't run while asleep, so
+    // on wake inv_link_up is still the pre-sleep "up" and the address matches, no
+    // edge fires, and the socket stays dead on the interface sleep tore down.
+    // InvServerPoll runs every frame, so a large jump in the RTC (which advances
+    // during sleep, unlike frame cadence) between two consecutive polls can only
+    // mean a suspend/resume; that forces one unconditional httpsrv_rebind. 0 =
+    // not yet seeded (first poll after start just records the clock).
+    int64_t inv_wake_ck_s = 0;     // RTC epoch seconds at the last poll
+    // Bumped (to a monotonic tick) each time the user picks "Push list to PC" on
+    // the Updates screen; published in inventory.json as "push_rev". A connected
+    // companion baselines this at connect and adopts the device's sources/list
+    // when it changes — the console can't open a socket back, so this is how a
+    // console-initiated push reaches the polling PC. 0 = never pushed.
+    uint64_t inv_push_rev = 0;
+    // Newline-separated absolute folders (console folders + inbox) the inventory
+    // server's pull/delete endpoints are confined to. Rebuilt by WriteInventoryJson
+    // alongside the JSON; inv_srv.roots borrows this, so it must outlive the server.
+    std::string inv_roots;
+    // A push over the live link (app utility, while connected) shows a transient
+    // "Receiving from PC" page. inv_was_receiving edge-detects the start so the
+    // page opens once per transfer; inv_recv_active is true while it is shown.
+    bool inv_was_receiving = false;
+    bool inv_recv_active = false;
+    int live_xslot = -1; // queue-tab external item tracking a live-link push (-1 = none)
+    Tab inv_recv_ret_tab = Tab::Installed; // where to return when the push ends
+    uint64_t live_recv_draw = 0;           // throttle for the progress subtitle
+    // Background archive-extract for a Wi-Fi push landed in a console folder
+    // (InvApplyFile's X-Dest-Folder branch). The move itself is synchronous
+    // (a same-filesystem rename, effectively instant), but extract_archive is
+    // not -- doing it inline on the render thread froze InvServerPoll's
+    // accept() for the whole unzip, so a second queued push connecting right
+    // after the first completed got reset instead of served. Same root cause
+    // and fix shape as the USB/MTP hang (see mtp/mtp.cpp's extract worker):
+    // move it off-thread and let the render loop carry on. One job at a
+    // time -- the desktop's push queue already serializes Wi-Fi pushes.
+    BgTask pxt;
+    std::string pxt_path;      // archive path, already moved into its console folder
+    std::string pxt_dir;       // that folder (extraction destination)
+    std::string pxt_name;      // display name, for the completion log line
+    std::string pxt_target;    // console key, for the completion log line
+    std::atomic<bool> pxt_cancel{false};
     bool imp_open = false;
+    bool usb_open = false; // true while the embedded-MTP connect screen is up
+    bool usb_from_settings = false; // opened from Settings › Install from PC (vs
+                                    // the Library console menu): a plain cancel
+                                    // returns to whichever one launched it
+    bool usb_seen_conn = false; // a host configured the link this session (so a
+                                // later drop means the cable was unplugged)
+    bool usb_active = false;    // a file is mid-transfer (updated each tick): while
+                                // set, L/R/tab navigation is blocked so an accidental
+                                // press can't abort the copy — only B cancels
+    bool usb_recvd = false;     // at least one file completed this session: only then
+                                // does exit route to the inbox sorter (a plain cancel
+                                // with nothing received returns to the invoking tab)
+    bool usb_bg = false;        // MTP responder up in the BACKGROUND because the
+                                // inventory server is on — so a USB companion is
+                                // recognized without opening the connect screen
+                                // (parity with the always-on Wi-Fi server)
+    uint64_t usb_bg_retry_ns = 0; // throttle background bring-up (fails while docked)
+    int usb_status = 0;         // last polled mtp::Status; drives CompanionConnected()
+    // Queue-tab external item per MTP transfer this session, keyed by the
+    // transfer's session-unique id (mtp::Xfer.id) so the mapping survives the
+    // progress ring dropping its oldest entry after 16 files — a positional
+    // index would misalign there. .second is the queue slot, or -1 once reaped.
+    // Reset on UsbMtpStop.
+    std::vector<std::pair<u32, int>> usb_xslots;
+    // Anti-ghost-duplicate guard: a yanked cable can make Windows' WPD/MTP
+    // transport silently retry an interrupted push a couple of times before it
+    // gives up, each retry a brand-new SendObjectInfo/SendObject pair the
+    // responder has no way to recognize as a repeat -- which otherwise spawns
+    // extra "failed" Queue cards on top of the one real "disconnected" card.
+    // Records the (name, console) and tick of the last mirrored transfer to
+    // end; UsbMtpTick swallows a same-name/console restart that starts right on
+    // its heels instead of giving it its own card. Cleared implicitly by age,
+    // not by session — a genuinely new push of the same filename, spaced out
+    // normally, still shows.
+    std::string usb_last_end_name;
+    std::string usb_last_end_console;
+    uint64_t    usb_last_end_ns = 0;
     int imp_grace = 0; // >0: a file is in hand, still serving the redirect
     bool imp_onboard = false; // import launched from the first-run welcome
     bool imp_nro = false; // receiver opened from Settings' update-over-Wi-Fi
     bool imp_rom = false; // receiver opened from the Installed tab for a ROM
+    bool imp_dat = false; // receiver opened from the Installed tab for a DAT
     bool imp_prog = false; // subtitle currently shows receive progress
     // A ROM receive can be launched two ways: from the Installed tab (return to
     // the console there when done) or from Settings' "Install from PC" console
     // picker (return to that picker). This says which, so ImportReturn lands the
     // user back where they started.
     bool imp_rom_from_settings = false;
+    // ROM receive streamed into the inbox instead of a fixed console folder:
+    // on completion, run the inbox sorter over the just-received file rather
+    // than saving it to one console. Set by RomRecvStart(..., autosort=true).
+    bool imp_autosort = false;
     // ROM receive: which console the receiver was opened for, so completion
     // returns to it, and the resolved folder/label for the on-screen text.
     int imp_rom_ci = -1;
     std::string imp_rom_dir;
     std::string imp_rom_label;
+    // Multi-file ROM receive: each file the sender pushes becomes a row in a
+    // live list (the same style as the USB screen). Completed rows persist
+    // while the next file arrives; the sorter/summary runs when the user backs
+    // out. The receiver stays open across files instead of closing after one.
+    enum RecvStatus { RECV_DONE = 0, RECV_FAILED, RECV_SKIPPED };
+    struct RecvEntry { std::string name; uint64_t size; int status; };
+    std::vector<RecvEntry> imp_recv;
+    uint64_t imp_recv_draw = 0; // last list rebuild tick (10 Hz throttle)
+    size_t imp_cur_total = 0;   // Content-Length of the file currently arriving
+    int imp_xslot = -1;         // Queue-tab item for the file currently arriving
+                                // over Wi-Fi ROM receive (-1 = none in flight)
 
   public:
     using Application::Application;
@@ -830,6 +1079,49 @@ class MainApplication : public pu::ui::Application {
     // default. If `permanent`, appends an "unrecoverable" warning line.
     bool ConfirmDanger(const std::string &title, const std::string &msg,
                        bool permanent = false);
+    // Slide-out right-side option menu, now the app-wide replacement for the
+    // centered Plutonium Dialog (it packs options into an unreadable grid past
+    // three). A confirms the highlighted row, B or + closes. Returns the chosen
+    // index, or -1 if cancelled. `danger` red-accents the panel for destructive
+    // confirmations; `body` renders wrapped subtitle/message text above the list.
+    // `from_left` slides the panel in from the left edge instead of the right;
+    // the app uses left for the global "Tools" menu and right for per-console
+    // "Options", so the two read as distinct at a glance.
+    // Optional in-place behavior for one SideMenu row. Selecting `row` runs
+    // `on_toggle` (which flips some state and returns the new on/off) WITHOUT
+    // sliding the panel out and back, that row shows an ON/OFF badge in
+    // green/red, and `footer()` renders a status line pinned to the panel's
+    // bottom (e.g. the live IP:port/code). Used by the Tools inventory toggle.
+    struct SideMenuLive {
+        s32 row = -1;
+        bool state = false;
+        std::function<bool()> on_toggle;     // returns the new state
+        std::function<std::string()> footer; // "" for no footer line
+        // Called once per frame while the panel is open. The main render loop is
+        // suspended by the modal, so a row backed by a live background service
+        // (e.g. the inventory server) uses this to keep polling it — otherwise a
+        // companion connecting while the panel is open would go unserved and the
+        // footer's connection state could never update.
+        std::function<void()> tick;
+    };
+    // Returned by SideMenu (in place of a row index) when switch_btn is pressed —
+    // lets the Tools and per-console Options panels flip to each other (X↔Y).
+    static const s32 SIDEMENU_SWITCH = -2;
+    s32 SideMenu(const std::string &title, const std::vector<std::string> &opts,
+                 s32 sel = 0, const std::string &body = "", bool danger = false,
+                 bool from_left = false, pu::sdl2::Texture icon = nullptr,
+                 SideMenuLive *live = nullptr, u64 switch_btn = 0);
+    // Every centered CreateShowDialog call site funnels through this override so
+    // the whole app shares the SideMenu look. It forwards to SideMenu and keeps
+    // the base contract: with use_last_opt_as_cancel, a B/cancel returns the
+    // last option's index rather than -1. icon/prepare_cb are ignored (the panel
+    // carries its own styling).
+    s32 CreateShowDialog(const std::string &title, const std::string &content,
+                         const std::vector<std::string> &opts,
+                         bool use_last_opt_as_cancel,
+                         pu::sdl2::TextureHandle::Ref icon = {},
+                         pu::ui::Application::DialogPrepareCallback prepare_cb =
+                             nullptr);
     // Warn (and confirm) before queueing a download whose bytes, plus those the
     // queue still has outstanding, would exceed free SD space. Returns true to
     // proceed. add_size 0 (size unknown) or an unreadable disk never blocks.
@@ -846,13 +1138,49 @@ class MainApplication : public pu::ui::Application {
     void GotoSettings();
     void GotoInstalled(const std::string &path);
     void InstSortDialog(); // Installed browser sort picker (shared by X / ◀)
+    // The in-folder file Options menu (X inside a console folder): Move to another
+    // console, Rename, Sort, Delete. Select (Y) and Delete (▶) stay on their own
+    // buttons; the menu just gathers every file action in one place.
+    void InstFileMenu();
+    void InstRenameSel(); // rename the file under the cursor (shared by menu)
+    void InstDeleteSel(); // delete the marked set, else the file under the cursor
+    void InstMoveDialog(); // pick a destination console, move the selection there
+    // Global, library-wide actions (view inbox, verify all, tidy, 1G1R, USB) as a
+    // left-sliding "Tools" panel. Shared by the Library and Browse tabs; nothing
+    // in here depends on the highlighted console. Returns true if the user pressed
+    // X to flip to the per-console Options panel (the caller reopens it).
+    bool ToolsMenu();
+    // The per-console Options panel (right slide) for the console at g_inst[i].
+    // Returns true if the user pressed Y to flip to the global Tools panel.
+    bool ConsoleOptionsMenu(s32 i);
+    // The install-folder info / change dialog for the console at g_inst[i]. Lives
+    // in the per-console Options menu (was its own Y button before Y became Tools).
+    void InstFolderDialog(s32 i);
+    // Read-only stats for the console at g_inst[i] (its Options "Console info"
+    // row): install folder, installed count/size, DAT status, active repos, tabs.
+    void ConsoleInfoDialog(s32 i);
+    // Library-wide storage summary (Tools "Storage overview"): SD usage, total
+    // installed games/size, DAT coverage, inbox backlog. Read-only.
+    void StorageOverview();
     void GotoInstSearch(const std::string &query);
     void ISearchTick();
     void FinishInstSearch();
     static void InstSearchThread(void *arg);
 
+    // archive.org catalogue search -> add a picked item as a repo (Add tab).
+    void AddRepoChoose(const std::string &console); // pick: search or paste id
+    void GotoArchSearch(const std::string &query, const std::string &console);
+    void ArchSearchTick();
+    void FinishArchSearch();
+    void ArchAddSel(); // A on a result: confirm + add it under arch_console
+    static void ArchSearchThread(void *arg);
+
     // Move selected Installed file(s) up into the parent folder.
     void MvStart(const std::vector<std::string> &names);
+    // Move the named file(s) from the current folder into `dest` (an absolute
+    // directory). Shared machinery for both "move up one folder" and the
+    // move-to-console action; MvStart is just this with dest = parent.
+    void MvStartTo(const std::vector<std::string> &names, const std::string &dest);
     void MvTick();   // poll progress / finish; called each frame while running
     void MvFinish(); // on the UI thread: toast, refresh, offer empty-folder delete
     static void MvThread(void *arg);
@@ -871,11 +1199,16 @@ class MainApplication : public pu::ui::Application {
     void GotoSources();
     void GotoStorage();
     void GotoInstallFolders();
+    void GotoInboxFiles(); // Storage sub-screen: view/select/delete Inbox files
+    void GotoBackups(); // Storage sub-screen: view/delete rollback backups
+    // Rows on Screen::Backups: full path + display label, one per stored build.
+    std::vector<std::pair<std::string, std::string>> backup_rows;
     void GotoAccount();
     void GotoUpdates();
+    void PushListToPc();          // console-initiated sources/list push (Updates)
+    bool CompanionConnected() const; // a companion polled inventory.json within 15s
     void GotoDiagnostics();
     void GotoAbout();
-    void GotoExtTuning();
     // Diagnostics / About actions.
     void StorageDetail();   // A on the SD-card status row: used/free breakdown
     void ExportBundle();    // concatenate the logs into one shareable file
@@ -895,6 +1228,8 @@ class MainApplication : public pu::ui::Application {
     void FinishSearch();
     static void SearchThread(void *arg);
     void GotoCache();
+    void GotoDataFiles(); // settings submenu: hosts DAT files + metadata cache
+    void GotoMetaCache(); // Data Files sub-screen: cache on/off, browse, refresh all
     void GotoTransfers();
     void GotoRecvConsole(); // Settings' "Install from PC" console picker
     void GotoViewLogs();
@@ -925,6 +1260,68 @@ class MainApplication : public pu::ui::Application {
     static void RaThread(void *arg);   // coordinator: fans out to RaWorker
     static void RaWorker(void *arg);   // one parallel refresh worker
 
+    // DAT files sub-screen (Storage): list what's in DATS_DIR and auto-download
+    // matching No-Intro DATs from the Fresh1G1R repo, one per console.
+    void GotoDats();
+    void GotoRegionOrder(); // Dats sub-screen: reorder the 1G1R region priority
+    void DatSyncStart();
+    void DatSyncTick(); // poll progress / finish; called each frame while running
+    static void DatSyncThread(void *arg);
+
+    // Desktop-companion inventory server (read-only, HTTPSRV_INV_PORT).
+    void WriteInventoryJson(); // regenerate INVENTORY_PATH from live app state
+    void InvServerStart();     // open the listener + write an initial inventory
+    void InvServerStop();      // close the listener
+    void InvServerPoll();      // per-frame: throttled regen, then serve a request
+    void InvApplyPush();       // apply a collection pushed to the inventory server
+    void InvApplyFile();       // file a game streamed to the inventory server (inbox)
+    static void PushExtractThread(void *arg); // off-thread unpack for the above
+    static bool PushExtractProgress(void *ud, const char *entry, int done,
+                                    uint64_t bytes_read); // its cancel hook
+    void PushExtractTick();    // per-frame: reap the extract worker when done
+    void InvApplyNro(char *body, size_t len); // stage an .nro pushed to the inv server
+    void InvApplyDat(char *body, size_t len); // file a DAT pushed to the inv server (no modal)
+    // overwrite an installed emulator's .nro in place (Emulators-tab update)
+    void InvApplyEmuNro(const std::string &app, const std::string &part);
+    void InvApplyEmuNroAt(const std::string &app, const std::string &dest,
+                          const std::string &part, bool fresh = false);
+    void LiveRecvBegin();      // a live-link push started: add a queue-tab item + jump
+    void LiveRecvTick(size_t now, size_t total); // push its progress into the queue item
+    void LiveRecvEnd(bool ok = true); // push finished: mark the queue item done/failed
+    void LiveRecvHide();       // (legacy) user left the page; the transfer keeps running
+    // Consolidated transfer plumbing: every non-download transfer (self-update,
+    // DAT sync, PC->Switch receive) registers a queue-tab item via BeginXfer and
+    // is driven from PollXfers, so all progress lands in one place (the Queue tab).
+    int BeginXfer(const std::string &name, const std::string &target,
+                  uint8_t xkind); // queue_ext_add + jump to the Queue tab
+    void PollXfers();          // per-frame: mirror progress + reap the app pulls
+
+    // ---- Tools: emulator / app update manager -----------------------------
+    // Reads the shared update_sources.json manifest, checks each entry against
+    // its GitHub release repo, and installs/updates/reverts on-device with a
+    // per-app backup (see updman.h). kind selects the Emulators / Apps section.
+    void GotoAppUpdates(uint8_t kind);   // the section list (own Settings screen)
+    static void AppChkThread(void *arg); // worker: scan installs + check releases
+    void AppChkTick();     // per-frame while checking: progress; build list on done
+    void AppUpdatesRender(); // build the list rows from the check results
+    void AppScanAll();     // X on the list: re-run with the network check on
+    void AppRecheckOne(size_t idx); // re-check just one entry (no full re-pull)
+    bool AppEntryMenu(size_t idx);       // one entry's actions; true if it changed
+    void AppMarkChecked(const std::string &id); // stamp+persist an entry's check time
+    std::string AppCheckedLabel(const std::string &id); // "checked 5m ago" / ""
+    void AppSetSource(const UpdSource &e); // swkbd-edit the entry's GitHub repo
+    void AppRevert(const UpdSource &e);  // roll back to a stored backup build
+    // Background install kicked off from the manager: download the release .nro,
+    // then (on the main thread, in UmiTick) validate, back up the current build,
+    // and swap it in. Mirrored into a Queue-tab item by PollXfers.
+    void UmiStart(const UpdSource &e, const std::string &url,
+                  const std::string &tag, const std::string &dest,
+                  const std::string &cur_ver, bool fresh,
+                  const std::string &asset);
+    static void UmiThread(void *arg);
+    static int UmiProgress(void *ud, u64 now, u64 total);
+    void UmiTick();                      // finalize once the download reports done
+
     // LAN collection import helpers.
     void ImportStart(bool onboarding = false);
     void ExportStart(); // mirror of import: serve this console's collection to a PC
@@ -932,17 +1329,38 @@ class MainApplication : public pu::ui::Application {
     // Receive a game into a console's folder. fromSettings marks the launch as
     // coming from the Settings "Install from PC" picker (vs the Installed tab),
     // so ImportReturn lands back at the picker rather than the Installed list.
-    void RomRecvStart(int consoleIndex, bool fromSettings = false);
+    void RomRecvStart(int consoleIndex, bool fromSettings = false,
+                      bool autosort = false);
+    // Receive a verification DAT from a PC over the same LAN receiver. The
+    // console is read from the DAT's own <header> (see DatApply) and it's saved
+    // as DATS_DIR/<target>.dat so a later Verify finds it automatically.
+    void DatRecvStart();
     void ImportReturn(); // where the import flow lands when it ends
     void ImportTick(); // serve one request per frame while the screen is open
     int ImportPoll();  // serve one request, logging what it did
     void ImportApply(); // consume the uploaded file, confirm, and write it
+    void RomRecvSaveOne(); // move one finished ROM into place, record the row
+    void RomRecvFinish();  // stop, then sort (auto-sort) or summarise + return
+    // Rebuild the receive list (USB-style rows): one per completed file, plus a
+    // live row for the file currently arriving when `receiving` is true.
+    void RenderRecvList(size_t now, size_t total, bool receiving);
     void NroApply(char *body, size_t len); // an .nro was pushed: stage it
+    void DatApply(char *body, size_t len); // a DAT was pushed: validate + save it
     // Staged-build epilogue shared by both update paths (GitHub download and a
     // LAN-pushed .nro): flip the update chips, then offer to relaunch in place.
     // True when the app is closing to restart — the caller must return at once.
     bool StagedRestartPrompt(const std::string &msg);
     void ImportStop();
+    // Embedded MTP (USB PC transfer). GotoUsbMtp brings USB device mode up and
+    // shows the connect screen; UsbMtpTick refreshes link state each frame;
+    // UsbMtpStop tears device mode down and leaves the screen.
+    void GotoUsbMtp(bool fromSettings = false);
+    bool UsbResponderStart(); // build console folders + mtp::Start (screen + bg)
+    void UsbMtpTick();
+    void UsbMtpStop();
+    void UsbMtpReturn(); // navigate out of the USB screen: sort a non-empty
+                         // inbox, else back to the launch origin (Settings or
+                         // Library)
     void RestoreBackup(); // swap the last import's backup back in
     void Welcome();       // first-run prompt while there are no collections
 
@@ -968,4 +1386,137 @@ class MainApplication : public pu::ui::Application {
                        const std::string &done_subtitle);
     void MetaTick();
     static void MetaThread(void *arg);
+
+    // DAT verification (Library tab): hash a console's files off the UI thread
+    // and classify each against a user-supplied No-Intro/Redump DAT. The worker
+    // both parses the DAT and runs the scan; the UI polls vfy_job's counters.
+    void VerifyStart(const std::string &folder, const std::string &target,
+                     const std::string &label, bool force = false,
+                     bool goto_missing = false);
+    void VerifyTick();      // poll progress / build results; called each frame
+    void VerifyResults();   // on the UI thread: list the classified files
+    void VerifyRenameSel(); // rename the selected verified-but-misnamed file
+    void VerifyRenameAll(); // rename every verified-but-misnamed file at once
+    void VerifyReacquireSel(); // A on a BAD row: search this console for a replacement
+    void VerifyMenu();      // Y: report / re-verify actions on the results screen
+    void VerifyExportReport(); // write a full text report (incl. DAT-missing games)
+    void VerifyExportFixdat(); // write a Logiqx fixdat of the missing DAT entries
+    std::vector<std::string> VerifyMissingList(); // DAT titles no file verified to
+    void VerifyMissingResults();  // browsable missing list; A hands off to search
+    static void VerifyThread(void *arg);
+
+    // Verify every console that has a DAT in one pass, then show a per-console
+    // summary; A on a row drills into that console's full results. Reuses the
+    // single-console engine (vfy_job/vfy_dat) as scratch, one console at a time.
+    void VerifyAllStart();
+    void VerifyAllTick();     // poll batch progress / build the summary each frame
+    void VerifyAllResults();  // on the UI thread: one row per console with tallies
+    static void VerifyAllThread(void *arg);
+
+    // Inbox sorter: identify each file staged in INBOX_DIR (idgame.h), file the
+    // confident ones into their console folder, and list the outcome so the user
+    // can hand-pick a console for anything ambiguous (A -> console picker).
+    // One staged file and where it ended up. Filed rows have been moved into a
+    // console folder; needs_pick rows are waiting for the user to choose one.
+    struct SortRow {
+        std::string name;   // file name as it sits in the inbox
+        std::string path;   // full inbox path (INBOX_DIR/name)
+        std::string target; // resolved/guessed console target ("" if unknown)
+        std::string label;  // display name for target (the console it went to)
+        std::string dest;   // where it was filed (or would be), for the row text
+        bool filed = false;     // already moved into a console folder
+        bool needs_pick = true; // still needs a console chosen by hand
+    };
+    void SortInboxStart();
+    void SortInboxResults();  // rebuild the results screen from sort_rows
+    // Move one staged file into `target`'s install folder. Returns false and
+    // leaves it in the inbox on a name clash or move failure. Updates the row.
+    bool SortFileRow(struct SortRow &r, const std::string &target);
+    void SortAssignPicked(const std::string &target); // picker chose for sort_pick_idx
+
+  private:
+    BgTask vfy;
+    Dat vfy_dat{};
+    VerifyJob vfy_job{};
+    std::vector<int> vfy_order; // results row -> vfy_job.items index (sorted view)
+    std::vector<std::string> vfy_missing; // DAT titles absent from the library
+    std::vector<int> vfy_missing_order; // filtered/displayed row -> vfy_missing index
+    std::string vfy_missing_filter; // Y-entered search text narrowing the list above
+    bool vfy_goto_missing = false; // jump straight to the missing list when done
+    // True when the missing list was opened straight from console Options
+    // (the per-file Verify results screen was never shown), so B on an
+    // uncleared filter should return to the Library tab instead of a results
+    // screen the user never saw. False when reached via the Verify screen's
+    // Y menu, where B correctly steps back to that per-file list.
+    bool vfy_missing_direct = false;
+    std::string vfy_folder;   // console folder scanned (for B-return context)
+    std::string vfy_target;   // console target/folder key, for a forced re-verify
+    std::string vfy_label;    // console display name, for the results title
+    std::string vfy_dat_path_str; // resolved DATS_DIR/<target>.dat, read by worker
+    std::atomic<bool> vfy_dat_ok{false}; // worker parsed the DAT successfully
+
+    // Verify-all-consoles state. The worker verifies each row's folder in turn
+    // (reusing vfy_job/vfy_dat), writing tallies back into the row it's on.
+    struct VfyAllRow {
+        std::string target, label, folder;
+        int n_ok = 0, n_bad = 0, n_unknown = 0, n_err = 0, n_misnamed = 0;
+        int n_missing = 0;
+        bool completed = false; // finished without cancel and with a readable DAT
+    };
+    std::vector<VfyAllRow> vfy_all;      // one row per console with a DAT
+    volatile int vfy_all_idx = 0;        // row being verified (worker writes)
+    volatile bool vfy_all_cancel = false; // stop starting further consoles
+
+    // Inbox sorter state. One row per file found in INBOX_DIR (see SortRow).
+    std::vector<SortRow> sort_rows;
+    int sort_pick_idx = -1; // row awaiting a console pick (index into sort_rows)
+
+    // "Tidy library" scan: one issue per file worth fixing (report-only until
+    // the user confirms each). kind 0 = an exact (hash-identical) duplicate, in
+    // which case `target` holds the kept copy's path; kind 1 = misfiled, and
+    // `target` is the console folder id it should move to; kind 2 = a redundant
+    // 1G1R clone, with `target` holding the kept copy's name.
+    struct TidyIssue {
+        std::string path, name, console, target;
+        int kind = 0;
+    };
+    std::vector<TidyIssue> tidy_issues;
+    BgTask tidy;
+    volatile bool tidy_cancel = false; // matches hash_file's volatile-bool cancel
+    volatile int tidy_files_done = 0;
+    volatile int tidy_files_total = 0;
+    bool tidy_onegr = false; // the last scan was 1G1R (affects result labels)
+    // When set, the tidy scan is limited to one console: tidy_only is its target
+    // key (used to tag files + label the results) and tidy_only_path its resolved
+    // install folder. Empty = whole-library scan.
+    std::string tidy_only, tidy_only_path;
+    void TidyStart(const std::string &only = "", const std::string &only_path = "");
+    void TidyTick();
+    void TidyResults();
+    void TidyActSel(); // A on an issue: confirm + perform the single fix
+    // 1G1R clone reduction: reuses the tidy results screen + confirm-each fix,
+    // but the scan groups No-Intro-named files by title and flags all but the
+    // most-preferred regional/revision copy in each group.
+    void OneGRStart();
+    static void OneGRThread(void *arg);
+    static void TidyThread(void *arg);
+
+    // "Largest files" scan: the whole library's biggest files, sorted
+    // descending and capped — Storage's direct answer to "what do I delete to
+    // free space", distinct from Tidy's problem-only view. Reuses tidy_gather's
+    // walk (defined alongside TidyThread) but does no hashing/classification,
+    // so there's no meaningful per-file progress to report.
+    struct LargeFile {
+        std::string path, name, console;
+        uint64_t size = 0;
+    };
+    std::vector<LargeFile> large_files;
+    BgTask lgf;
+    volatile bool lgf_cancel = false;
+    void LargeFilesStart();
+    static void LargeFilesThread(void *arg);
+    void LargeFilesTick();
+    void GotoLargestFiles();
+    void LargeFileOpenSel();   // A: jump to the file's console folder in the Library
+    void LargeFileDeleteSel(); // X: delete it directly (danger confirm)
 };
