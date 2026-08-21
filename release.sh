@@ -28,6 +28,19 @@ nro="HaulNX.nro"
 editor="$(ls -1 tools/app-utility/appUtility-*.html 2>/dev/null | sort -V | tail -n 1)"
 [ -n "$editor" ] || { echo "No tools/app-utility/appUtility-*.html found."; exit 1; }
 
+# The desktop companion exe ships alongside the NRO whenever a build-public.ps1
+# build is on disk. desktop/ is untracked (git has no way to know if it's
+# stale), so this is a soft check: include it if present, just warn if not -
+# don't block an NRO-only release over a desktop exe nobody rebuilt.
+exe="desktop/HaulNX-AppUtility.exe"
+if [ -f "$exe" ]; then
+  assets="$nro $editor $exe"
+else
+  echo "WARN: $exe not found - releasing without the desktop companion exe."
+  echo "      (build it with desktop/build-public.ps1 first if this release should include it)"
+  assets="$nro $editor"
+fi
+
 v="$(cat VERSION)"
 repo="$(grep -oE '#define[[:space:]]+UPDATE_REPO[[:space:]]+"[^"]+"' include/config.h \
         | sed -E 's/.*"([^"]+)".*/\1/')"
@@ -125,7 +138,7 @@ echo "Releasing v$v to $repo with notes:"
 echo "----------------------------------------"
 cat "$notesfile"
 echo "----------------------------------------"
-echo "Assets: $nro, $editor"
-gh release create "$v" "$nro" "$editor" -R "$repo" -t "HaulNX $v" -F "$notesfile" \
+echo "Assets: $assets"
+gh release create "$v" $assets -R "$repo" -t "HaulNX $v" -F "$notesfile" \
   --target "$local_head" --latest
 echo "Done. Users can now update in-app via Settings (L) -> R."
