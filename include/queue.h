@@ -49,6 +49,12 @@ typedef struct {
     volatile uint64_t now;
     volatile uint64_t total;
     volatile uint64_t speed;   /* bytes/sec, while downloading */
+    /* True while Q_DOWNLOADING but no bytes are currently moving: a failed
+     * attempt is about to be retried (backoff sleep or an immediate
+     * credentialed re-attempt). Lets the UI show "reconnecting" instead of a
+     * blank speed field during a stall the worker is actively recovering
+     * from. Cleared the moment a fresh byte actually arrives. In-memory only. */
+    volatile bool stalled;
     volatile int ex_files;     /* files extracted so far, while extracting */
     volatile bool cancel;
     volatile bool pause; /* ask the worker to preempt this download (keep .part) */
@@ -97,6 +103,21 @@ extern void (*queue_post_import)(QueueItem *it, const char *path, bool is_dir);
 /* Enable/disable the post-import hook at runtime (user preference). When off,
  * queue_post_import is not invoked even if a module registered it. Default on. */
 void queue_set_post_import_enabled(bool on);
+
+/* Lightweight "an item just landed" notification -- separate from
+ * queue_post_import above on purpose. That slot is reserved for a single
+ * heavy transform add-on module (at most one can be registered at a time);
+ * this one is a plain, always-available notification so an unrelated
+ * subsystem (box art auto-fetch) can react to new arrivals without any risk
+ * of the two stepping on each other. Called from the same two
+ * successful-landing points, after queue_post_import if that ran, with
+ * `name` = it->name (the display/query title) and the same path/is_dir shape.
+ * Must return quickly and must not block: it runs on the download or extract
+ * worker thread, immediately before the item is marked Q_DONE, so any real
+ * work here should just hand off to the caller's own background thread.
+ * NULL by default; the core carries no dependency on it. */
+extern void (*queue_on_landed)(const char *name, const char *path,
+                               bool is_dir);
 
 /* Start/stop the background worker threads. Call after net_init / before net_exit.
  * roms_root is the base ROM directory (e.g. "sdmc:/roms"); the pointer must
@@ -240,7 +261,8 @@ bool queue_move(int slot, int dir);
  * active download itself can't be moved. Returns true if the order changed. */
 bool queue_move_end(int slot, bool to_bottom);
 
-/* If a download/verify/extract is currently in progress, fill the out params
+/* If a download/verify/extract is currently in progress -- including an
+ * external item (MTP/Wi-Fi receive, update install) -- fill the out params
  * with its summary and return true; otherwise return false. `index` gets the
  * 1-based position of the active item among all queued items (by FIFO order) and
  * `count` the total number of items in the queue. Any out pointer may be NULL. */

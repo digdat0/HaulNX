@@ -69,3 +69,42 @@ static inline pu::sdl2::Texture BakeVGradient(const s32 h,
     SDL_SetRenderTarget(rd, prev);
     return t;
 }
+
+// Cheap "faux blur" for a hero backdrop: render `src` down into a small
+// linear-filtered target, stretched to fill it (ignoring aspect ratio --
+// this is meant to sit behind a dark scrim, so a little distortion never
+// shows). The caller then blits the small result stretched back up to full
+// size; because the target's scale mode is linear, that huge upscale reads
+// as a soft blur rather than blocky pixelation, with no real gaussian pass.
+// One-shot bake (e.g. per panel open), not meant to be called per frame --
+// caller owns and frees the returned texture.
+static inline pu::sdl2::Texture BakeBlurredFill(pu::sdl2::Texture src,
+                                                 const s32 out_w,
+                                                 const s32 out_h,
+                                                 const s32 downsample = 10) {
+    if (!src || out_w <= 0 || out_h <= 0) {
+        return nullptr;
+    }
+    auto rd = pu::ui::render::GetMainRenderer();
+    if (!rd) {
+        return nullptr;
+    }
+    s32 dw = out_w / downsample, dh = out_h / downsample;
+    if (dw < 4) dw = 4;
+    if (dh < 4) dh = 4;
+    SDL_Texture *t = SDL_CreateTexture(rd, SDL_PIXELFORMAT_RGBA8888,
+                                       SDL_TEXTUREACCESS_TARGET, dw, dh);
+    if (!t) {
+        return nullptr;
+    }
+    SDL_SetTextureBlendMode(t, SDL_BLENDMODE_BLEND);
+    SDL_SetTextureScaleMode(t, SDL_ScaleModeLinear);
+    SDL_Texture *prev = SDL_GetRenderTarget(rd);
+    SDL_SetRenderTarget(rd, t);
+    SDL_SetRenderDrawColor(rd, 0, 0, 0, 0);
+    SDL_RenderClear(rd);
+    SDL_Rect dst{0, 0, dw, dh};
+    SDL_RenderCopy(rd, src, nullptr, &dst);
+    SDL_SetRenderTarget(rd, prev);
+    return t;
+}

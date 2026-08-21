@@ -55,6 +55,11 @@ void vfystatus_put(VfyStatusCache *c, const char *path, uint64_t size,
 /* Write the cache back to `path`, but only if it changed since load. */
 void vfystatus_save(VfyStatusCache *c, const char *path);
 
+/* Same shape and rationale as hashcache_prune (hashcache.h): drop every entry
+ * whose file no longer exists on disk. Marks the cache dirty when anything
+ * was removed. Returns the number of entries dropped. */
+int vfystatus_prune(VfyStatusCache *c);
+
 void vfystatus_free(VfyStatusCache *c);
 
 #ifdef __cplusplus

@@ -25,6 +25,10 @@ typedef struct {
     int count;
     int cap;
     char system[128]; /* <header><name>, the system this DAT describes */
+    /* Indices into roms, sorted by roms[i].name (case-insensitive) once at
+     * load time. Lets dat_lookup's "named like a known dump" fallback
+     * binary-search instead of scanning every entry -- see dat.c. */
+    int *by_name;
 } Dat;
 
 /* Outcome of classifying one library file against a loaded DAT. */

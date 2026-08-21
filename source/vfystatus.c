@@ -16,6 +16,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 
 static bool vc_reserve(VfyStatusCache *c, int need) {
     if (need <= c->cap) {
@@ -145,6 +146,32 @@ void vfystatus_save(VfyStatusCache *c, const char *path) {
     }
     fclose(f);
     c->dirty = false;
+}
+
+int vfystatus_prune(VfyStatusCache *c) {
+    /* See hashcache_prune (hashcache.c) for why this compacts in place rather
+     * than rebuilding, and why it's safe to leave un-resorted. */
+    int w = 0, new_sorted = 0;
+    for (int i = 0; i < c->count; i++) {
+        struct stat st;
+        if (stat(c->e[i].path, &st) != 0) {
+            continue;
+        }
+        if (w != i) {
+            c->e[w] = c->e[i];
+        }
+        w++;
+        if (i < c->sorted) {
+            new_sorted = w;
+        }
+    }
+    int removed = c->count - w;
+    if (removed > 0) {
+        c->count = w;
+        c->sorted = new_sorted;
+        c->dirty = true;
+    }
+    return removed;
 }
 
 void vfystatus_free(VfyStatusCache *c) {

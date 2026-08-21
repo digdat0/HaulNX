@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
+#include <time.h>
 
 #define USER_AGENT "HaulNX/1.0 (libnx)"
 
@@ -56,12 +57,31 @@ void net_set_github_token(const char *tok) {
     }
 }
 
+/* Optional SteamGridDB API key, attached as a Bearer header on
+ * www.steamgriddb.com GETs only (the box art search/grid lookups; the CDN
+ * image itself needs no key, so http_download never touches this). Empty =
+ * box art fetches are simply skipped by the caller. */
+static char g_steamgriddb_key[128];
+
+void net_set_steamgriddb_key(const char *key) {
+    if (key) {
+        snprintf(g_steamgriddb_key, sizeof(g_steamgriddb_key), "%s", key);
+    } else {
+        g_steamgriddb_key[0] = '\0';
+    }
+}
+
 /* Append a line to the debug log so failures are diagnosable on-device. This is
  * the busiest writer in the app (two lines per HTTP request, from several worker
  * threads), so the size check is sampled rather than run every call — a stat per
  * 64 lines is nothing, one per line would contend with the downloads for the SD
- * card. Racy across threads by design: a missed sample only delays a rotation. */
-static void net_log(const char *fmt, ...) {
+ * card. Racy across threads by design: a missed sample only delays a rotation.
+ *
+ * Each line gets a HH:MM:SS prefix (seconds precision, unlike log_download's
+ * per-minute history timestamp in queue.c) — without it, two DL lines for the
+ * same item are indistinguishable from "instant" and "took 20 seconds", which
+ * is exactly the gap a stall/retry investigation needs to see. */
+static void net_log_v(const char *fmt, va_list ap) {
     static unsigned tick = 0;
     if ((tick++ & 63u) == 0) {
         fs_log_rotate(LOG_PATH, LOG_ROTATE_DEBUG);
@@ -71,12 +91,33 @@ static void net_log(const char *fmt, ...) {
     if (!f) {
         return;
     }
-    va_list ap;
-    va_start(ap, fmt);
+    char ts[16] = "";
+    time_t t = time(NULL);
+    struct tm tmv;
+    struct tm *tm = localtime_r(&t, &tmv);
+    if (tm) {
+        strftime(ts, sizeof(ts), "%H:%M:%S", tm);
+    }
+    fprintf(f, "%s  ", ts);
     vfprintf(f, fmt, ap);
-    va_end(ap);
     fputc('\n', f);
     fclose(f);
+}
+
+static void net_log(const char *fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    net_log_v(fmt, ap);
+    va_end(ap);
+}
+
+/* Public wrapper (see net.h) so a caller outside this file -- queue.c marking
+ * a QUEUED -> DOWNLOADING transition -- can land a line in the same trace. */
+void net_log_event(const char *fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    net_log_v(fmt, ap);
+    va_end(ap);
 }
 
 bool net_init(void) {
@@ -270,6 +311,13 @@ static char *http_get_impl(CURL *c, const char *url, long *http_code,
         snprintf(auth, sizeof(auth), "Authorization: Bearer %s", g_github_token);
         hdrs = curl_slist_append(hdrs, auth);
         curl_easy_setopt(c, CURLOPT_HTTPHEADER, hdrs);
+    } else if (g_steamgriddb_key[0] &&
+              strncasecmp(url, "https://www.steamgriddb.com/", 28) == 0) {
+        char auth[160];
+        snprintf(auth, sizeof(auth), "Authorization: Bearer %s",
+                g_steamgriddb_key);
+        hdrs = curl_slist_append(hdrs, auth);
+        curl_easy_setopt(c, CURLOPT_HTTPHEADER, hdrs);
     }
     apply_tls(c);
 
@@ -363,6 +411,52 @@ static int speed_xfer(void *ud, curl_off_t dltotal, curl_off_t dlnow,
         p->ul_bps = bps;
     }
     return p->cancel ? 1 : 0; /* non-zero aborts the transfer */
+}
+
+/* Progress tick for net_selftest: no bytes to track, just a chance to notice
+ * the UI asked to cancel (same non-zero-aborts convention as speed_xfer). */
+static int selftest_xfer(void *ud, curl_off_t dltotal, curl_off_t dlnow,
+                         curl_off_t ultotal, curl_off_t ulnow) {
+    (void)dltotal;
+    (void)dlnow;
+    (void)ultotal;
+    (void)ulnow;
+    volatile int *cancel = (volatile int *)ud;
+    return (cancel && *cancel) ? 1 : 0;
+}
+
+/* Network self-test's reachability check: a small GET on its OWN curl handle,
+ * not the shared http_get() one. The shared handle is serialized behind
+ * g_get_mtx, so if a metadata refresh or update check is already holding it,
+ * a self-test sharing that handle would sit blocked with no way to cancel and
+ * no visible reason why — indistinguishable from a hung network to the user.
+ * Its own handle sidesteps that contention entirely, and the progress
+ * callback gives the UI a real way to abort via *cancel (UI sets 1, same
+ * pattern as SpeedProg.cancel). */
+bool net_selftest(const char *url, volatile int *cancel) {
+    CURL *c = curl_easy_init();
+    if (!c) {
+        return false;
+    }
+    curl_easy_setopt(c, CURLOPT_URL, url);
+    curl_easy_setopt(c, CURLOPT_FOLLOWLOCATION, 1L);
+    pin_protocols(c);
+    curl_easy_setopt(c, CURLOPT_USERAGENT, USER_AGENT);
+    curl_easy_setopt(c, CURLOPT_WRITEFUNCTION, null_write);
+    curl_easy_setopt(c, CURLOPT_WRITEDATA, NULL);
+    curl_easy_setopt(c, CURLOPT_NOPROGRESS, 0L);
+    curl_easy_setopt(c, CURLOPT_XFERINFOFUNCTION, selftest_xfer);
+    curl_easy_setopt(c, CURLOPT_XFERINFODATA, cancel);
+    /* Short caps: this only needs to prove a request round-trips, so it
+     * shouldn't sit for anywhere near as long as a real fetch would. */
+    curl_easy_setopt(c, CURLOPT_TIMEOUT, 15L);
+    curl_easy_setopt(c, CURLOPT_CONNECTTIMEOUT, 10L);
+    apply_tls(c);
+    CURLcode rc = curl_easy_perform(c);
+    long code = 0;
+    curl_easy_getinfo(c, CURLINFO_RESPONSE_CODE, &code);
+    curl_easy_cleanup(c);
+    return rc == CURLE_OK && code >= 200 && code < 400;
 }
 
 /* Cloudflare's speed-test sink: __down returns exactly N bytes of filler and
@@ -517,10 +611,36 @@ struct dl_ctx {
     net_rate_cb rate_cb;  /* live rate-cap provider (bytes/sec, 0 = unlimited) */
     void *rate_ud;
     uint64_t last_cap;    /* last cap applied, so we only setopt on a change */
+    long resp_code;       /* status of the response whose headers are arriving */
+    bool has_cred;        /* an archive.org credential is attached this call */
+    /* Once a response's status line reads >= 400, file_write diverts that hop's
+     * body here instead of the destination file -- disk never sees an error
+     * page, and we still get a peek at what the server actually said behind a
+     * bare "http=500" (with FAILONERROR the body was simply discarded, so a
+     * repeated 500 from archive.org was never distinguishable from any other
+     * reason for one). Reset on every new status line, so a redirect's 3xx
+     * doesn't leak into the next hop's capture. */
+    bool err_capture;
+    char err_body[161];
+    size_t err_len;
 };
 
 static size_t file_write(void *ptr, size_t size, size_t nmemb, void *ud) {
     struct dl_ctx *d = (struct dl_ctx *)ud;
+    size_t len = size * nmemb;
+    if (d->err_capture) {
+        /* Swallow the error body instead of writing it to the .part file, but
+         * tell curl every byte was "handled" -- returning short here would
+         * itself abort the transfer with a write error. */
+        size_t room = sizeof(d->err_body) - 1 - d->err_len;
+        size_t take = len < room ? len : room;
+        if (take > 0) {
+            memcpy(d->err_body + d->err_len, ptr, take);
+            d->err_len += take;
+            d->err_body[d->err_len] = '\0';
+        }
+        return len;
+    }
     /* curl expects the number of BYTES handled; fwrite returns item count. */
     return fwrite(ptr, size, nmemb, d->fp) * size;
 }
@@ -530,6 +650,13 @@ static int xfer_info(void *ud, curl_off_t dltotal, curl_off_t dlnow,
     (void)ultotal;
     (void)ulnow;
     struct dl_ctx *d = (struct dl_ctx *)ud;
+    /* An "error" response that keeps streaming well past what any real error
+     * page would hold (a misbehaving proxy, say) shouldn't be pulled down in
+     * full just to be discarded -- cut it off once captured is clearly all
+     * we're going to get. */
+    if (d->err_capture && dlnow > 65536) {
+        return 1;
+    }
     /* Track a live download-rate cap. curl reads MAX_RECV_SPEED_LARGE on the fly,
      * and setopt on a handle from inside its own progress callback is allowed, so
      * re-applying here lets the cap follow a settings change or a change in how
@@ -580,35 +707,42 @@ static bool redirect_ok(const char *loc) {
     return strncasecmp(loc, "https://", 8) == 0 && net_is_archive_org_url(loc);
 }
 
-struct auth_guard {
-    long code; /* status of the response whose headers are arriving */
-};
-
 /*
- * Keep the archive.org credential from riding a redirect off archive.org.
+ * Two jobs for one header callback, run on every download regardless of
+ * whether a credential is attached:
  *
- * curl is told to carry the Authorization header across hosts
- * (CURLOPT_UNRESTRICTED_AUTH) because archive.org's /download/ URL redirects to
- * a data node (ia######.us.archive.org) and, without it, the node sees an
- * unauthenticated request and 401s a restricted item. curl has no host allowlist
- * to bound that trust, so we read the Location of each 3xx as it arrives:
- * returning a short count aborts the transfer *before* curl issues the
- * redirected request, so a redirect off archive.org fails the download rather
- * than handing the S3 secret to whoever it points at.
+ * 1. Keep the archive.org credential from riding a redirect off archive.org.
+ *    curl is told to carry the Authorization header across hosts
+ *    (CURLOPT_UNRESTRICTED_AUTH) because archive.org's /download/ URL redirects
+ *    to a data node (ia######.us.archive.org) and, without it, the node sees an
+ *    unauthenticated request and 401s a restricted item. curl has no host
+ *    allowlist to bound that trust, so we read the Location of each 3xx as it
+ *    arrives: returning a short count aborts the transfer *before* curl issues
+ *    the redirected request, so a redirect off archive.org fails the download
+ *    rather than handing the S3 secret to whoever it points at.
+ * 2. Flag when a hop's status is >= 400 so file_write knows to capture that
+ *    hop's body for diagnostics instead of writing it to the .part file (see
+ *    dl_ctx::err_capture).
  */
-static size_t auth_hdr_check(char *buf, size_t size, size_t nitems, void *ud) {
-    struct auth_guard *g = (struct auth_guard *)ud;
+static size_t dl_header(char *buf, size_t size, size_t nitems, void *ud) {
+    struct dl_ctx *d = (struct dl_ctx *)ud;
     size_t len = size * nitems;
 
     if (len >= 5 && strncasecmp(buf, "HTTP/", 5) == 0) {
         /* Status line: a new response starts here (curl replays this callback
-         * for every hop, so the code must be re-read each time). */
+         * for every hop, so state must be re-read/reset each time). */
         const char *sp = memchr(buf, ' ', len);
-        g->code = sp ? strtol(sp + 1, NULL, 10) : 0;
+        d->resp_code = sp ? strtol(sp + 1, NULL, 10) : 0;
+        d->err_capture = (d->resp_code >= 400);
+        d->err_len = 0;
+        d->err_body[0] = '\0';
         return len;
     }
-    if (g->code != 301 && g->code != 302 && g->code != 303 &&
-        g->code != 307 && g->code != 308) {
+    if (!d->has_cred) {
+        return len;
+    }
+    if (d->resp_code != 301 && d->resp_code != 302 && d->resp_code != 303 &&
+        d->resp_code != 307 && d->resp_code != 308) {
         return len;
     }
     static const char key[] = "location:";
@@ -646,7 +780,10 @@ bool http_download(const char *url, const char *dest_path,
                    net_progress_cb cb, void *userdata,
                    net_rate_cb rate_cb, void *rate_ud,
                    uint64_t resume_from,
-                   long *http_code) {
+                   long *http_code, bool *transport_err) {
+    if (transport_err) {
+        *transport_err = false;
+    }
     /* Append when resuming so the existing partial file is preserved. */
     FILE *fp = fopen(dest_path, resume_from > 0 ? "ab" : "wb");
     if (!fp) {
@@ -676,6 +813,11 @@ bool http_download(const char *url, const char *dest_path,
     d.rate_cb = rate_cb;
     d.rate_ud = rate_ud;
     d.last_cap = 0;
+    d.resp_code = 0;
+    d.has_cred = false;
+    d.err_capture = false;
+    d.err_len = 0;
+    d.err_body[0] = '\0';
 
     /* A credential goes to archive.org over TLS or it does not go at all. The
      * caller already gates this, but the rule is the whole reason the header
@@ -689,7 +831,6 @@ bool http_download(const char *url, const char *dest_path,
             net_log("SEC credential withheld, not an archive.org https URL");
         }
     }
-    struct auth_guard guard = {0};
 
     curl_easy_setopt(c, CURLOPT_URL, url);
     curl_easy_setopt(c, CURLOPT_FOLLOWLOCATION, 1L);
@@ -705,7 +846,12 @@ bool http_download(const char *url, const char *dest_path,
      * mid-download; otherwise a dead connection hangs the worker forever. */
     curl_easy_setopt(c, CURLOPT_LOW_SPEED_LIMIT, 30L);
     curl_easy_setopt(c, CURLOPT_LOW_SPEED_TIME, 30L);
-    curl_easy_setopt(c, CURLOPT_FAILONERROR, 1L); /* treat 4xx/5xx as errors */
+    /* No CURLOPT_FAILONERROR: it suppresses the response body on a 4xx/5xx,
+     * which meant a failing download could only ever be logged as a bare
+     * "http=500" with no idea what the server actually said. Success/failure
+     * is decided explicitly below from `code` instead, and file_write/dl_header
+     * divert an error hop's body into d.err_body for the log rather than
+     * letting it reach the .part file. */
     /* Seed the rate cap before the first byte so a limit is honoured from the
      * start; xfer_info keeps it current as the setting / active count change. */
     if (rate_cb) {
@@ -718,20 +864,23 @@ bool http_download(const char *url, const char *dest_path,
                          (curl_off_t)resume_from);
     }
     if (hdrs) {
+        d.has_cred = true;
         curl_easy_setopt(c, CURLOPT_HTTPHEADER, hdrs);
         /* archive.org's /download/ URL redirects to a data node
          * (ia######.us.archive.org); by default curl drops a custom
          * Authorization header across that host change, so the node sees an
          * unauthenticated request and 401s a restricted item. Keep the header
          * across the redirect (curl's --location-trusted) — and then bound that
-         * trust ourselves, since curl has no host allowlist: auth_hdr_check
-         * vets every Location before it is followed, and every hop must be TLS
-         * so the header can't be downgraded onto plain http. */
+         * trust ourselves, since curl has no host allowlist: dl_header vets
+         * every Location before it is followed, and every hop must be TLS so
+         * the header can't be downgraded onto plain http. */
         curl_easy_setopt(c, CURLOPT_UNRESTRICTED_AUTH, 1L);
         curl_easy_setopt(c, CURLOPT_REDIR_PROTOCOLS, CURLPROTO_HTTPS);
-        curl_easy_setopt(c, CURLOPT_HEADERFUNCTION, auth_hdr_check);
-        curl_easy_setopt(c, CURLOPT_HEADERDATA, &guard);
     }
+    /* Always installed (not just when a credential is attached) so a plain
+     * unauthenticated failure gets the same err_body capture. */
+    curl_easy_setopt(c, CURLOPT_HEADERFUNCTION, dl_header);
+    curl_easy_setopt(c, CURLOPT_HEADERDATA, &d);
     apply_tls(c);
 
     CURLcode rc = curl_easy_perform(c);
@@ -752,18 +901,51 @@ bool http_download(const char *url, const char *dest_path,
     bool flush_ok = (fclose(fp) == 0);
     free(iobuf); /* only after fclose flushes through it */
 
-    net_log("DL  %s (resume=%llu) -> curl=%d(%s) http=%ld%s", url,
+    /* Squash the captured error body to one printable line for the log: an
+     * HTML error page's newlines/tags would otherwise wrap the trace across
+     * several lines and make it hard to grep. */
+    char snip[161] = "";
+    if (d.err_len > 0) {
+        size_t n = d.err_len < sizeof(snip) - 1 ? d.err_len : sizeof(snip) - 1;
+        for (size_t i = 0; i < n; i++) {
+            unsigned char ch = (unsigned char)d.err_body[i];
+            snip[i] = (ch >= 0x20 && ch < 0x7f) ? (char)ch : ' ';
+        }
+        snip[n] = '\0';
+    }
+
+    net_log("DL  %s (resume=%llu) -> curl=%d(%s) http=%ld%s%s%s", url,
             (unsigned long long)resume_from, (int)rc, curl_easy_strerror(rc),
-            code, flush_ok ? "" : " FLUSH FAILED");
+            code, flush_ok ? "" : " FLUSH FAILED",
+            snip[0] ? " body=" : "", snip);
 
     if (!flush_ok) {
+        if (transport_err) {
+            *transport_err = true; /* a full/ejected card is as transient as a drop */
+        }
         return false; /* the .part is short; the caller resumes from it */
     }
 
     /* 416 on a resumed transfer means the server has nothing past our offset:
-     * the partial file already holds the whole thing. Treat as success. */
-    if (rc == CURLE_HTTP_RETURNED_ERROR && code == 416 && resume_from > 0) {
+     * the partial file already holds everything it has. Treat as success. */
+    if (code == 416 && resume_from > 0) {
         return true;
     }
-    return rc == CURLE_OK;
+    /* FAILONERROR is gone, so curl reports CURLE_OK for a clean 4xx/5xx
+     * response too -- success now means "no transport error AND a 2xx". */
+    if (rc == CURLE_OK && code >= 200 && code < 300) {
+        return true;
+    }
+    /* rc != CURLE_OK means curl itself gave up -- a stall (LOW_SPEED_TIME), a
+     * reset connection, a dropped Wi-Fi link, etc. -- which can and does happen
+     * *after* a 2xx status line already arrived (the transfer was streaming,
+     * then died). CURLINFO_RESPONSE_CODE still reads whatever that last status
+     * line said, so `code` alone can't be trusted to mean "the server actually
+     * finished responding". Tell the caller this was a transport failure, not
+     * a completed HTTP exchange, so a retry policy keyed on `code` doesn't
+     * mistake a live-but-broken connection for a clean-but-unwanted response. */
+    if (transport_err && rc != CURLE_OK) {
+        *transport_err = true;
+    }
+    return false;
 }

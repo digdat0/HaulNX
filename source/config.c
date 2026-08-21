@@ -411,6 +411,9 @@ static bool load_grouped(const char *js, jsmntok_t *tok, SourcesConfig *cfg) {
             /* Absent "folder" leaves it empty — the default <roms_root>/<target>. */
             json_copy(js, tok, json_obj_get(js, tok, child, "folder"),
                       g->folder, sizeof(g->folder));
+            /* Absent "use_boxart" defaults to false — the built-in icon. */
+            int ubtok = json_obj_get(js, tok, child, "use_boxart");
+            g->use_boxart = (ubtok < 0) ? false : json_bool(js, tok, ubtok);
             int reps = json_obj_get(js, tok, child, "repos");
             if (reps >= 0 && tok[reps].type == JSMN_ARRAY) {
                 int rc = tok[reps].size;
@@ -725,6 +728,11 @@ bool config_save(const SourcesConfig *cfg) {
         fprintf(f, ",\n      \"shown_installed\": %s",
                 g->shown_installed ? "true" : "false");
         fprintf(f, ",\n      \"pinned\": %s", g->pinned ? "true" : "false");
+        /* Only emit "use_boxart" when it's on, same reasoning as "folder"
+         * below — the common case (built-in icon) leaves the file uncluttered. */
+        if (g->use_boxart) {
+            fputs(",\n      \"use_boxart\": true", f);
+        }
         /* Only emit "folder" when a custom path is set, so the common case
          * (default install location) leaves the file uncluttered. */
         if (g->folder[0]) {
@@ -777,6 +785,8 @@ void creds_load(Credentials *c) {
                   sizeof(c->secret));
         json_copy(js, tok, json_obj_get(js, tok, 0, "githubToken"),
                   c->github_token, sizeof(c->github_token));
+        json_copy(js, tok, json_obj_get(js, tok, 0, "steamGridDbKey"),
+                  c->steamgriddb_key, sizeof(c->steamgriddb_key));
     }
     free(tok);
     free(js);
@@ -801,6 +811,8 @@ bool creds_save(const Credentials *c) {
     json_write_escaped(f, c->secret);
     fputs(",\n  \"githubToken\": ", f);
     json_write_escaped(f, c->github_token);
+    fputs(",\n  \"steamGridDbKey\": ", f);
+    json_write_escaped(f, c->steamgriddb_key);
     fputs("\n}\n", f);
     return commit_staged(f, CREDS_TMP_PATH, CREDS_PATH);
 }
@@ -820,6 +832,7 @@ void prefs_load(Prefs *p) {
     p->chk_updates = true;
     p->lang[0] = '\0';
     strcpy(p->theme, "dark");
+    strcpy(p->accent, "signature");
     p->card_view = true;
     p->group_sets = true;
     p->roms_override[0] = '\0';
@@ -837,6 +850,8 @@ void prefs_load(Prefs *p) {
     p->convert_import = true; /* apply the post-import converter when present */
     strcpy(p->region_order, "WUEJ"); /* World, USA, Europe, Japan */
     p->mtp_enabled = true;   /* USB file transfer available by default */
+    p->box_art_enabled = true; /* show cached covers in the list by default */
+    p->box_art_auto_fetch = true; /* auto-fetch art for new arrivals by default */
     prefs_ext_seed_defaults(p);
     size_t len = 0;
     char *js = json_read_file(PREFS_PATH, &len);
@@ -888,6 +903,10 @@ void prefs_load(Prefs *p) {
         idx = json_obj_get(js, tok, 0, "theme");
         if (idx >= 0 && tok[idx].type == JSMN_STRING) {
             json_copy(js, tok, idx, p->theme, sizeof(p->theme));
+        }
+        idx = json_obj_get(js, tok, 0, "accent");
+        if (idx >= 0 && tok[idx].type == JSMN_STRING) {
+            json_copy(js, tok, idx, p->accent, sizeof(p->accent));
         }
         idx = json_obj_get(js, tok, 0, "cardView");
         if (idx >= 0) {
@@ -960,6 +979,14 @@ void prefs_load(Prefs *p) {
         if (idx >= 0) {
             p->mtp_enabled = json_bool(js, tok, idx);
         }
+        idx = json_obj_get(js, tok, 0, "boxArtEnabled");
+        if (idx >= 0) {
+            p->box_art_enabled = json_bool(js, tok, idx);
+        }
+        idx = json_obj_get(js, tok, 0, "boxArtAutoFetch");
+        if (idx >= 0) {
+            p->box_art_auto_fetch = json_bool(js, tok, idx);
+        }
         idx = json_obj_get(js, tok, 0, "excludeExts");
         if (idx >= 0 && tok[idx].type == JSMN_ARRAY) {
             /* A saved list replaces the seeded defaults wholesale (so a user who
@@ -1028,6 +1055,8 @@ bool prefs_save(const Prefs *p) {
     json_write_escaped(f, p->lang);
     fputs(",\n  \"theme\": ", f);
     json_write_escaped(f, p->theme);
+    fputs(",\n  \"accent\": ", f);
+    json_write_escaped(f, p->accent);
     fprintf(f, ",\n  \"cardView\": %s", p->card_view ? "true" : "false");
     fprintf(f, ",\n  \"groupSets\": %s", p->group_sets ? "true" : "false");
     fputs(",\n  \"romsOverride\": ", f);
@@ -1056,6 +1085,8 @@ bool prefs_save(const Prefs *p) {
     fputs(",\n  \"regionOrder\": ", f);
     json_write_escaped(f, p->region_order);
     fprintf(f, ",\n  \"mtpEnabled\": %s", p->mtp_enabled ? "true" : "false");
+    fprintf(f, ",\n  \"boxArtEnabled\": %s", p->box_art_enabled ? "true" : "false");
+    fprintf(f, ",\n  \"boxArtAutoFetch\": %s", p->box_art_auto_fetch ? "true" : "false");
     fputs(",\n  \"excludeExts\": [", f);
     for (int i = 0; i < p->exclude_ext_count; i++) {
         if (i) {

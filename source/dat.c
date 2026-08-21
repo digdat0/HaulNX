@@ -117,6 +117,18 @@ static int cmp_crc(const void *a, const void *b) {
     return (ca > cb) - (ca < cb);
 }
 
+/* Scratch element for building Dat::by_name -- see dat_load. Self-contained
+ * (carries the name pointer alongside the index) so the qsort comparator
+ * needs no external context, which plain qsort has no way to pass. */
+typedef struct {
+    int idx;
+    const char *name;
+} NameIdx;
+
+static int cmp_name_idx(const void *a, const void *b) {
+    return strcasecmp(((const NameIdx *)a)->name, ((const NameIdx *)b)->name);
+}
+
 bool dat_load(Dat *d, const char *path) {
     memset(d, 0, sizeof(*d));
     FILE *f = fopen(path, "rb");
@@ -159,18 +171,76 @@ bool dat_load(Dat *d, const char *path) {
         return false;
     }
     qsort(d->roms, (size_t)d->count, sizeof(DatRom), cmp_crc);
+
+    /* Build the name index dat_lookup's fallback binary-searches: indices
+     * into roms, ordered by name, so it doesn't have to scan every entry on
+     * every unmatched file. qsort's comparator gets no user-data parameter,
+     * so this sorts a scratch array that carries each rom's name pointer
+     * alongside its index (self-contained, no global state needed), then
+     * copies just the winning order into d->by_name. The name pointers stay
+     * valid throughout: they point into d->roms, which is done growing by
+     * this point in dat_load and outlives by_name (both freed together in
+     * dat_free). */
+    NameIdx *ni = (NameIdx *)malloc((size_t)d->count * sizeof(NameIdx));
+    if (ni) {
+        for (int i = 0; i < d->count; i++) {
+            ni[i].idx = i;
+            ni[i].name = d->roms[i].name;
+        }
+        qsort(ni, (size_t)d->count, sizeof(NameIdx), cmp_name_idx);
+        d->by_name = (int *)malloc((size_t)d->count * sizeof(int));
+        if (d->by_name) {
+            for (int i = 0; i < d->count; i++) {
+                d->by_name[i] = ni[i].idx;
+            }
+        }
+        free(ni);
+    }
+    /* A failed allocation here just means the fallback below scans linearly
+     * (dat_name_exists checks by_name for NULL) -- never a load failure. */
     return true;
 }
 
 void dat_free(Dat *d) {
     free(d->roms);
+    free(d->by_name);
     d->roms = NULL;
+    d->by_name = NULL;
     d->count = 0;
     d->cap = 0;
     d->system[0] = '\0';
 }
 
 /* ---- lookup ------------------------------------------------------------ */
+
+/* Does any rom in the DAT carry this exact (case-insensitive) name? Backs
+ * dat_lookup's "named like a known dump" fallback. Binary-searches by_name
+ * when it built successfully (the common case); falls back to a linear scan
+ * if that allocation failed at load time, so a low-memory DAT load degrades
+ * to the old behavior instead of losing the check entirely. Duplicate names
+ * in a DAT (unusual but not disallowed) are fine here -- this only needs to
+ * know whether *a* match exists, not which one. */
+static bool dat_name_exists(const Dat *d, const char *filename) {
+    if (!d->by_name) {
+        for (int i = 0; i < d->count; i++) {
+            if (strcasecmp(d->roms[i].name, filename) == 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+    int lo = 0, hi = d->count;
+    while (lo < hi) {
+        int mid = lo + (hi - lo) / 2;
+        if (strcasecmp(d->roms[d->by_name[mid]].name, filename) < 0) {
+            lo = mid + 1;
+        } else {
+            hi = mid;
+        }
+    }
+    return lo < d->count &&
+           strcasecmp(d->roms[d->by_name[lo]].name, filename) == 0;
+}
 
 DatMatch dat_lookup(const Dat *d, uint32_t crc, uint64_t size,
                     const char *sha1_hex, const char *filename,
@@ -186,6 +256,7 @@ DatMatch dat_lookup(const Dat *d, uint32_t crc, uint64_t size,
             hi = mid;
         }
     }
+    bool size_match = false; // saw >=1 same-crc+size rom, even if none verified
     for (int i = lo; i < d->count && d->roms[i].crc == crc; i++) {
         const DatRom *r = &d->roms[i];
         if (r->size != size) {
@@ -193,23 +264,27 @@ DatMatch dat_lookup(const Dat *d, uint32_t crc, uint64_t size,
         }
         /* CRC + size already pin the dump; SHA-1 (when the DAT carries it) is
          * the tamper/collision check. A match on all is verified; a SHA-1
-         * mismatch despite CRC+size is a corrupt or doctored file. */
+         * mismatch despite CRC+size is a corrupt or doctored file -- UNLESS
+         * this CRC+size is also shared with a *different* known-good dump
+         * elsewhere in the same run (rare, but real across a DAT with
+         * thousands of entries), so keep scanning instead of deciding on
+         * the first mismatch; a later entry in this run may be the actual
+         * match. */
         if (!r->have_sha1 || (sha1_hex && strcmp(r->sha1, sha1_hex) == 0)) {
             if (out_name && out_sz) {
                 snprintf(out_name, out_sz, "%s", r->name);
             }
             return DAT_VERIFIED;
         }
+        size_match = true;
+    }
+    if (size_match) {
         return DAT_BAD;
     }
     /* No hash match. If a dump is *named* like this file, the file is a
      * corrupt/edited copy of a known ROM rather than something unrecognized. */
-    if (filename && *filename) {
-        for (int i = 0; i < d->count; i++) {
-            if (strcasecmp(d->roms[i].name, filename) == 0) {
-                return DAT_BAD;
-            }
-        }
+    if (filename && *filename && dat_name_exists(d, filename)) {
+        return DAT_BAD;
     }
     return DAT_UNKNOWN;
 }

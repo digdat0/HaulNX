@@ -166,6 +166,9 @@ enum {
     S_TITLE_INSTALLED,
     S_SUB_INSTALLED,
     S_SUB_INSTALLED_FOLDER,
+    S_SUB_INSTALLED_FOLDER_CARDS, /* folder hint, poster view: Y still marks
+                                    * (blue border), but ▶ is D-pad navigation
+                                    * here, not delete - that's X > Options only */
     S_DIR_PREFIX,
     S_DELETE_SELECTED,
     S_DELETE_ONE,
@@ -226,6 +229,7 @@ enum {
     S_ACCESS_KEY,
     S_SECRET_KEY,
     S_GITHUB_TOKEN,
+    S_STEAMGRIDDB_KEY,
 
     /* ---- update ---- */
     S_TITLE_UPDATE,
@@ -236,6 +240,7 @@ enum {
     S_UPDATE_DOWNLOADING,
     S_UPDATE_DL_CANCEL,
     S_UPDATE_START_FAIL,
+    S_UPDATE_TOO_MANY,
     S_UPDATE_FAIL,
     S_UPDATE_OK,
 
@@ -543,6 +548,62 @@ enum {
     S_SUB_LARGE_FILES_EMPTY, /* results subtitle when the library is empty */
     S_LARGE_FILES_NONE,   /* empty-state: no files found */
     S_LARGE_FILES_DEL_BODY, /* confirm-delete body (%s name, %s size) */
+    S_SCAN_BOX_ART,        /* Tools row label + scan-start title: "Scan for Box Art" */
+    S_SCAN_BOX_ART_NEED_KEY, /* toast: pressed with no SteamGridDB key set */
+    S_SCAN_BOX_ART_BODY,   /* pre-scan dialog body: explains the fill/rescan/reset choice below (games) */
+    S_SCAN_BOX_ART_FILL,   /* pre-scan dialog button: only resolve games with no art yet */
+    S_SCAN_BOX_ART_FORCE,  /* pre-scan dialog button: re-query every game, even resolved ones */
+    S_SCAN_BOX_ART_RESET,  /* pre-scan dialog button: wipe every game's cached art */
+    S_SCAN_BOX_ART_RESET_CONFIRM, /* danger-confirm body before the reset above actually runs */
+    S_SCAN_BOX_ART_RESET_DONE, /* toast after the reset completes */
+    S_BOXART_SCANNING,     /* spinner while resolving/downloading covers */
+    S_BOXART_RESULTS_TITLE_N, /* results title (%d = distinct titles scanned) */
+    S_BOXART_RESULTS_SUB_N, /* results subtitle (%d found of %d titles) */
+    S_BOXART_FOUND,        /* per-row status: a cover was resolved + cached */
+    S_BOXART_FOUND_LOW,    /* per-row status: resolved, but the name match was a weak/fuzzy guess */
+    S_BOXART_NOT_FOUND,    /* per-row status: no SteamGridDB match */
+    S_SCAN_BOX_ART_CONSOLE, /* per-console Options row + scan-start title, scoped scan */
+    S_MANAGE_BOX_ART,      /* Storage row label + screen title: browse/delete cached covers */
+    S_BOXART_MANAGE_SCANNING, /* spinner while finding what's cached on disk */
+    S_BOXART_MANAGE_EMPTY, /* empty-state: no cached covers yet (Storage) */
+    S_BOXART_MANAGE_LIST_SUB, /* per-console cover list subtitle (hints) */
+    S_BOXART_DELETE_BODY,  /* confirm-delete body for one cached cover (%s title) */
+    S_BOX_ART_TOGGLE,      /* Appearance toggle label: show cached covers in the list */
+    S_BOX_ART_AUTO_TOGGLE, /* Appearance toggle label: auto-fetch art for newly landed games */
+    S_BOXART_FILTER_ALL,   /* results filter option: show every scanned title */
+    S_BOXART_FILTER_LOW,   /* results filter option: show only weak/fuzzy-match hits */
+    S_BOXART_SEARCH_GUIDE, /* swkbd guide text for a custom box-art search */
+    S_BOXART_SEARCH_CUSTOM, /* row-menu option: type a search term and re-resolve a cover */
+    S_BOXART_DELETE_COVER, /* row-menu option: delete this title's cached cover */
+    S_BOXART_CUSTOM_FOUND, /* toast: custom search resolved a cover */
+    S_BOXART_CUSTOM_NOT_FOUND, /* toast: custom search found no match */
+    S_BOXART_PICKER_TITLE,  /* art picker screen title */
+    S_BOXART_PICKER_SEARCHING, /* spinner: listing candidate covers + thumbs */
+    S_BOXART_PICKER_SUB_N,  /* art picker subtitle/hints (%d = covers found) */
+    S_BOXART_PICKER_OPTION_N, /* card label under each thumbnail (%d = 1-based) */
+    S_BOXART_PICKER_DOWNLOADING, /* spinner: saving the picked cover */
+    S_CONSOLE_ART,          /* per-console Options row label + menu title */
+    S_CONSOLE_ART_BODY,     /* menu body: what the option controls */
+    S_CONSOLE_ART_USE_DEFAULT, /* menu button: switch back to the built-in icon */
+    S_CONSOLE_ART_USE_BOXART, /* menu button: switch to the already-saved cover */
+    S_CONSOLE_ART_FIND,     /* menu button: no cover saved yet, go find one */
+    S_CONSOLE_ART_CHANGE,   /* menu button: a cover is saved, search for a different one */
+    S_SCAN_CONSOLE_ART,     /* Tools row label + scan-start title: bulk console-icon scan */
+    S_SCAN_CONSOLE_ART_BODY, /* pre-scan dialog body: explains the fill/rescan choice below */
+    S_SCAN_CONSOLE_ART_FILL, /* pre-scan dialog button: only resolve consoles with no art yet */
+    S_SCAN_CONSOLE_ART_FORCE, /* pre-scan dialog button: re-query every console, even resolved ones */
+    S_SCAN_CONSOLE_ART_RESET, /* pre-scan dialog button: wipe every console's cached art, back to default icons */
+    S_SCAN_CONSOLE_ART_RESET_CONFIRM, /* danger-confirm body before the reset above actually runs */
+    S_SCAN_CONSOLE_ART_RESET_DONE, /* toast after the reset completes */
+    S_SCAN_ART,             /* Tools row label: combined entry point for the two scans below */
+    S_SCAN_ART_BODY,        /* pre-scan chooser dialog body: pick which scan to run */
+    S_ART_CACHE,           /* Data Files row label + menu title: the on-disk box-art cache */
+    S_ART_CACHE_N,         /* Data Files row value (%d covers, %s total size) */
+    S_ART_CACHE_NONE,      /* Data Files row value / menu body when nothing is cached */
+    S_ART_CACHE_BROWSE,    /* Art Cache menu option: open Manage Box Art */
+    S_ART_CACHE_CLEAR,     /* Art Cache menu option: delete every cached cover */
+    S_ART_CACHE_CLEAR_CONFIRM, /* confirm body for Clear Entire Cache (%d covers) */
+    S_ART_CACHE_CLEARED,   /* toast: the whole art cache was cleared */
     S_TITLE_BACKUPS,      /* Backups screen title */
     S_SUB_BACKUPS,        /* Backups screen subtitle (empty) */
     S_SUB_BACKUPS_N,      /* Backups subtitle with total size + hints (%s) */
@@ -700,6 +761,8 @@ enum {
     S_TIDY_TITLE,        /* tidy results title (%d = issue count) */
     S_SUB_TIDY,          /* tidy results subtitle */
     S_SUB_TIDY_EMPTY,    /* tidy results subtitle when there is nothing to fix */
+    S_SUB_TIDY_FILTER_EMPTY, /* subtitle when a filter hides every issue (but some exist) */
+    S_TIDY_FILTER_EMPTY, /* empty-state: no issues match the active filter */
     S_TIDY_CLEAN,        /* empty-state: nothing to fix */
     S_TIDY_DUP,          /* row status: duplicate file */
     S_TIDY_MISFILED,     /* row status: move to console (%s) */
@@ -715,6 +778,19 @@ enum {
     S_ONEGR_CLEAN,       /* empty-state: no duplicate copies found */
     S_ONEGR_DELETE_TITLE,/* confirm-delete-duplicate dialog title */
     S_ONEGR_BODY,        /* confirm-delete-duplicate body (%s this file, %s kept) */
+    S_TIDY_ORPHAN_EMPTY, /* row status: zero-byte file */
+    S_TIDY_ORPHAN_PART,  /* row status: leftover incomplete transfer */
+    S_TIDY_ORPHAN_TITLE, /* confirm-delete-orphan dialog title */
+    S_TIDY_ORPHAN_BODY,  /* confirm-delete-orphan body (%s file name, %s reason) */
+    S_TIDY_PRUNED_CACHE, /* toast: stale hash/verify cache rows dropped (%d) */
+    S_TIDY_FILTER_ALL,       /* filter option: show every issue kind */
+    S_TIDY_FILTER_MISFILED,  /* filter option: misfiled files only */
+    S_TIDY_FILTER_ORPHAN,    /* filter option: orphaned files only */
+    S_TIDY_FILTER_CLONE,     /* filter option: 1G1R clones only */
+    S_TIDY_FIX_ALL_TITLE,    /* Ⓧ confirm dialog title */
+    S_TIDY_FIX_ALL_CONFIRM,  /* Ⓧ confirm dialog body (%d = issue count) */
+    S_TIDY_FIX_ALL_DONE,     /* toast: bulk fix finished, all succeeded (%d) */
+    S_TIDY_FIX_ALL_PARTIAL,  /* toast: bulk fix finished, some failed (%d fixed, %d failed) */
 
     /* ---- inbox sorter: file games from a PC into the right console ---- */
     S_RECV_SORT,         /* X-menu: receive a game and auto-sort it */
@@ -733,6 +809,9 @@ enum {
     S_SORTED,            /* toast: a staged file was filed after a manual pick */
     S_SORT_FAIL,         /* toast: filing failed (name clash / move error) */
     S_SORT_DELETE_FAIL,  /* toast: deleting an inbox file failed */
+
+    S_PC_SYNC,           /* Tools row label: combined entry point for USB / Wi-Fi transfer below */
+    S_PC_SYNC_BODY,      /* pre-connect chooser dialog body: pick which link to use */
 
     S_USB_MENU,          /* X-menu: connect the console to a PC over USB */
     S_USB_TITLE,         /* USB screen title */
@@ -782,6 +861,7 @@ enum {
     S_APPMAN_CHECK_FAIL,  /* dialog: couldn't reach GitHub for this app */
     S_APPMAN_UPDATE_AVAIL,/* body: installed %s, update to %s available */
     S_APPMAN_UPDATE_TO,   /* button: update to %s */
+    S_APPMAN_UPDATE_ROW,  /* list row pill when an update is available: installed version -> new version */
     S_APPMAN_UP_TO_DATE,  /* body: up to date (%s) */
     S_APPMAN_REINSTALL,   /* button: reinstall %s */
     S_APPMAN_NOT_INST_LATEST, /* body: not installed, latest is %s */
@@ -800,6 +880,8 @@ enum {
     S_APPMAN_UNCHECKED,   /* list status: installed+sourced, not yet checked */
     S_APPMAN_CHECK_UPDATES, /* entry menu action: check GitHub for a newer release */
     S_APPMAN_SOURCE_LINE, /* entry menu body: "Source: owner/repo" under the name */
+    S_APPMAN_PATH_LINE,   /* entry menu body: "Path: sdmc:/switch/..." under the source line, only when installed */
+    S_APPMAN_INSTALLED_LINE, /* entry menu body: "Installed: vX" under the path line, only when installed + version known */
     S_APPMAN_LOADING,     /* spinner text while the list builds (no network) */
     S_APPMAN_NEVER_CHECKED, /* last-checked suffix when never checked this build */
     S_APPMAN_JUST_NOW,    /* last-checked suffix: within the last minute */
@@ -808,6 +890,21 @@ enum {
     S_APPMAN_DAY_AGO,     /* last-checked suffix: "%dd ago" */
     S_APPMAN_SCAN_ALL,    /* footer/menu: check every entry for updates (X) */
     S_APPMAN_SCAN_ONE,    /* footer: check the selected entry (Y) */
+
+    /* ---- accent color (Appearance) ---- */
+    S_ACCENT,             /* Appearance row label: "Accent Color" */
+    S_TITLE_ACCENT,       /* Accent picker screen title */
+    S_SUB_ACCENT,         /* Accent picker screen subtitle (footer hints) */
+    S_ACCENT_SIGNATURE,   /* preset name: the default green/blue */
+    S_ACCENT_VIOLET,      /* preset name: purple/pink */
+    S_ACCENT_EMBER,       /* preset name: amber/red */
+    S_ACCENT_AQUA,        /* preset name: cyan/teal */
+    S_ACCENT_ROSE,        /* preset name: pink/red */
+    S_ACCENT_SLATE,       /* preset name: neutral silver/blue-grey */
+
+    /* ---- queue: recovering from a stalled connection ---- */
+    S_RECONNECTING,       /* Queue card: shown in place of the speed/ETA line
+                              while a download is stalled and about to retry */
 
     S__COUNT
 };

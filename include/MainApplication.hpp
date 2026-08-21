@@ -18,18 +18,25 @@
 #include "verify.h"
 #include "iarchive.h"
 #include "updman.h"
+#include "boxart.h"
 
 // Draws a BORROWED texture (an icon owned by a shared cache) at a fixed size
 // and position. Used for the console icon shown next to the header title.
 class IconElement : public pu::ui::elm::Element {
     pu::sdl2::Texture tex; // borrowed — never freed here
     s32 x, y, sz;
+    bool breathe; // opt-in slow opacity pulse (empty-state icon only)
 
   public:
-    IconElement(s32 x, s32 y, s32 sz) : tex(nullptr), x(x), y(y), sz(sz) {}
+    IconElement(s32 x, s32 y, s32 sz)
+        : tex(nullptr), x(x), y(y), sz(sz), breathe(false) {}
     PU_SMART_CTOR(IconElement)
     void SetTexture(pu::sdl2::Texture t) { this->tex = t; }
     void SetPos(s32 nx, s32 ny) { this->x = nx; this->y = ny; }
+    // Slow breathing opacity pulse, same wall-clock sine as PulseDotElement's
+    // tab-dot breath — a cheap way to make a static empty-state icon read as
+    // "waiting" rather than inert. Off by default; only empty_icon opts in.
+    void SetBreathe(bool b) { this->breathe = b; }
     s32 GetX() override { return this->x; }
     s32 GetY() override { return this->y; }
     s32 GetWidth() override { return this->sz; }
@@ -42,6 +49,14 @@ class IconElement : public pu::ui::elm::Element {
         pu::ui::render::TextureRenderOptions o;
         o.width = this->sz;
         o.height = this->sz;
+        if (this->breathe) {
+            // Alpha eases between ~70% and 100% over ~2.4s (a slower, gentler
+            // breath than the tab dots — this icon is a big, static glyph the
+            // eye rests on, not a small attention cue).
+            double t = (double)armTicksToNs(armGetSystemTick()) / 1.0e9;
+            double s = 0.5 + 0.5 * sin(t * 2.0 * 3.14159265 / 2.4);
+            o.alpha_mod = (u8)(178 + s * 77);
+        }
         drawer->RenderTexture(this->tex, rx, ry, o);
     }
     void OnInput(const u64, const u64, const u64,
@@ -490,8 +505,28 @@ class MainLayout : public pu::ui::Layout {
     CardGrid::Ref grid;    // card view for the console lists
     bool cards_mode = false; // which of list/grid is active for this screen
     std::vector<pu::ui::elm::TextBlock::Ref> tabs;
+    // Last idx applied by SetActiveTab, which runs every frame via SyncTab.
+    // TextBlock::SetColor() unconditionally re-rasterizes+re-uploads its
+    // texture (no same-color early-out), so without this SetActiveTab was
+    // rebuilding all 4 tab-label textures 60x/sec even when nothing changed.
+    // -1 forces a full reapply; ApplyTheme/RefreshTabs reset it to -1 too,
+    // since they change what SetActiveTab(idx) would (re)compute for the
+    // same idx (theme colors / tab-label widths the dots are parked off of).
+    int last_tab_idx = -1;
     PillElement::Ref tab_pill;        // accent underline under the active tab
-    GradientLineElement::Ref accent_line; // green->blue strip under the shell
+    // Soft translucent capsule behind the active tab's label, sized to the
+    // whole tab cell rather than a thin line -- see SetActiveTab. Added
+    // because the thin green underline alone read as "blended into" the
+    // green->blue accent stripe running along the bottom of the whole tab
+    // strip; a big soft area fill stays legible regardless of what color the
+    // stripe happens to be under any given tab.
+    PillElement::Ref tab_chip;
+    PillElement::Ref accent_line; // solid accent-blue strip under the shell
+    // Ambient transfer progress: a thin blue sliver over accent_line's left
+    // edge, growing with the active item's now/total — visible from any tab,
+    // not just Queue's dot, so a running transfer stays glanceable everywhere.
+    // Width-only per frame (no new draw calls when idle: SetVisible(false)).
+    PillElement::Ref queue_progress;
     PulseDotElement::Ref queue_dot;   // "downloads running" pulse on the Queue tab
     PulseDotElement::Ref settings_dot; // "update available" pulse on the Settings tab
     IconElement::Ref empty_icon;      // big dimmed icon for empty states
@@ -539,6 +574,9 @@ class MainLayout : public pu::ui::Layout {
     void SetRomInfo(const std::string &t);
     void SetActiveTab(int idx); // 0=Library 1=Add 2=Queue 3=Settings
     void SetQueueActivity(bool active); // pulse the Queue tab while downloading
+    // frac in [0,1] draws the ambient sliver at that width; frac < 0 hides it
+    // (nothing actively moving bytes right now).
+    void SetQueueProgress(float frac);
     void SetUpdateAvailable(bool avail); // pulse the Settings tab when an update is up
     void RefreshTabs();
     void ApplyTheme();
@@ -558,13 +596,33 @@ class MainLayout : public pu::ui::Layout {
                  bool pill = true, bool pin = false, s32 bar = 0);
     // Update one row's right cell in place (no rebuild → scroll/selection kept).
     void SetRowRight(s32 i, const std::string &right, pu::ui::Color rclr);
+    // Update one row's icon in place (no rebuild). List mode only — cards
+    // don't need this, they never carry a per-row lazy icon.
+    void SetRowIcon(s32 i, pu::sdl2::Texture icon);
+    // First visible row index (list mode). Used to lazily resolve box art
+    // icons only for rows actually on screen — see BoxArtIconsPoll.
+    s32 ScrollTop();
+    s32 RowsVisible();
     // Card view (console lists). ClearMenu resets to list mode; a screen that
     // wants cards calls SetCardsMode(true) and AddCard instead of AddRow.
     void SetCardsMode(bool on);
     bool InCards() const { return this->cards_mode; }
     void AddCard(const std::string &title, const std::string &subtitle,
                  pu::sdl2::Texture icon, bool pinned = false,
-                 bool dim = false);
+                 bool dim = false, bool art = false);
+    // Column count for the grid (default 4; ClearMenu resets it back).
+    // Installed's game-list poster view narrows this to 6-7.
+    void SetCardCols(s32 n);
+    // Poster mode: cards lead with box art instead of a small centred icon.
+    // ClearMenu resets this to off, same as SetCardCols.
+    void SetCardPoster(bool on);
+    // Update one card's icon in place (no rebuild). Poster-mode counterpart
+    // of SetRowIcon, for BoxArtIconsPoll's lazy resolve.
+    void SetCardIcon(s32 i, pu::sdl2::Texture icon);
+    // First visible card index / how many slots the visible rows span - the
+    // grid's counterpart of ScrollTop()/RowsVisible() above.
+    s32 CardFirstVisible();
+    s32 CardVisibleCount();
     // Queue card view: per-frame diff updates instead of Clear + AddCard.
     // Single-card mode shows one enlarged centred card (self-update).
     void SetSingleCard(bool on);
@@ -574,7 +632,8 @@ class MainLayout : public pu::ui::Layout {
                       pu::ui::Color st_clr, const std::string &size,
                       const std::string &speed, const std::string &eta,
                       const std::string &file, float prog, bool hero,
-                      s32 ring = 0, s32 qpos = 0, bool refresh_text = true);
+                      s32 ring = 0, s32 qpos = 0, bool refresh_text = true,
+                      bool logo_icon = false, bool art = false);
     void CardMove(s32 dx, s32 dy);
     s32 Sel();
     void SetSel(s32 i);
@@ -612,6 +671,7 @@ class MainApplication : public pu::ui::Application {
         ExtFilter, // Browse file-view extension filter editor
         Downloads, // manage downloads folder
         Language,  // language selector
+        Accent,    // accent color picker (Appearance)
         Search,    // global file search across cached repos
         Cache,     // metadata cache management
         Transfers, // settings submenu: import/export/restore/update over Wi-Fi
@@ -645,9 +705,13 @@ class MainApplication : public pu::ui::Application {
         RegionOrder,  // Dats sub-screen: 1G1R keep-preference region order
         AppUpdates,   // Updates sub-screen: emulator/app list (check/update/revert)
         LargestFiles, // Storage sub-screen: whole-library files, biggest first
+        BoxArtResults, // Tools/Console-Options "Scan for Box Art" outcome, one row per title
         DataFiles,    // settings submenu: hosts DAT files + metadata cache
         MetaCache,    // Data Files sub-screen: cache on/off, browse, refresh all
-        InboxFiles    // Storage sub-screen: view/select/delete files staged in the Inbox
+        InboxFiles,   // Storage sub-screen: view/select/delete files staged in the Inbox
+        BoxArtManageConsoles, // Storage sub-screen: consoles with cached covers, A drills in
+        BoxArtManageList,     // one console's cached covers; X deletes a cover
+        BoxArtPicker          // browse/select among a matched game's cover-art options
     };
     enum class Pending { None, AddRepo, Manual, SortAssign };
     // Tab positions, left to right. The library is the front door of the app, so
@@ -749,23 +813,36 @@ class MainApplication : public pu::ui::Application {
     int upd_xslot = -1; // queue-tab external item tracking this download (-1 = none)
 
     // Tools update-manager install (same shape as the self-update above): a
-    // background download of a chosen emulator/app release, finalized in UmiTick.
-    BgTask umi;
-    std::atomic<bool> umi_ok{false};
-    std::atomic<bool> umi_cancel{false};
-    std::atomic<u64> umi_now{0};
-    std::atomic<u64> umi_total{0};
-    std::string umi_url;      // release asset download URL
-    std::string umi_dl;       // temp .part path
-    std::string umi_dest;     // final on-device .nro path
-    std::string umi_id;       // manifest id (backup folder)
-    std::string umi_name;     // display name (logs/queue item)
-    std::string umi_tag;      // version being installed
-    std::string umi_bakver;   // version being replaced (backup filename)
-    bool umi_fresh = false;   // true = fresh install, false = in-place update
-    bool umi_zip = false;     // asset is an archive: extract, then install the .nro inside
-    std::string umi_asset;    // release asset filename (its extension picks .nro vs zip)
-    int umi_xslot = -1;
+    // background download of a chosen emulator/app release, finalized in
+    // UmiTick. This is a small fixed pool rather than one shared slot —
+    // starting a second install/update while the first is still downloading
+    // used to stomp the first job's in-flight state (same BgTask, same
+    // scalar url/dl/dest/... members): the first one's download would
+    // silently start writing to the second item's temp path/URL, and the
+    // second's umi.Start() would fail outright since the BgTask was already
+    // running, surfacing as "first job hangs, second fails immediately".
+    // Each UmiJob is fully self-contained so N installs run concurrently
+    // without touching each other's state. See UmiStart/UmiTick(int).
+    struct UmiJob {
+        BgTask task;
+        std::atomic<bool> ok{false};
+        std::atomic<bool> cancel{false};
+        std::atomic<u64> now{0};
+        std::atomic<u64> total{0};
+        std::string url;      // release asset download URL
+        std::string dl;       // temp .part/.zip path (unique per job)
+        std::string dest;     // final on-device .nro path
+        std::string id;       // manifest id (backup folder)
+        std::string name;     // display name (logs/queue item)
+        std::string tag;      // version being installed
+        std::string bakver;   // version being replaced (backup filename)
+        bool fresh = false;   // true = fresh install, false = in-place update
+        bool zip = false;     // asset is an archive: extract, then install the .nro inside
+        std::string asset;    // release asset filename (its extension picks .nro vs zip)
+        int xslot = -1;       // Queue-tab external item tracking this job
+    };
+    static const int UMI_MAX = 4; // concurrent emulator/app installs
+    UmiJob umi_jobs[UMI_MAX];
 
     // Background update *check* (release-list fetch), so "Check for updates"
     // doesn't freeze the UI during retries. Shows the attempt number (1/3).
@@ -803,6 +880,9 @@ class MainApplication : public pu::ui::Application {
     std::atomic<int> appchk_total{0}; // network checks to run
     std::vector<int8_t> appman_state; // per-entry APST_* (see AppChkThread)
     std::vector<std::string> appman_ver;    // installed version per entry ("" none)
+    std::vector<std::string> appman_ipath;  // installed .nro path per entry ("" none) --
+                                            // cached so opening the entry menu (A) doesn't
+                                            // re-walk sdmc:/switch on the UI thread
     std::vector<std::string> appman_latest; // latest release tag per entry
     std::vector<std::string> appman_url;    // cached release .nro/.zip url per entry
     std::vector<std::string> appman_asset;  // cached asset hint per entry
@@ -811,6 +891,24 @@ class MainApplication : public pu::ui::Application {
     // relaunching; loaded lazily on first use. See load/save_check_times.
     std::map<std::string, uint64_t> appman_checked_at;
     bool appman_checked_loaded = false;
+
+    // Last known network-check result per entry id, one map per UPD_KIND_EMU/
+    // UPD_KIND_APP (updman.h). Written whenever a check actually reaches GitHub
+    // (AppScanAll's "check all", or a single AppRecheckOne); read by AppChkThread's
+    // local-only pass (a plain GotoAppUpdates open, appchk_net=false) so leaving
+    // the list -- e.g. updating one entry, which jumps to the Queue tab -- and
+    // coming back re-renders every row's last-known Update/Up-to-date badge
+    // instead of blanking them all to "not checked". The local-only pass still
+    // re-reads each entry's installed version off the SD card fresh every open,
+    // so an item updated elsewhere correctly flips from Update to Up-to-date
+    // without needing a new GitHub hit. In-memory only, not persisted: a fresh
+    // launch starts empty, same as "not checked" did before this cache existed.
+    struct AppManCachedCheck {
+        std::string latest; // release tag
+        std::string url;    // release asset download url
+        std::string asset;  // release asset filename
+    };
+    std::map<std::string, AppManCachedCheck> appman_net_cache[2]; // [UPD_KIND_EMU/APP]
 
     // Background network self-test (Diagnostics -> Network self-test): checks
     // the LAN address and reaches archive.org off the UI thread so a slow or
@@ -824,6 +922,12 @@ class MainApplication : public pu::ui::Application {
     bool diag_speed = false;
     bool diag_sp_ok = false;       // both phases finished cleanly
     bool diag_sp_cancelled = false; // user backed out mid-test
+    // Self-test cancel: B sets this, net_selftest's progress callback checks
+    // it (same convention as sp_prog.cancel). diag_net_cancelled records
+    // whether that's what actually stopped it, so DiagTick can skip the
+    // result dialog instead of reporting a false "unreachable".
+    volatile int diag_cancel = 0;
+    bool diag_net_cancelled = false;
     double diag_mbps = 0.0;        // final download rate (Mbps)
     double diag_ul_mbps = 0.0;     // final upload rate (Mbps)
     // Live counters shared with the worker thread; the UI reads them each frame
@@ -932,16 +1036,16 @@ class MainApplication : public pu::ui::Application {
     bool inv_open = false;
     uint64_t inv_last_gen_ns = 0;
     // Set (to a tick) every time a push/pull request finishes on the inventory
-    // server, so the companion_active inventory rescan below never lands on the
-    // exact frame right after a completed request. WriteInventoryJson is a full
-    // recursive directory sweep -- cheap for one console, but easily long enough
-    // on a big library to miss a render frame -- and it runs on the very thread
-    // that also owns httpsrv_poll's accept(). A desktop push queue reconnects for
-    // its next file within milliseconds of the prior file's 200 OK, so without
-    // this a multi-file Wi-Fi push (each one resets inv_last_gen_ns to 0 to force
-    // a prompt regen) could have the rescan block accept() just long enough for
-    // the next file's freshly-accepted connection to get reset (os error 10054).
-    // See wifi-push-inventory-regen memory.
+    // server, so the companion_active inventory rescan below never kicks a fresh
+    // regen off on the exact frame right after a completed request. The regen
+    // sweep (InvJsonBegin/InvJsonStep) is now spread one console per frame
+    // rather than one big call, but each of those frames still shares the
+    // render thread with httpsrv_poll's accept(). A desktop push queue
+    // reconnects for its next file within milliseconds of the prior file's 200
+    // OK, so without this a multi-file Wi-Fi push (each one resets
+    // inv_last_gen_ns to 0 to force a prompt regen) could have a regen step
+    // land on the exact frame the next file's freshly-accepted connection needs
+    // servicing (os error 10054). See wifi-push-inventory-regen memory.
     uint64_t inv_push_cd_tick = 0;
     // Sleep/wake recovery for the always-on server. Sleeping drops Wi-Fi, which
     // leaves inv_srv listening on a dead interface — "on" but unreachable — until
@@ -970,6 +1074,27 @@ class MainApplication : public pu::ui::Application {
     // server's pull/delete endpoints are confined to. Rebuilt by WriteInventoryJson
     // alongside the JSON; inv_srv.roots borrows this, so it must outlive the server.
     std::string inv_roots;
+    // The periodic regen (InvServerPoll, every ~15s while a companion is polling)
+    // used to do the whole recursive multi-console sweep in one call -- "cheap for
+    // one console" (WriteInventoryJson's old comment) but, on a library with many
+    // consoles or a large folder, long enough to cost a visible frame hitch on the
+    // render thread every single regen. That stacked with box art's own per-frame
+    // icon-decode cost on the Installed screen and made the combination of "box
+    // art + inventory server on" noticeably sluggish even though either alone was
+    // fine. Spreading the sweep to one console per frame (InvJsonStep) caps each
+    // frame's share of the work the same way BoxArtIconsPoll caps its decodes.
+    // -1 = idle. 0..console_count-1 = the console InvJsonStep will scan next.
+    // console_count = every console is done; the next step finalizes (inbox +
+    // switch/retroarch scan + footer) and swaps the result in.
+    int inv_json_ci = -1;
+    FILE *inv_json_f = NULL;    // open across frames while inv_json_ci >= 0
+    bool inv_json_first_console = true; // comma placement in the "consoles" array
+    // Built incrementally alongside inv_json_f, one console at a time. Kept
+    // separate from inv_roots (which inv_srv.roots borrows and httpsrv_poll reads
+    // every frame) until InvJsonFinish, so a mid-build frame never exposes a
+    // partial root list -- the swap is a single move + pointer repoint, same
+    // atomicity the old single-call version got from just not yielding mid-build.
+    std::string inv_json_roots;
     // A push over the live link (app utility, while connected) shows a transient
     // "Receiving from PC" page. inv_was_receiving edge-detects the start so the
     // page opens once per transfer; inv_recv_active is true while it is shown.
@@ -1107,10 +1232,16 @@ class MainApplication : public pu::ui::Application {
     // Returned by SideMenu (in place of a row index) when switch_btn is pressed —
     // lets the Tools and per-console Options panels flip to each other (X↔Y).
     static const s32 SIDEMENU_SWITCH = -2;
+    // `backdrop`, when given, replaces the panel's flat fill with that texture
+    // faux-blurred (cheap downsample-then-linear-upscale, no real gaussian
+    // pass) and darkened toward the bottom, "hero" style — see SideMenu's
+    // definition. Used for per-game panels (Options) to show that game's box
+    // art behind the option list; nullptr keeps the plain flat panel.
     s32 SideMenu(const std::string &title, const std::vector<std::string> &opts,
                  s32 sel = 0, const std::string &body = "", bool danger = false,
                  bool from_left = false, pu::sdl2::Texture icon = nullptr,
-                 SideMenuLive *live = nullptr, u64 switch_btn = 0);
+                 SideMenuLive *live = nullptr, u64 switch_btn = 0,
+                 pu::sdl2::Texture backdrop = nullptr);
     // Every centered CreateShowDialog call site funnels through this override so
     // the whole app shares the SideMenu look. It forwards to SideMenu and keeps
     // the base contract: with use_last_opt_as_cancel, a B/cancel returns the
@@ -1150,12 +1281,23 @@ class MainApplication : public pu::ui::Application {
     // in here depends on the highlighted console. Returns true if the user pressed
     // X to flip to the per-console Options panel (the caller reopens it).
     bool ToolsMenu();
+    // The two scan kinds behind ToolsMenu's "Scan Art" chooser (game box art
+    // vs. bulk console-icon scan) — split out so each is a self-contained
+    // call rather than nested inline in the ToolsMenu switch.
+    void ToolsScanGameArt();
+    void ToolsScanConsoleArt();
     // The per-console Options panel (right slide) for the console at g_inst[i].
     // Returns true if the user pressed Y to flip to the global Tools panel.
     bool ConsoleOptionsMenu(s32 i);
     // The install-folder info / change dialog for the console at g_inst[i]. Lives
     // in the per-console Options menu (was its own Y button before Y became Tools).
     void InstFolderDialog(s32 i);
+    // "Console Art" dialog for the console at g_inst[i]: default icon vs.
+    // SteamGridDB box art (same picker as a game's cover, keyed under
+    // "console:<target>" so it shares the index/cache -- see boxart.h and
+    // ConsoleGroup::use_boxart). Gated on a SteamGridDB key same as the rest
+    // of box art; toasts S_SCAN_BOX_ART_NEED_KEY and does nothing without one.
+    void ConsoleArtMenu(s32 i);
     // Read-only stats for the console at g_inst[i] (its Options "Console info"
     // row): install folder, installed count/size, DAT status, active repos, tabs.
     void ConsoleInfoDialog(s32 i);
@@ -1195,6 +1337,7 @@ class MainApplication : public pu::ui::Application {
     void GotoExtFilter();
     void GotoDownloads();
     void GotoLanguage();
+    void GotoAccent();
     // New settings hierarchy: one screen per concern (see GotoSettings).
     void GotoSources();
     void GotoStorage();
@@ -1269,10 +1412,19 @@ class MainApplication : public pu::ui::Application {
     static void DatSyncThread(void *arg);
 
     // Desktop-companion inventory server (read-only, HTTPSRV_INV_PORT).
-    void WriteInventoryJson(); // regenerate INVENTORY_PATH from live app state
+    void WriteInventoryJson(); // synchronous one-shot build (InvServerStart only)
+                                // -- drives InvJsonBegin/InvJsonStep to completion
+                                // in one call so the file exists before the first
+                                // companion GET; the periodic regen in
+                                // InvServerPoll uses the same steps spread across
+                                // frames instead. See inv_json_ci's comment.
     void InvServerStart();     // open the listener + write an initial inventory
     void InvServerStop();      // close the listener
     void InvServerPoll();      // per-frame: throttled regen, then serve a request
+    void InvJsonBegin();  // open the tmp file, write the header, queue console 0
+    void InvJsonStep();   // one console's sweep, or (once all are done) finalize
+    void InvJsonStepConsole(); // InvJsonStep's per-console branch
+    void InvJsonFinish();      // InvJsonStep's inbox/scan/footer + swap-in branch
     void InvApplyPush();       // apply a collection pushed to the inventory server
     void InvApplyFile();       // file a game streamed to the inventory server (inbox)
     static void PushExtractThread(void *arg); // off-thread unpack for the above
@@ -1313,14 +1465,16 @@ class MainApplication : public pu::ui::Application {
     void AppRevert(const UpdSource &e);  // roll back to a stored backup build
     // Background install kicked off from the manager: download the release .nro,
     // then (on the main thread, in UmiTick) validate, back up the current build,
-    // and swap it in. Mirrored into a Queue-tab item by PollXfers.
+    // and swap it in. Mirrored into a Queue-tab item by PollXfers. Picks the
+    // first free slot in umi_jobs; if all UMI_MAX are busy, toasts rather than
+    // starting (see UmiStart's definition).
     void UmiStart(const UpdSource &e, const std::string &url,
                   const std::string &tag, const std::string &dest,
                   const std::string &cur_ver, bool fresh,
                   const std::string &asset);
-    static void UmiThread(void *arg);
-    static int UmiProgress(void *ud, u64 now, u64 total);
-    void UmiTick();                      // finalize once the download reports done
+    static void UmiThread(void *arg);    // arg is a UmiJob*
+    static int UmiProgress(void *ud, u64 now, u64 total); // ud is a UmiJob*
+    void UmiTick(int job);               // finalize job once its download reports done
 
     // LAN collection import helpers.
     void ImportStart(bool onboarding = false);
@@ -1475,7 +1629,10 @@ class MainApplication : public pu::ui::Application {
     // the user confirms each). kind 0 = an exact (hash-identical) duplicate, in
     // which case `target` holds the kept copy's path; kind 1 = misfiled, and
     // `target` is the console folder id it should move to; kind 2 = a redundant
-    // 1G1R clone, with `target` holding the kept copy's name.
+    // 1G1R clone, with `target` holding the kept copy's name; kind 3 = an
+    // orphaned file (zero-byte, or a stray ".part" leftover from an interrupted
+    // Wi-Fi/MTP receive into a console folder -- see httpsrv.c's upload path),
+    // with `target` holding "empty" or "part" to pick the row label.
     struct TidyIssue {
         std::string path, name, console, target;
         int kind = 0;
@@ -1486,14 +1643,34 @@ class MainApplication : public pu::ui::Application {
     volatile int tidy_files_done = 0;
     volatile int tidy_files_total = 0;
     bool tidy_onegr = false; // the last scan was 1G1R (affects result labels)
+    // Stale hashcache/vfystatus rows (pointing at files no longer on disk)
+    // dropped during the last whole-library tidy scan; TidyTick toasts this
+    // count once, right before showing the results. 0 after a 1G1R run or a
+    // console-scoped tidy, neither of which prunes the caches (see TidyThread).
+    int tidy_pruned_cache = 0;
     // When set, the tidy scan is limited to one console: tidy_only is its target
     // key (used to tag files + label the results) and tidy_only_path its resolved
     // install folder. Empty = whole-library scan.
     std::string tidy_only, tidy_only_path;
+    // -1 = show every issue; else restrict the results list (and Ⓧ Fix all) to
+    // one TidyIssue::kind. Reset to -1 on every fresh scan so a filter from a
+    // previous visit never hides a brand new result set.
+    int tidy_kind_filter = -1;
+    // Row index actually shown -> tidy_issues index, since a filter can hide
+    // entries. Same convention as boxart_results_order/vfy_missing_order.
+    std::vector<int> tidy_results_order;
     void TidyStart(const std::string &only = "", const std::string &only_path = "");
     void TidyTick();
     void TidyResults();
     void TidyActSel(); // A on an issue: confirm + perform the single fix
+    void TidyFixAll();       // X: confirm once, then apply every filtered-visible issue
+    void TidyFilterDialog(); // Y: pick which kind(s) to show
+    // Toasts tidy_pruned_cache once (if >0) and zeroes it, so a scan reports
+    // its stale-cache cleanup exactly once regardless of which of Tidy's three
+    // completion paths (async Tick, or either scan's synchronous fallback)
+    // reached it -- unlike TidyResults, which re-runs on every single-issue
+    // fix and would otherwise re-toast on each one.
+    void TidyReportPruned();
     // 1G1R clone reduction: reuses the tidy results screen + confirm-each fix,
     // but the scan groups No-Intro-named files by title and flags all but the
     // most-preferred regional/revision copy in each group.
@@ -1519,4 +1696,204 @@ class MainApplication : public pu::ui::Application {
     void GotoLargestFiles();
     void LargeFileOpenSel();   // A: jump to the file's console folder in the Library
     void LargeFileDeleteSel(); // X: delete it directly (danger confirm)
+
+    // "Scan for Box Art": walks the local library (games only), fuzzy-searches
+    // SteamGridDB for each distinct title, and caches whatever it finds — see
+    // boxart.h. Opt-in: gated on Settings -> Account holding a SteamGridDB API
+    // key. A download is never destructive, so unlike Tidy there's nothing to
+    // confirm per item — this just reports the outcome.
+    struct BoxArtRow {
+        std::string title, console;
+        bool found = false;
+        // Empty for a game row (the boxart cache key is `title` itself, same
+        // as ever). Set only for a console-art scan row (boxart_console_mode):
+        // the real cache key ("console:<target>") to resolve/search/forget
+        // under -- `title` there is the console's *display* name shown to the
+        // user, not a valid key on its own.
+        std::string key;
+        // Mirrors `key`: empty for a game row. For a console row, the raw
+        // ConsoleGroup::target -- lets BoxArtResultsRowMenu flip use_boxart
+        // back off on a delete without re-parsing it out of `key`.
+        std::string console_target;
+        // Name-match confidence (0-100, see ba_name_score in boxart.c) from
+        // whichever boxart_fetch* call resolved this row THIS pass -- -1 when
+        // there's no fresh score to show (a miss, or a cache short-circuit
+        // that skipped searching entirely). Only meaningful when `found` is
+        // true; GotoBoxArtResults flags anything below a low threshold as
+        // "check this one" instead of trusting it silently.
+        int score = -1;
+    };
+    std::vector<BoxArtRow> boxart_rows;
+    // Which rows GotoBoxArtResults actually rendered, in display order — maps
+    // a displayed row index (this->layout->Sel()) back to boxart_rows when
+    // boxart_result_filter is hiding some. Same convention as
+    // vfy_missing_order for the Verify screen's own filter.
+    std::vector<int> boxart_results_order;
+    // 0 = show every scanned title, 1 = found only, 2 = not found only, 3 =
+    // low-confidence hits only (see BoxArtRow::score). Reset to 0 on every
+    // fresh scan (BoxArtScanStart) so an old filter never hides a brand new
+    // result set.
+    int boxart_result_filter = 0;
+    BgTask boxart;
+    volatile bool boxart_cancel = false;
+    volatile int boxart_done = 0;
+    volatile int boxart_total = 0;
+    // When set, the scan is limited to one console (launched from its
+    // per-console Options panel instead of the global Tools panel): boxart_only
+    // is its target key and boxart_only_path its resolved install folder, same
+    // scoping convention as tidy_only/tidy_only_path above. Empty = whole-library.
+    std::string boxart_only, boxart_only_path;
+    // true: this run is a bulk *console*-icon scan (every ConsoleGroup, art
+    // cached under "console:<target>" -- see ConsoleGroup::use_boxart)
+    // instead of the normal per-game scan. Ignores boxart_only/only_path --
+    // there's no per-console scope narrower than "one console", which is
+    // just that console's own Console Art > Find/Change Box Art already.
+    // Reset on every BoxArtScanStart call so a stale mode never survives
+    // into an unrelated scan.
+    bool boxart_console_mode = false;
+    // Console-mode only: when true, re-query *every* console, including ones
+    // already resolved (via boxart_fetch_query's always-overwrite contract)
+    // instead of boxart_fetch_titled's default "skip what's already cached"
+    // pass. Without this a bad automatic pick from an earlier scan was a dead
+    // end -- re-running the scan silently no-op'd on every already-"found"
+    // console forever. Ignored outside console_mode.
+    bool boxart_console_force = false;
+    // Game-mode (!console_mode) sibling of boxart_console_force -- same
+    // "re-query even what's already resolved" override, for Tools > Scan Box
+    // Art's own Rescan All. Both flags come from BoxArtScanStart's single
+    // `force_all` argument, split by whichever mode is actually active, so
+    // exactly one is ever meaningful in a given run.
+    bool boxart_game_force = false;
+    void BoxArtScanStart(const std::string &only = "",
+                         const std::string &only_path = "",
+                         bool console_mode = false, bool force_all = false);
+    static void BoxArtScanThread(void *arg);
+    void BoxArtScanTick();
+    void GotoBoxArtResults();
+    void BoxArtResultsFilterDialog(); // X: All / Found / Not found
+    void BoxArtResultsRowMenu(int idx); // A on a row: search custom, or delete if found
+    // Shared by BoxArtResultsRowMenu and the Library "A on a game" File
+    // dialog: prompts for a search string (seeded with `title`), then opens
+    // the art picker (BoxArtPickStart) on whatever game that search best
+    // matches. `return_screen`/`return_idx` say where to land once the user
+    // picks a cover or backs out -- BoxArtPickReturn does the actual
+    // dispatch once the async work finishes, since (unlike the old direct
+    // boxart_fetch_query call this replaced) there's now a whole screen of
+    // browsing in between the prompt and the outcome. `console_target` is
+    // only non-empty when called for a console-art results row -- carried
+    // through to BoxArtPickStart so a successful pick still flips that
+    // console's use_boxart on (see BoxArtPickConsoleCommit). `seed` is the
+    // search prompt's initial text when it needs to differ from `title` --
+    // a console row's cache key ("console:<target>") isn't something to show
+    // or search on, so its caller passes the console's real display name
+    // here instead; empty (every other caller) seeds with `title` itself,
+    // same as before this parameter existed.
+    void BoxArtCustomSearch(const std::string &title, Screen return_screen,
+                            int return_idx,
+                            const std::string &console_target = "",
+                            const std::string &seed = "");
+
+    // "View & select art": rather than blindly saving SteamGridDB's top-
+    // ranked grid image (the old boxart_fetch_query behaviour), list every
+    // grid image for the matched game and let the user browse thumbnails —
+    // poster cards in the shared CardGrid, same visual language as the
+    // Installed game list's own cover art — before one is downloaded for
+    // real. See boxart.h's BoxArtCandidate / boxart_list_candidates.
+    struct BoxArtPickCtx {
+        std::string title; // library title the final pick is recorded under
+        std::string query; // search string sent to SteamGridDB (may differ
+                           // from title -- the custom-search prompt lets the
+                           // user retype it)
+        Screen return_screen = Screen::Installed;
+        int return_idx = -1; // BoxArtResults row, or Installed row to reselect
+        // Non-empty only for a console-art pick (ConsoleArtMenu): the
+        // console's target, so a successful confirm can flip
+        // ConsoleGroup::use_boxart on and persist it. Empty for every game
+        // pick -- title alone is enough there.
+        std::string console_target;
+    };
+    BoxArtPickCtx boxart_pick;
+    std::vector<BoxArtCandidate> boxart_candidates;
+    // Local thumb path per candidate (boxart_fetch_thumb's output), parallel
+    // to boxart_candidates; empty string for a slot whose thumb download
+    // failed (GotoBoxArtPicker falls back to a placeholder icon for those).
+    std::vector<std::string> boxart_thumb_paths;
+    // Decoded thumbnail textures currently on screen -- owned by the picker,
+    // unlike CardGrid's normal "borrowed from a shared cache" icons, since
+    // these are one-off previews nothing else will ever reuse. Freed by
+    // BoxArtPickFreeTex, never left for an LRU cache to evict.
+    std::vector<pu::sdl2::Texture> boxart_pick_tex;
+    BgTask boxpick;
+    // false while boxpick is listing candidates + fetching thumbs; true once
+    // the user has picked one and boxpick is downloading/recording it for
+    // real -- BoxArtPickTick reads this to know which step just finished.
+    volatile bool boxpick_confirm = false;
+    volatile int boxpick_confirm_idx = -1; // which candidate is being confirmed
+    volatile bool boxpick_result = false;  // outcome of the just-finished confirm
+    void BoxArtPickStart(const std::string &title, const std::string &query,
+                         Screen return_screen, int return_idx,
+                         const std::string &console_target = "");
+    static void BoxArtPickListThread(void *arg);
+    static void BoxArtPickConfirmThread(void *arg);
+    void BoxArtPickTick(); // per frame while boxpick.running, from HandleInput
+    void GotoBoxArtPicker();
+    void BoxArtPickFreeTex();
+    void BoxArtPickConfirm(int idx); // A on a candidate: download it for real
+    void BoxArtPickReturn(); // B, or after a confirm lands: back to boxart_pick's origin
+    // Shared tail of a landed confirm: flips ConsoleGroup::use_boxart on (and
+    // persists it) for a successful console-art pick. No-op for a game pick
+    // or a miss. See its definition for the full rationale.
+    void BoxArtPickConsoleCommit(bool ok);
+
+    // Rows built by GotoInstalled whose title has a cached cover on disk that
+    // isn't decoded into a texture yet (see boxart_row_icon) — {row index,
+    // title}, in row order. BoxArtIconsPoll, called every frame from
+    // HandleInput, decodes a few of the ones currently scrolled into view per
+    // frame and drops them from this list once resolved. Keeps a big library's
+    // list build cheap: no row pays a PNG decode until it's actually visible.
+    std::vector<std::pair<s32, std::string>> boxart_pending;
+    void BoxArtIconsPoll();
+
+    // Auto-fetch for newly landed games (queue_on_landed, queue.h; Appearance
+    // -> "Auto-Fetch New Art", g_prefs.box_art_auto_fetch, default on). A
+    // download/extract worker thread pushes each landed title's query name
+    // into a small file-static pending queue (see boxart_auto_on_landed in
+    // MainApplication.cpp) via a plain mutex, since it can't touch g_prefs,
+    // g_creds, or this->boxart's index the way the UI thread does. This
+    // BgTask -- deliberately separate from `boxart` above, never both running
+    // at once (see BoxArtAutoPoll/BoxArtScanStart) -- drains that queue one
+    // title at a time on its own thread, silently: no screen change, no
+    // progress UI, same as a manual scan resolving the same title later would
+    // just be found already cached.
+    BgTask boxart_auto;
+    volatile bool boxart_auto_cancel = false;
+    void BoxArtAutoPoll(); // per frame, from HandleInput: start/reap the drain
+    static void BoxArtAutoThread(void *arg);
+
+    // "Manage Box Art" (Storage sub-screen): browse what's actually cached on
+    // disk, grouped by console, and delete a cover to force it to be
+    // re-resolved on a future scan. Distinct from the scan results above (a
+    // one-off report of a single run) — this reflects the persistent index at
+    // any time, whether or not a scan has ever been run this session.
+    struct BoxArtManageRow {
+        std::string console, title;
+    };
+    std::vector<BoxArtManageRow> boxart_manage_rows; // only titles with a cached hit
+    BgTask boxman;
+    volatile bool boxman_cancel = false;
+    std::string boxart_manage_console; // selected console for BoxArtManageList
+    void BoxArtManageStart();
+    static void BoxArtManageThread(void *arg);
+    void BoxArtManageTick();
+    void GotoBoxArtManageConsoles();
+    void GotoBoxArtManageList(const std::string &console);
+    // X: delete the marked set (Y toggles a mark, blue-tag same as everywhere
+    // else in the app), or just the highlighted row when nothing is marked.
+    void BoxArtManageDeleteSel();
+
+    // Data Files > Art Cache: a SideMenu (not its own screen — there are only
+    // two things to do here) reporting the on-disk cache's size, with a way
+    // to browse/delete individual covers (reuses BoxArtManageStart above) or
+    // wipe the whole cache at once.
+    void ArtCacheMenu();
 };

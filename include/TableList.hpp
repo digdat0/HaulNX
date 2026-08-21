@@ -68,9 +68,14 @@ class TableList : public pu::ui::elm::Element {
     // Whole-list fade-in after Clear(), matching CardGrid's enter fade. The
     // queue screen rebuilds its list every frame and opts out via Clear(false).
     s32 enter_alpha = 255;
+    // Free-running frame counter driving the accent row's progress-bar
+    // shimmer (RenderGradBar) and its under-row shadow pulse -- decorative
+    // motion only, never read outside Draw().
+    s32 anim_frame = 0;
     pu::ui::Color page_bg{0, 0, 0, 0}; // layout bg; a=0 disables the fade
     pu::ui::Color row_bg, row_alt_bg, focus_bg, scroll_clr, mark_bg, prog_clr,
-        accent_bg, pill_bg;
+                 prog2_clr,
+        accent_bg, pill_bg, fail_clr;
     // Baked rounded-fill tiles (one blit each instead of a software rounded
     // fill per row per frame) + scrollbar gradient strip. Rebuilt on theme
     // change; see gfx_tile.hpp.
@@ -176,8 +181,7 @@ class TableList : public pu::ui::elm::Element {
         this->tile_accent = BakeRoundTile(tw, th, RowRadius, this->accent_bg);
         this->tile_mark = BakeRoundTile(tw, th, RowRadius, this->mark_bg);
         this->tile_focus = BakeRoundTile(tw, th, RowRadius, this->focus_bg);
-        this->grad_tex = BakeVGradient(256, this->prog_clr,
-                                       pu::ui::Color(56, 130, 225, 255));
+        this->grad_tex = BakeVGradient(256, this->prog_clr, this->prog2_clr);
         this->tiles_dirty = false;
     }
 
@@ -310,13 +314,27 @@ class TableList : public pu::ui::elm::Element {
     // Live download fill: the signature green->blue gradient (same as the
     // scrollbar thumb), positioned along the full track so the head colour
     // deepens as the download advances. Drawn as short vertical strips whose
-    // ends taper to approximate the rounded caps.
+    // ends taper to approximate the rounded caps. `shimmer` (accent/hero row
+    // only -- see the Draw loop) adds a soft bright band that sweeps along
+    // the track once every couple seconds, so the one row that's actually
+    // transferring right now is the one part of the screen that keeps
+    // moving on its own, not just a static gradient.
     void RenderGradBar(pu::ui::render::Renderer::Ref &drawer, s32 bx, s32 by,
-                       s32 fw, s32 bh, s32 r, s32 track_w) {
-        // Green end follows the theme accent (deeper on the light theme).
+                       s32 fw, s32 bh, s32 r, s32 track_w,
+                       bool shimmer = false, s32 anim_frame = 0) {
+        // Both ends follow the selected accent preset (theme-adjusted too:
+        // deeper on the light theme, see accent_green()/accent_blue()).
         pu::ui::Color g0 = this->prog_clr;
         g0.a = 255;
-        const pu::ui::Color g1(56, 130, 225, 255);
+        pu::ui::Color g1 = this->prog2_clr;
+        g1.a = 255;
+        const s32 spread = 46; // shimmer half-width, in px
+        s32 shimmer_x = 0;
+        if (shimmer) {
+            s32 period = track_w + 2 * spread;
+            if (period < 1) period = 1;
+            shimmer_x = ((anim_frame * 6) % period) - spread;
+        }
         s32 i = 0;
         while (i < fw) {
             s32 de = i < fw - 1 - i ? i : fw - 1 - i; // dist to nearer end
@@ -329,6 +347,17 @@ class TableList : public pu::ui::elm::Element {
             pu::ui::Color c((u8)(g0.r + ((s32)g1.r - g0.r) * t),
                             (u8)(g0.g + ((s32)g1.g - g0.g) * t),
                             (u8)(g0.b + ((s32)g1.b - g0.b) * t), 255);
+            if (shimmer) {
+                s32 dist = i - shimmer_x;
+                if (dist < 0) dist = -dist;
+                if (dist < spread) {
+                    float k = 1.0f - (float)dist / (float)spread;
+                    k *= k; // ease the falloff toward the band's edges
+                    c.r = (u8)(c.r + (255 - c.r) * k * 0.55f);
+                    c.g = (u8)(c.g + (255 - c.g) * k * 0.55f);
+                    c.b = (u8)(c.b + (255 - c.b) * k * 0.55f);
+                }
+            }
             if (bh - 2 * inset > 0) {
                 drawer->RenderRectangleFill(c, bx + i, by + inset, step,
                                             bh - 2 * inset);
@@ -345,7 +374,9 @@ class TableList : public pu::ui::elm::Element {
           // Blue selection highlight (theme overrides via SetThemeColors).
           focus_bg(45, 95, 180, 255), scroll_clr(80, 86, 100, 255),
           mark_bg(60, 80, 120, 255), prog_clr(146, 214, 36, 255),
+          prog2_clr(56, 130, 225, 255),
           accent_bg(34, 54, 20, 255), pill_bg(255, 255, 255, 20),
+          fail_clr(224, 82, 82, 255),
           cache_top(-1), dirty(true) {
         this->font = pu::ui::GetDefaultFont(pu::ui::DefaultFontSize::MediumLarge);
     }
@@ -361,11 +392,13 @@ class TableList : public pu::ui::elm::Element {
                         pu::ui::Color prog = {146, 214, 36, 255},
                         pu::ui::Color accent = {34, 54, 20, 255},
                         pu::ui::Color pill = {255, 255, 255, 20},
-                        pu::ui::Color page = {0, 0, 0, 0}) {
+                        pu::ui::Color page = {0, 0, 0, 0},
+                        pu::ui::Color fail = {224, 82, 82, 255},
+                        pu::ui::Color prog2 = {56, 130, 225, 255}) {
         this->row_bg = bg; this->row_alt_bg = alt; this->focus_bg = focus;
         this->scroll_clr = scroll; this->mark_bg = mark;
         this->prog_clr = prog; this->accent_bg = accent; this->pill_bg = pill;
-        this->page_bg = page;
+        this->page_bg = page; this->fail_clr = fail; this->prog2_clr = prog2;
         this->dirty = true;
         this->tiles_dirty = true;
     }
@@ -383,12 +416,12 @@ class TableList : public pu::ui::elm::Element {
         this->sel = 0;
         this->scroll_top = 0;
         this->marked.clear();
-        // Enter fade removed for performance: it re-rendered the whole list
-        // for ~8 frames on every screen/tab change, which stuttered under
-        // download load. Screens now appear instantly. `fade` kept for
-        // call-site compatibility.
-        (void)fade;
-        this->enter_alpha = 255;
+        // The fade re-renders the whole list for ~8 frames, which stutters
+        // under download load — so the call site (MainLayout::ClearMenu)
+        // only passes fade=true when queue_io_active() says nothing is
+        // actively moving bytes right now. `fade=false` (screens that rebuild
+        // every tick, e.g. Queue) always skips it regardless.
+        this->enter_alpha = fade ? 0 : 255;
         this->dirty = true;
         // Content changed under the finger: drop any in-progress touch so a
         // stale tap can't select/activate a row of the new list.
@@ -432,6 +465,20 @@ class TableList : public pu::ui::elm::Element {
     s32 Count() { return (s32)this->rows.size(); }
     s32 GetSelected() { return this->sel; }
     s32 RowsVisible() { return this->rows_visible; }
+    // First visible row index — pairs with RowsVisible() so a caller can tell
+    // which rows are actually on screen right now. Used to lazily resolve
+    // per-row icons (box art) only as they scroll into view instead of at
+    // AddRow2 time for the whole list.
+    s32 ScrollTop() const { return this->scroll_top; }
+    // Swap a single row's icon in place, no rebuild — same
+    // no-rebuild-keeps-scroll contract as SetRowRight.
+    void SetRowIcon(const s32 i, pu::sdl2::Texture icon) {
+        if (i < 0 || i >= (s32)this->rows.size()) {
+            return;
+        }
+        this->rows[i].icon = icon;
+        this->dirty = true;
+    }
     void SetSelected(const s32 i) {
         s32 n = (s32)this->rows.size();
         if (n <= 0) {
@@ -491,7 +538,11 @@ class TableList : public pu::ui::elm::Element {
             this->RebakeTiles();
         }
         if (this->enter_alpha < 255) {
-            s32 e = this->enter_alpha + 32;
+            // Ease-out: big jump first, tapering off, instead of a linear
+            // ramp — reads as settling into place rather than a metronome.
+            s32 step = (255 - this->enter_alpha) / 3;
+            if (step < 6) step = 6;
+            s32 e = this->enter_alpha + step;
             this->enter_alpha = e > 255 ? 255 : e;
         }
         // Advance the selection fade (restart when the selection moved).
@@ -502,6 +553,7 @@ class TableList : public pu::ui::elm::Element {
             s32 a = this->sel_alpha + 30;
             this->sel_alpha = a > 255 ? 255 : a;
         }
+        this->anim_frame++;
         for (s32 i = 0; i < this->rows_visible; i++) {
             s32 ridx = this->scroll_top + i;
             s32 rowy = ry + i * this->row_h;
@@ -527,6 +579,16 @@ class TableList : public pu::ui::elm::Element {
             // above the progress bar when present (so nothing overlaps it).
             s32 cont_top = rry;
             s32 cont_h = rrh - (has_bar ? (bar_bh + 5) : 0);
+            // Hero row: the one transfer actually in flight gets a soft
+            // shadow cast beneath it, gently pulsing, so it visibly lifts off
+            // the rest of the queue instead of just being tinted like a
+            // normal row.
+            if (is_accent) {
+                s32 ph = this->anim_frame % 90;
+                s32 tri = ph < 45 ? ph : (90 - ph); // 0..44..0 triangle wave
+                drawer->RenderShadowSimple(rrx, rry + rrh, rrw, 10,
+                                           90 + tri * 70 / 45);
+            }
             // Floating rounded row: one blit of the baked tile (flat fill only
             // if the tile failed to bake).
             pu::sdl2::Texture tile = is_marked ? this->tile_mark
@@ -611,11 +673,11 @@ class TableList : public pu::ui::elm::Element {
                     if (this->rows[ridx].bar != 0) {
                         this->RenderGlossBar(
                             drawer, bx, by, fw, bh, r,
-                            this->rows[ridx].bar == 2
-                                ? pu::ui::Color(224, 82, 82, 255)
-                                : this->prog_clr);
+                            this->rows[ridx].bar == 2 ? this->fail_clr
+                                                       : this->prog_clr);
                     } else {
-                        this->RenderGradBar(drawer, bx, by, fw, bh, r, bw);
+                        this->RenderGradBar(drawer, bx, by, fw, bh, r, bw,
+                                            is_accent, this->anim_frame);
                     }
                 }
             }

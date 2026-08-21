@@ -16,6 +16,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 
 static bool hc_reserve(HashCache *c, int need) {
     if (need <= c->cap) {
@@ -163,6 +164,35 @@ void hashcache_save(HashCache *c, const char *path) {
     }
     fclose(f);
     c->dirty = false;
+}
+
+int hashcache_prune(HashCache *c) {
+    /* Compact in place, preserving relative order within both the sorted
+     * region and the unsorted tail (a stable filter of a sorted run is still
+     * sorted), so hc_find's binary-search-then-tail-scan split stays valid
+     * without a re-sort. new_sorted counts survivors seen while still inside
+     * the original [0,sorted) region. */
+    int w = 0, new_sorted = 0;
+    for (int i = 0; i < c->count; i++) {
+        struct stat st;
+        if (stat(c->e[i].path, &st) != 0) {
+            continue; /* file's gone: drop this row */
+        }
+        if (w != i) {
+            c->e[w] = c->e[i];
+        }
+        w++;
+        if (i < c->sorted) {
+            new_sorted = w;
+        }
+    }
+    int removed = c->count - w;
+    if (removed > 0) {
+        c->count = w;
+        c->sorted = new_sorted;
+        c->dirty = true;
+    }
+    return removed;
 }
 
 void hashcache_free(HashCache *c) {

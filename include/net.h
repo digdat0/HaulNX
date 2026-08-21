@@ -29,12 +29,34 @@ typedef uint64_t (*net_rate_cb)(void *userdata);
 char *http_get(const char *url, long *http_code, size_t *out_len);
 
 /*
+ * Append one HH:MM:SS-prefixed line to the network debug log (the same file
+ * every GET/DL trace line lands in). For callers outside net.c whose events
+ * are worth correlating against that trace -- e.g. queue.c marking the exact
+ * moment an item leaves QUEUED for DOWNLOADING, so a "sat there for 15s before
+ * anything happened" report shows up as a visible gap between two timestamped
+ * lines instead of being invisible. Safe from any thread.
+ */
+#if defined(__GNUC__)
+__attribute__((format(printf, 1, 2)))
+#endif
+void net_log_event(const char *fmt, ...);
+
+/*
  * Set the GitHub personal-access token sent as a Bearer Authorization header on
  * api.github.com GETs (and only those hosts), so the update checks aren't capped
  * by GitHub's 60-req/hr unauthenticated limit. Pass NULL/"" to clear it. Copied
  * internally; safe to call from the UI thread while GETs run on workers.
  */
 void net_set_github_token(const char *tok);
+
+/*
+ * Set the SteamGridDB API key sent as a Bearer Authorization header on
+ * www.steamgriddb.com GETs (and only that host) — the box art search/grid
+ * lookups a user opts into from Settings. The CDN image download itself needs
+ * no key. Pass NULL/"" to clear it. Copied internally; safe to call from the
+ * UI thread while GETs run on workers.
+ */
+void net_set_steamgriddb_key(const char *key);
 
 /*
  * A private connection for parallel GETs (e.g. bulk metadata refresh). Each
@@ -45,6 +67,15 @@ void net_set_github_token(const char *tok);
 void *net_conn_new(void);
 void net_conn_free(void *conn);
 char *http_get_on(void *conn, const char *url, long *http_code, size_t *out_len);
+
+/*
+ * Network self-test's reachability check: a small GET on its own curl handle
+ * (not the shared http_get() one), so it can't block behind unrelated
+ * in-flight traffic and can be cancelled. Returns true on a 2xx response.
+ * Set *cancel to 1 from another thread to abort early (checked each progress
+ * tick, same convention as SpeedProg.cancel); NULL if not cancellable.
+ */
+bool net_selftest(const char *url, volatile int *cancel);
 
 /*
  * True if a URL's host is archive.org or a *.archive.org subdomain. The one
@@ -69,12 +100,23 @@ bool net_is_archive_org_url(const char *url);
  * rate_cb (with rate_ud) supplies a live download-rate cap in bytes/sec; pass
  * NULL for an unthrottled transfer.
  */
+/*
+ * transport_err (optional, may be NULL): set true when the failure was a
+ * curl/transport-level error (stalled connection, reset, DNS, TLS, etc. --
+ * anything CURLcode != CURLE_OK) rather than a clean HTTP response the server
+ * fully delivered. A stall (see CURLOPT_LOW_SPEED_LIMIT/TIME below) commonly
+ * aborts *after* the response headers already arrived, so http_code can still
+ * read 200 even though nothing resembling a real 200 was ever finished -- a
+ * caller deciding whether a failure is worth retrying needs this bit to tell
+ * "the server answered 200 and meant it" apart from "the connection died
+ * partway through a 200 that was never going to complete".
+ */
 bool http_download(const char *url, const char *dest_path,
                    const char *extra_header,
                    net_progress_cb cb, void *userdata,
                    net_rate_cb rate_cb, void *rate_ud,
                    uint64_t resume_from,
-                   long *http_code);
+                   long *http_code, bool *transport_err);
 
 /* Which half of the speed test is running (see SpeedProg). */
 typedef enum {

@@ -53,6 +53,21 @@ if missing:
     for e, k in missing:
         print(f"  {e} -> \"{k}\"", file=sys.stderr)
 
+# Check every other language file has a translation for each en.json key.
+# Non-fatal — just a build-time nudge so gaps get caught key-by-key instead
+# of accumulating into a big periodic sweep.
+lang_dir = os.path.join(topdir, "romfs", "lang")
+en_keys = set(strings.keys())
+for fname in sorted(os.listdir(lang_dir)):
+    if not fname.endswith(".json") or fname in ("en.json", "update_sources.json"):
+        continue
+    lang_path = os.path.join(lang_dir, fname)
+    with open(lang_path, "r", encoding="utf-8") as f:
+        lang_strings = json.load(f)
+    missing_keys = sorted(en_keys - lang_strings.keys())
+    if missing_keys:
+        print(f"WARNING: {fname} missing {len(missing_keys)} translation(s): {missing_keys}", file=sys.stderr)
+
 # Generate
 lines = []
 lines.append("/* AUTO-GENERATED from romfs/lang/en.json — do not edit by hand. */")

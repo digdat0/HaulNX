@@ -76,6 +76,16 @@ extern "C" {
  * browser can show a lasting badge after a verify pass instead of that result
  * evaporating with the transient VerifyJob. See vfystatus.h. */
 #define VFYSTATUS_PATH  CACHE_DIR "/vfystatus.tsv"
+/* Downloaded SteamGridDB cover art (one PNG per resolved title) plus the
+ * title -> art (or confirmed-miss) index that keeps a re-scan from re-
+ * querying a title already resolved either way. See boxart.h. */
+#define BOXART_DIR        CACHE_DIR "/boxart"
+#define BOXART_INDEX_PATH CACHE_DIR "/boxart_index.tsv"
+/* Scratch home for the art picker's preview thumbnails (boxart_fetch_thumb) --
+ * small, disposable, overwritten per slot each time the picker opens, never
+ * indexed. Kept apart from BOXART_DIR so a picker session can't be mistaken
+ * for a resolved title's real cover. */
+#define BOXART_TMP_DIR    CACHE_DIR "/boxart_tmp"
 /* No-Intro/Redump DAT files for library verification, one per console folder:
  * DATS_DIR/<target>.dat. User-supplied — the app ships none. */
 #define DATS_DIR      CONFIG_DIR "/dats"
@@ -145,6 +155,14 @@ typedef struct {
      * roms_normalize_path). The console name is NOT appended: this is the final
      * directory. */
     char folder[512];
+    /* false (default): Browse/Installed show this console's built-in square
+     * icon. true: they show its SteamGridDB cover art instead, same as a
+     * game's box art — resolved and cached under the "console:<target>" key
+     * (see boxart.h) so it shares the game-cover index/cache rather than
+     * needing a parallel one. Set from the console's Options > Console Art
+     * menu; only ever true when a cover has actually been picked, and only
+     * takes effect while a SteamGridDB key is configured. */
+    bool use_boxart;
 } ConsoleGroup;
 
 typedef struct {
@@ -162,6 +180,11 @@ typedef struct {
     char github_token[128]; /* optional GitHub PAT; when set, sent as a Bearer
                                token on api.github.com update checks so the
                                unauthenticated 60/hr rate limit doesn't stall them */
+    char steamgriddb_key[128]; /* optional SteamGridDB API key; when set, the
+                                  Tools "Scan for Box Art" action can fuzzy-
+                                  search + download cover art for the local
+                                  library. Nothing box-art-related runs without
+                                  a user-supplied key — see boxart.h. */
 } Credentials;
 
 #define MAX_PINNED_DIRS 32
@@ -188,6 +211,11 @@ typedef struct {
                             auto-install (default true) */
     char lang[16];       /* language code, e.g. "en", "es", "ja"; empty = English */
     char theme[16];      /* "dark" (default) or "light" */
+    char accent[16];     /* accent color preset key: "signature" (default),
+                            "violet", "ember", "aqua", "rose", "slate" --
+                            drives accent_green()/accent_blue() in
+                            MainApplication.cpp, so it recolors every ring,
+                            glow, progress bar and pulse dot app-wide */
     bool card_view;      /* true: console lists render as a card grid */
     /* true (default): the Installed browser collapses a multi-file game — a
      * .cue with its .bin tracks, a multi-disc set — into one row standing for
@@ -250,6 +278,23 @@ typedef struct {
      * the console never presents itself as a USB file-transfer device, so a
      * cable plugged in "just to charge" can't be used to browse the library. */
     bool mtp_enabled;
+    /* true (default): the Installed list shows cached SteamGridDB covers and
+     * lets a scan resolve new ones. false: the list never looks up or decodes
+     * box art, for anyone who'd rather not have the extra disk/network use —
+     * cached covers already on disk are left alone and still browsable from
+     * Storage > Manage Box Art, just not shown in the row list. See
+     * boxart_row_icon, which is the single point this gates. */
+    bool box_art_enabled;
+    /* true (default): a newly landed game (finished download, or an extracted
+     * archive's contents) is queued for a quiet, single-title box art fetch in
+     * the background -- no scan screen, no scan progress, just the cover
+     * showing up next time that folder's list is built. Independent of
+     * box_art_enabled above: this only decides whether new arrivals trigger a
+     * fetch, not whether already-cached covers are shown. Still gated on a
+     * SteamGridDB key being set (see MainApplication's queue_on_landed
+     * handler) -- turning this off just means new games wait for the next
+     * manual Scan. */
+    bool box_art_auto_fetch;
 } Prefs;
 
 /* Relocate app files left in the old flat layout (everything directly under

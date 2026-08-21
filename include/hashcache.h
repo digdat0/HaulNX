@@ -49,6 +49,13 @@ void hashcache_put(HashCache *c, const char *path, uint64_t size,
 /* Write the cache back to `path`, but only if it changed since load. */
 void hashcache_save(HashCache *c, const char *path);
 
+/* Drop every entry whose file no longer exists on disk (deleted, moved, or
+ * renamed since it was hashed) -- a size/mtime freshness check never catches
+ * this, since a missing path simply never gets looked up again, so a removed
+ * file's row would otherwise sit in the TSV forever. Marks the cache dirty
+ * when anything was removed. Returns the number of entries dropped. */
+int hashcache_prune(HashCache *c);
+
 void hashcache_free(HashCache *c);
 
 #ifdef __cplusplus

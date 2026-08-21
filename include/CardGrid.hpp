@@ -1,15 +1,19 @@
 #pragma once
 
-// A 4-wide grid of "cards" (big icon + title + subtitle) used as the optional
-// card view for the console lists (Browse home, Installed root). Like
-// TableList it is passive: the app drives selection (Move / SetSelected) and
-// OnInput only handles touch (tap select, tap-again activate, drag scroll).
-// Card icons are BORROWED from the shared console-icon cache — never freed
+// A grid of "cards" (big icon + title + subtitle) used as the optional card
+// view for the console lists (Browse home, Installed root) - 4-wide by
+// default, see SetCols. Installed's game list additionally has a "poster"
+// mode (SetPoster) that narrows to 6-7 columns and leads each card with box
+// art instead of a small icon, see CardH()/Card::art. Like TableList it is
+// passive: the app drives selection (Move / SetSelected) and OnInput only
+// handles touch (tap select, tap-again activate, drag scroll). Card icons
+// are BORROWED from the shared console-icon/box-art caches — never freed
 // here; the rendered text textures are cached and owned by this element.
 
 #include <cmath>
 #include <pu/Plutonium>
 #include <gfx_tile.hpp>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -21,6 +25,11 @@ class CardGrid : public pu::ui::elm::Element {
         pu::sdl2::Texture icon; // borrowed
         bool pinned; // small logo-green dot in the card's top-left corner
         bool dim = false; // disabled entry: icon renders faded
+        // Poster mode only: true when `icon` is a real box art cover (already
+        // portrait, stretched to fill the image area); false renders it
+        // centred at its natural size instead (the no-cover console-icon
+        // fallback would otherwise squash into a tall rectangle).
+        bool art = false;
         // Queue-mode extras (SetQueueCard): the strings double as the
         // "last rendered" keys for the per-frame diff updates.
         bool queue = false;
@@ -34,6 +43,15 @@ class CardGrid : public pu::ui::elm::Element {
         s32 ring = 0;       // 0 live gradient, 1 done (solid green),
                             // 2 failed (solid red)
         std::string badge;  // queue-position badge text (diff key)
+        // Single-card queue view only: a real console icon has generous
+        // transparent padding baked into its PNG (roughly a 60-75% content
+        // box), so drawing it edge-to-edge at the full icon slot still reads
+        // as comfortably inset. The self-update card's app-logo texture has
+        // none -- full bleed to every edge -- so at the same slot size it
+        // reads as oversized and crowds the corner labels/border above it.
+        // Set true (see console_display_icon's "HaulNX" case) to draw that
+        // texture visibly smaller within the same slot instead.
+        bool logo_icon = false;
     };
 
   private:
@@ -64,11 +82,19 @@ class CardGrid : public pu::ui::elm::Element {
     pu::ui::Color page_bg{0, 0, 0, 0}; // layout bg; a=0 disables the fade
     std::vector<Card> cards;
     std::vector<Cell> cache; // one per card; rebuilt when dirty
+    // Multi-select marks (Installed's poster view, Y button) — mirrors
+    // TableList::marked. A blue border (distinct from the green focus
+    // outline, which tracks the cursor rather than the selection set) tags
+    // marked cards in OnRender.
+    std::set<s32> marked;
     bool dirty;
-    pu::ui::Color card_bg, focus_bg, title_clr, sub_clr;
+    pu::ui::Color card_bg, focus_bg, title_clr, sub_clr, fail_clr{224, 82, 82, 255};
     // Logo green for the selection outline/glow and the icon halo; the theme
     // passes its own variant (bright on dark, deep on light) via SetThemeColors.
     pu::ui::Color glow_clr{146, 214, 36, 255};
+    // Live-ring/scrollbar gradient's far stop -- the other half of the
+    // selected accent pair (glow_clr is the near stop); see SetThemeColors.
+    pu::ui::Color glow2_clr{56, 130, 225, 255};
     // Darkening chip behind the subtitle (count/info line), matching the
     // table view's right-column pills.
     pu::ui::Color pill_clr{0, 0, 0, 95};
@@ -92,12 +118,70 @@ class CardGrid : public pu::ui::elm::Element {
     s32 tch_card = -1;
     bool tch_activate = false;
 
-    static constexpr s32 Cols = 4;
+    // Column count is an instance setting (SetCols) rather than a constant:
+    // the console/settings grids stay 4-wide, but the Installed game-list
+    // poster view narrows the cards to fit 6-7 across. Defaults to the
+    // original 4 so every other screen is unaffected.
+    s32 Cols = 4;
     static constexpr s32 Margin = 30;
     static constexpr s32 Gap = 20;
-    static constexpr s32 CardH = 264;
+    static constexpr s32 CardHNormal = 264;
     static constexpr s32 IconPx = 130;
     static constexpr s32 CardRadius = 14;
+    // Poster mode (Installed game list): the card's top area is the box art
+    // itself at its native 600x900 (2:3) ratio instead of a small centred
+    // icon, with the title + size beneath. bool per-card (Card::art) picks
+    // stretch-to-fill (real cover) vs centred-natural-size (no-cover
+    // fallback icon).
+    bool poster = false;
+    static constexpr s32 PosterPad = 12;
+    static constexpr s32 PosterTextH = 78; // title line + gap + size line
+    // Fixed row height, NOT derived from the card's width. Deriving the
+    // image height from card width (the original approach) made a 6-7 wide
+    // poster row taller than the whole viewport, so only a single row ever
+    // fit and the grid effectively became a sideways one-card-at-a-time
+    // scroll. Fixing the row height instead, and deriving the image's
+    // *width* from the height budget left for it (see the OnRender poster
+    // branch), keeps two full rows on screen with the rest reachable by
+    // scrolling down.
+    static constexpr s32 PosterRowH = 400;
+    s32 CardH() const { return this->poster ? PosterRowH : CardHNormal; }
+    // Slow left-right "reveal" scroll for a poster title too long to fit the
+    // card: pause at the start, glide to show the tail, pause, glide back.
+    // Shared across every overflowing title (one global phase) rather than
+    // per-card, so scrolling titles move in lockstep instead of a jittery mix
+    // of phases when several are visible at once.
+    s32 marquee_frame = 0;
+    // Free-running frame counter driving the active-transfer ("hero") card's
+    // progress-ring shimmer and its under-card shadow pulse -- decorative
+    // motion so the one card that's actually transferring right now reads as
+    // alive at a glance, matching the list view's accent row (TableList's
+    // anim_frame). Increments once per OnRender call, independent of
+    // marquee_frame (which only ticks in poster mode).
+    s32 anim_frame = 0;
+    s32 MarqueeOffset(const s32 overflow) const {
+        if (overflow <= 0) {
+            return 0;
+        }
+        const s32 pause = 70;             // ~1.2s hold at each end, @60fps
+        const s32 px_frames = 4;          // frames per pixel (~15px/s)
+        const s32 glide = overflow * px_frames;
+        const s32 cycle = 2 * pause + 2 * glide;
+        s32 t = this->marquee_frame % cycle;
+        if (t < pause) {
+            return 0;
+        }
+        t -= pause;
+        if (t < glide) {
+            return -(t / px_frames);
+        }
+        t -= glide;
+        if (t < pause) {
+            return -overflow;
+        }
+        t -= pause;
+        return -overflow + (t / px_frames);
+    }
     static constexpr s32 DragThreshold = 16;
     // Single-card mode (self-update download): one enlarged queue-style card
     // centred in the element.
@@ -109,7 +193,7 @@ class CardGrid : public pu::ui::elm::Element {
 
     s32 CardW() const { return (this->w - 2 * Margin - (Cols - 1) * Gap) / Cols; }
     s32 RowsTotal() const { return ((s32)this->cards.size() + Cols - 1) / Cols; }
-    s32 VisRows() const { return (this->h + Gap) / (CardH + Gap); }
+    s32 VisRows() const { return (this->h + Gap) / (CardH() + Gap); }
     s32 MaxScroll() const {
         s32 m = this->RowsTotal() - this->VisRows();
         return m < 0 ? 0 : m;
@@ -175,11 +259,11 @@ class CardGrid : public pu::ui::elm::Element {
     void RebakeTiles() {
         this->FreeTiles();
         const s32 cw = this->CardW();
-        this->tile_card = BakeRoundTile(cw, CardH, CardRadius, this->card_bg);
-        this->tile_hero = BakeRoundTile(cw, CardH, CardRadius, this->glow_clr);
-        this->tile_focus = BakeRoundTile(cw, CardH, CardRadius, this->focus_bg);
-        this->grad_tex = BakeVGradient(256, this->glow_clr,
-                                       pu::ui::Color(56, 130, 225, 255));
+        const s32 ch = this->CardH();
+        this->tile_card = BakeRoundTile(cw, ch, CardRadius, this->card_bg);
+        this->tile_hero = BakeRoundTile(cw, ch, CardRadius, this->glow_clr);
+        this->tile_focus = BakeRoundTile(cw, ch, CardRadius, this->focus_bg);
+        this->grad_tex = BakeVGradient(256, this->glow_clr, this->glow2_clr);
         this->tiles_dirty = false;
     }
 
@@ -296,21 +380,39 @@ class CardGrid : public pu::ui::elm::Element {
                 this->cache.push_back(c);
                 continue;
             }
-            std::string l1, l2;
-            this->SplitTitle(cd.title, this->font_title, (s32)max_tw, l1, l2);
-            c.t1_tex = pu::ui::render::RenderText(this->font_title, l1,
-                                                  this->title_clr, max_tw);
-            c.t1w = pu::ui::render::GetTextureWidth(c.t1_tex);
-            c.t1h = pu::ui::render::GetTextureHeight(c.t1_tex);
-            if (!l2.empty()) {
-                c.t2_tex = pu::ui::render::RenderText(this->font_title, l2,
+            if (this->poster) {
+                // Poster cards keep the title to one line, small (font_tiny,
+                // smaller than the list/root cards' font_sub - the art above
+                // already carries most of the "which game is this" load, and
+                // six-wide cards don't leave room for a wrapped two-line
+                // title). Rendered at *full* width (no max_w) rather than
+                // ellipsized: OnRender clips it to the card and, when it's
+                // too long to fit, marquees it so the whole name is still
+                // reachable instead of being permanently cut off.
+                c.t1_tex = pu::ui::render::RenderText(this->font_tiny, cd.title,
+                                                      this->title_clr);
+                c.t1w = pu::ui::render::GetTextureWidth(c.t1_tex);
+                c.t1h = pu::ui::render::GetTextureHeight(c.t1_tex);
+            } else {
+                std::string l1, l2;
+                this->SplitTitle(cd.title, this->font_title, (s32)max_tw, l1,
+                                 l2);
+                c.t1_tex = pu::ui::render::RenderText(this->font_title, l1,
                                                       this->title_clr, max_tw);
-                c.t2w = pu::ui::render::GetTextureWidth(c.t2_tex);
-                c.t2h = pu::ui::render::GetTextureHeight(c.t2_tex);
+                c.t1w = pu::ui::render::GetTextureWidth(c.t1_tex);
+                c.t1h = pu::ui::render::GetTextureHeight(c.t1_tex);
+                if (!l2.empty()) {
+                    c.t2_tex = pu::ui::render::RenderText(this->font_title, l2,
+                                                          this->title_clr,
+                                                          max_tw);
+                    c.t2w = pu::ui::render::GetTextureWidth(c.t2_tex);
+                    c.t2h = pu::ui::render::GetTextureHeight(c.t2_tex);
+                }
             }
             if (!cd.subtitle.empty()) {
                 c.sub_tex = pu::ui::render::RenderText(
-                    this->font_sub, cd.subtitle, this->sub_clr, max_tw);
+                    this->poster ? this->font_tiny : this->font_sub,
+                    cd.subtitle, this->sub_clr, max_tw);
                 c.sw = pu::ui::render::GetTextureWidth(c.sub_tex);
                 c.sh = pu::ui::render::GetTextureHeight(c.sub_tex);
             }
@@ -323,10 +425,16 @@ class CardGrid : public pu::ui::elm::Element {
     // in the signature green->blue gradient: straight runs as short gradient
     // rects, corners as stamped dots (no arc primitive). ring: 0 live
     // gradient, 1 done (solid green), 2 failed (solid red).
+    // `shimmer` (active/hero card only -- see the call site) sweeps a soft
+    // bright band clockwise around the traced portion of the ring, the same
+    // technique as the list view's RenderGradBar shimmer, so the card that's
+    // actually transferring keeps moving on its own instead of sitting as a
+    // static gradient.
     void DrawRing(pu::ui::render::Renderer::Ref &drawer, const s32 cx,
                   const s32 cy, const s32 cw, const s32 ch, const s32 rad,
                   const s32 inset, const s32 bt, const float prog,
-                  const s32 ring) {
+                  const s32 ring, const bool shimmer = false,
+                  const s32 anim_frame = 0) {
         const s32 x0 = cx + inset, y0 = cy + inset;
         const s32 pw = cw - 2 * inset, ph = ch - 2 * inset;
         const s32 R = rad - inset;
@@ -347,31 +455,54 @@ class CardGrid : public pu::ui::elm::Element {
         if (fill > L) {
             fill = L;
         }
-        // Terminal states swap the live gradient for a solid ring: green
-        // when done, red when failed. g0 tracks the theme accent so the
-        // green end stays legible on the light theme's pale cards.
+        // Terminal states swap the live gradient for a solid ring: the near
+        // accent color when done, red when failed. Both g0/g1 track the
+        // selected accent pair (see SetThemeColors) so the ring stays
+        // legible on the light theme's pale cards and follows any accent
+        // preset the user picks.
         pu::ui::Color g0 = this->glow_clr;
         g0.a = 255;
-        pu::ui::Color g1(56, 130, 225, 255);
+        pu::ui::Color g1 = this->glow2_clr;
+        g1.a = 255;
         if (ring == 1) {
             g1 = g0;
         } else if (ring == 2) {
-            g0 = g1 = pu::ui::Color(224, 82, 82, 255);
+            g0 = g1 = this->fail_clr;
         }
         // Terminal rings are a single flat colour and never change, so draw
         // each straight edge as ONE rect instead of ~40 gradient strips — this
         // is the common case in a populated queue (done/failed cards), and it
         // ran every frame. Only the live gradient ring needs the strip loop.
         const bool solid = (ring != 0);
+        const bool shim = shimmer && !solid;
+        const s32 spread = 46; // shimmer half-width, in px
+        s32 shimmer_x = 0;
+        if (shim) {
+            s32 period = L + 2 * spread;
+            if (period < 1) period = 1;
+            shimmer_x = ((anim_frame * 6) % period) - spread;
+        }
         // Live gradient ring: coarser segments (12px vs 6) halve the per-frame
         // draw calls with no visible change on a 6px-thick ring — this ring is
         // redrawn every frame per active download, so it scaled the queue lag.
         const s32 seg_cap = solid ? L : 12;
         auto grad = [&](s32 dd) {
             float t = (float)dd / (float)L;
-            return pu::ui::Color((u8)(g0.r + ((s32)g1.r - g0.r) * t),
-                                 (u8)(g0.g + ((s32)g1.g - g0.g) * t),
-                                 (u8)(g0.b + ((s32)g1.b - g0.b) * t), 255);
+            pu::ui::Color c((u8)(g0.r + ((s32)g1.r - g0.r) * t),
+                            (u8)(g0.g + ((s32)g1.g - g0.g) * t),
+                            (u8)(g0.b + ((s32)g1.b - g0.b) * t), 255);
+            if (shim) {
+                s32 dist = dd - shimmer_x;
+                if (dist < 0) dist = -dist;
+                if (dist < spread) {
+                    float k = 1.0f - (float)dist / (float)spread;
+                    k *= k;
+                    c.r = (u8)(c.r + (255 - c.r) * k * 0.55f);
+                    c.g = (u8)(c.g + (255 - c.g) * k * 0.55f);
+                    c.b = (u8)(c.b + (255 - c.b) * k * 0.55f);
+                }
+            }
+            return c;
         };
         s32 d = 0;
         // edge: 0 top(->right) 1 right(->down) 2 bottom(->left) 3 left(->up)
@@ -455,14 +586,15 @@ class CardGrid : public pu::ui::elm::Element {
         if (gx < 0 || gy < 0) {
             return -1;
         }
+        const s32 ch = this->CardH();
         s32 col = gx / (this->CardW() + Gap);
-        s32 vr = gy / (CardH + Gap);
+        s32 vr = gy / (ch + Gap);
         if (col >= Cols || vr >= this->VisRows()) {
             return -1;
         }
         // Inside the card itself, not the gap after it?
         if (gx % (this->CardW() + Gap) >= this->CardW() ||
-            gy % (CardH + Gap) >= CardH) {
+            gy % (ch + Gap) >= ch) {
             return -1;
         }
         s32 idx = (this->scroll_row + vr) * Cols + col;
@@ -494,7 +626,9 @@ class CardGrid : public pu::ui::elm::Element {
                         pu::ui::Color glow = {146, 214, 36, 255},
                         pu::ui::Color pill = {0, 0, 0, 95},
                         pu::ui::Color page = {0, 0, 0, 0},
-                        pu::ui::Color track = {255, 255, 255, 20}) {
+                        pu::ui::Color track = {255, 255, 255, 20},
+                        pu::ui::Color fail = {224, 82, 82, 255},
+                        pu::ui::Color glow2 = {56, 130, 225, 255}) {
         this->card_bg = bg;
         this->focus_bg = focus;
         this->title_clr = title;
@@ -503,11 +637,37 @@ class CardGrid : public pu::ui::elm::Element {
         this->pill_clr = pill;
         this->page_bg = page;
         this->trk_clr = track;
+        this->fail_clr = fail;
+        this->glow2_clr = glow2;
         this->dirty = true;
         this->tiles_dirty = true;
     }
 
     void SetSingle(const bool on) { this->single = on; }
+
+    // Column count for the plain grid (console/settings lists stay 4; the
+    // Installed game-list poster view calls this with 6-7). Safe to call
+    // even when unchanged - only rebuilds when it actually differs.
+    void SetCols(s32 n) {
+        if (n < 1) {
+            n = 1;
+        }
+        if (this->Cols != n) {
+            this->Cols = n;
+            this->dirty = true;
+            this->tiles_dirty = true;
+        }
+    }
+
+    // Poster mode: cards lead with the box art itself (or a centred fallback
+    // icon) instead of a small centred square icon - see CardH()/Card::art.
+    void SetPoster(const bool on) {
+        if (this->poster != on) {
+            this->poster = on;
+            this->dirty = true;
+            this->tiles_dirty = true;
+        }
+    }
 
     // True if queue card i could be on screen (one row of margin). Lets the
     // caller skip building off-screen cards' text every frame — the queue tick
@@ -529,15 +689,28 @@ class CardGrid : public pu::ui::elm::Element {
         }
     }
 
-    void Clear() {
+    void Clear(const bool fade = true) {
         this->cards.clear();
         this->FreeCache();
+        this->marked.clear();
         this->sel = 0;
         this->scroll_row = 0;
         this->single = false;
-        // Enter fade removed for performance (re-rendered the whole grid for
-        // ~8 frames per screen change; stuttered under download load).
-        this->enter_alpha = 255;
+        // Every screen but Installed's game list wants the plain 4-wide
+        // grid; resetting here means only that one screen has to opt back
+        // into SetCols/SetPoster each time it rebuilds, instead of every
+        // other card screen having to opt out.
+        if (this->Cols != 4 || this->poster) {
+            this->Cols = 4;
+            this->poster = false;
+            this->tiles_dirty = true;
+        }
+        // The fade re-renders the whole grid for ~8 frames, which stutters
+        // under download load — so the call site (MainLayout::ClearMenu)
+        // only passes fade=true when queue_io_active() says nothing is
+        // actively moving bytes right now. `fade=false` (screens that
+        // rebuild every tick, e.g. Queue) always skips it regardless.
+        this->enter_alpha = fade ? 0 : 255;
         this->dirty = true;
         this->tch_active = false;
         this->tch_card = -1;
@@ -546,8 +719,8 @@ class CardGrid : public pu::ui::elm::Element {
 
     void AddCard(const std::string &title, const std::string &subtitle,
                  pu::sdl2::Texture icon, bool pinned = false,
-                 bool dim = false) {
-        this->cards.push_back(Card{title, subtitle, icon, pinned, dim});
+                 bool dim = false, bool art = false) {
+        this->cards.push_back(Card{title, subtitle, icon, pinned, dim, art});
         this->dirty = true;
     }
 
@@ -577,7 +750,8 @@ class CardGrid : public pu::ui::elm::Element {
                       const std::string &speed, const std::string &eta,
                       const std::string &file, const float prog,
                       const bool hero, const s32 ring = 0,
-                      const s32 qpos = 0, const bool refresh_text = true) {
+                      const s32 qpos = 0, const bool refresh_text = true,
+                      const bool logo_icon = false, const bool art = false) {
         if (i < 0 || i >= (s32)this->cards.size() ||
             i >= (s32)this->cache.size()) {
             return;
@@ -586,6 +760,11 @@ class CardGrid : public pu::ui::elm::Element {
         Cell &ce = this->cache[i];
         cd.queue = true;
         cd.icon = icon;
+        cd.logo_icon = logo_icon;
+        // Real cover art (SteamGridDB), same flag poster mode's AddCard/
+        // SetCardIcon use -- see Card::art. Reused here so the queue-card
+        // icon draw below can fit its aspect ratio instead of stretching.
+        cd.art = art;
         cd.prog = prog;
         cd.hero = hero;
         cd.ring = ring;
@@ -658,6 +837,38 @@ class CardGrid : public pu::ui::elm::Element {
     s32 Count() { return (s32)this->cards.size(); }
     s32 GetSelected() { return this->sel; }
 
+    // Multi-select marks, mirroring TableList's ToggleMark/SetMark/Marked.
+    void ToggleMark(s32 i) {
+        if (this->marked.count(i)) this->marked.erase(i);
+        else this->marked.insert(i);
+    }
+    void SetMark(s32 i, bool on) {
+        if (on) this->marked.insert(i);
+        else this->marked.erase(i);
+    }
+    bool IsMarked(s32 i) { return this->marked.count(i) > 0; }
+    const std::set<s32> &Marked() { return this->marked; }
+    int MarkedCount() { return (int)this->marked.size(); }
+    void ClearMarks() { this->marked.clear(); }
+
+    // Lazy box-art resolve for poster cards (BoxArtIconsPoll), mirroring
+    // TableList::SetRowIcon: swap one card's icon in place, no cache rebuild
+    // (the cached text textures don't depend on the icon). `art` marks it as
+    // a real cover so it renders stretch-fill instead of centred-natural.
+    void SetCardIcon(const s32 i, pu::sdl2::Texture icon,
+                     const bool art = true) {
+        if (i < 0 || i >= (s32)this->cards.size()) {
+            return;
+        }
+        this->cards[i].icon = icon;
+        this->cards[i].art = art;
+    }
+    // First card index on screen, and how many slots the visible rows span
+    // (may run past the last real card) - the same "is this on screen yet"
+    // window TableList's ScrollTop/RowsVisible give the list path.
+    s32 FirstVisibleCard() const { return this->scroll_row * Cols; }
+    s32 VisibleCardCount() const { return this->VisRows() * Cols; }
+
     void SetSelected(const s32 i) {
         s32 n = (s32)this->cards.size();
         if (n <= 0) {
@@ -725,9 +936,14 @@ class CardGrid : public pu::ui::elm::Element {
             this->RebakeTiles();
         }
         if (this->enter_alpha < 255) {
-            s32 e = this->enter_alpha + 32;
+            // Ease-out: big jump first, tapering off, instead of a linear
+            // ramp — reads as settling into place rather than a metronome.
+            s32 step = (255 - this->enter_alpha) / 3;
+            if (step < 6) step = 6;
+            s32 e = this->enter_alpha + step;
             this->enter_alpha = e > 255 ? 255 : e;
         }
+        this->anim_frame++;
         if (this->single) {
             // One enlarged queue-style card, centred: the self-update
             // download. Always drawn "lit" (hero tint + green edge + icon
@@ -780,11 +996,20 @@ class CardGrid : public pu::ui::elm::Element {
                     drawer->RenderCircleFill(gc, gcx, gcy,
                                              isz / 2 + 2 - 6 * g);
                 }
+                // A real console icon PNG has its own generous transparent
+                // padding baked in (see Card::logo_icon), so it reads fine
+                // drawn edge-to-edge in the full isz slot. The app-logo
+                // texture (used for the self-update card) has none, so
+                // drawing it at the same full size crowded the corner
+                // labels/border above -- shrink just the drawn image, still
+                // centred on the same glow-ring/layout box, to roughly match
+                // how a padded icon actually looks in this slot.
+                const s32 draw_sz = cd.logo_icon ? isz * 62 / 100 : isz;
                 pu::ui::render::TextureRenderOptions o;
-                o.width = isz;
-                o.height = isz;
-                drawer->RenderTexture(cd.icon, cx + (scw - isz) / 2,
-                                      cy + ic_top, o);
+                o.width = draw_sz;
+                o.height = draw_sz;
+                drawer->RenderTexture(cd.icon, gcx - draw_sz / 2,
+                                      gcy - draw_sz / 2, o);
             }
             if (qc.f_tex) {
                 // Sit the filename block in the gap between icon and chip,
@@ -826,7 +1051,14 @@ class CardGrid : public pu::ui::elm::Element {
             s32 a = this->sel_alpha + 30;
             this->sel_alpha = a > 255 ? 255 : a;
         }
+        if (this->poster) {
+            // One shared phase for every overflowing poster title this frame
+            // (see MarqueeOffset) - only ticks in poster mode, nobody else
+            // uses it.
+            this->marquee_frame++;
+        }
         const s32 cw = this->CardW();
+        const s32 ch = this->CardH();
         const s32 rv = this->VisRows();
         for (s32 vr = 0; vr < rv; vr++) {
             s32 row = this->scroll_row + vr;
@@ -836,18 +1068,32 @@ class CardGrid : public pu::ui::elm::Element {
                     break;
                 }
                 s32 cx = rx + Margin + col * (cw + Gap);
-                s32 cy = ry + vr * (CardH + Gap);
+                s32 cy = ry + vr * (ch + Gap);
                 bool selected = (idx == this->sel);
                 const Card &cd = this->cards[idx];
                 if (this->tile_card) {
                     drawer->RenderTexture(this->tile_card, cx, cy);
                 } else {
                     drawer->RenderRectangleFill(this->card_bg, cx, cy, cw,
-                                                CardH);
+                                                ch);
+                }
+                if (selected && !(cd.queue && cd.hero)) {
+                    // Focused card gets a soft, static drop shadow (no pulse
+                    // — that's the active-transfer hero card's cue below) so
+                    // the glow ring above reads as it physically lifting off
+                    // the grid, not just changing color. Skipped when the
+                    // hero pulse is already drawing its own shadow here.
+                    drawer->RenderShadowSimple(cx, cy + ch, cw, 8, 70);
                 }
                 if (cd.queue && cd.hero) {
                     // Active download: accent-tinted "hero" card, matching
-                    // the list view's accent row.
+                    // the list view's accent row -- including its under-card
+                    // shadow pulse, so the transferring card reads as alive
+                    // in card view too, not just list view.
+                    s32 ph = this->anim_frame % 90;
+                    s32 tri = ph < 45 ? ph : (90 - ph);
+                    drawer->RenderShadowSimple(cx, cy + ch, cw, 10,
+                                               90 + tri * 70 / 45);
                     if (this->tile_hero) {
                         pu::ui::render::TextureRenderOptions o;
                         o.alpha_mod = 30;
@@ -856,7 +1102,7 @@ class CardGrid : public pu::ui::elm::Element {
                         auto hc = this->glow_clr;
                         hc.a = 30;
                         drawer->RenderRoundedRectangleFill(hc, cx, cy, cw,
-                                                           CardH, CardRadius);
+                                                           ch, CardRadius);
                     }
                 }
                 if (selected) {
@@ -869,7 +1115,7 @@ class CardGrid : public pu::ui::elm::Element {
                     } else {
                         auto f = this->focus_bg;
                         f.a = (u8)this->sel_alpha;
-                        drawer->RenderRoundedRectangleFill(f, cx, cy, cw, CardH,
+                        drawer->RenderRoundedRectangleFill(f, cx, cy, cw, ch,
                                                            CardRadius);
                     }
                     for (s32 g = 1; g <= 4; g++) {
@@ -877,14 +1123,26 @@ class CardGrid : public pu::ui::elm::Element {
                         gc.a = (u8)((40 - g * 9) * this->sel_alpha / 255);
                         drawer->RenderRoundedRectangle(gc, cx - g, cy - g,
                                                        cw + 2 * g,
-                                                       CardH + 2 * g,
+                                                       ch + 2 * g,
                                                        CardRadius + g);
                     }
                     auto edge = this->glow_clr;
                     edge.a = (u8)this->sel_alpha;
                     for (s32 t = 0; t < 2; t++) {
                         drawer->RenderRoundedRectangle(
-                            edge, cx + t, cy + t, cw - 2 * t, CardH - 2 * t,
+                            edge, cx + t, cy + t, cw - 2 * t, ch - 2 * t,
+                            CardRadius - t > 4 ? CardRadius - t : 4);
+                    }
+                }
+                if (this->marked.count(idx)) {
+                    // Multi-select tag (Installed's poster view, Y button): a
+                    // green border, distinct from the blue focus outline
+                    // above since that one tracks the cursor, not which
+                    // cards are in the selection set — both can show at once.
+                    pu::ui::Color mc(146, 214, 36, 255);
+                    for (s32 t = 0; t < 3; t++) {
+                        drawer->RenderRoundedRectangle(
+                            mc, cx + t, cy + t, cw - 2 * t, ch - 2 * t,
                             CardRadius - t > 4 ? CardRadius - t : 4);
                     }
                 }
@@ -894,7 +1152,7 @@ class CardGrid : public pu::ui::elm::Element {
                     pu::ui::Color(255, 255, 255, (u8)(selected ? 45 : 18)),
                     cx + CardRadius, cy, cw - 2 * CardRadius, 1);
                 drawer->RenderRectangleFill(pu::ui::Color(0, 0, 0, 50),
-                                            cx + CardRadius, cy + CardH - 1,
+                                            cx + CardRadius, cy + ch - 1,
                                             cw - 2 * CardRadius, 1);
                 if (cd.pinned) {
                     drawer->RenderCircleFill(this->glow_clr, cx + 16, cy + 16,
@@ -928,11 +1186,59 @@ class CardGrid : public pu::ui::elm::Element {
                                                              6 * g);
                             }
                         }
+                        // A real console icon PNG carries its own transparent
+                        // padding, so it reads fine drawn edge-to-edge in this
+                        // slot. The self-update card's app-logo texture (see
+                        // Card::logo_icon) and real box art (Card::art --
+                        // a SteamGridDB cover, set on a console via the box
+                        // art picker) have neither: they bleed to the image
+                        // edge, so at full size here -- just 10px from the
+                        // card's rounded top edge -- they crowded/overran
+                        // both the border and the corner label above it (the
+                        // "art pushes above the top border" report). Shrink
+                        // the drawn box the same way for both, and for real
+                        // art fit its actual aspect ratio inside that box
+                        // instead of stretching -- covers are commonly
+                        // portrait (taller than wide), and a hardcoded square
+                        // stretch squashed them.
+                        s32 slot_top = cy + 10 - (isz - IconPx);
+                        // The app-logo texture (HaulNX self-update card) and
+                        // real box art both lack baked-in padding, but the
+                        // logo is a simple square mark that reads fine much
+                        // larger than a photographic cover does -- 62% left
+                        // it looking tiny once given a safe top margin, so
+                        // it gets its own, bigger box. At full selection
+                        // (isz maxed, slot_top flush with the card top) this
+                        // still leaves ~10px of clearance above the icon,
+                        // same margin as the unselected default.
+                        s32 box_isz = cd.logo_icon  ? isz * 85 / 100
+                                     : cd.art        ? isz * 62 / 100
+                                                      : isz;
+                        s32 draw_w = box_isz, draw_h = box_isz;
+                        if (cd.art) {
+                            s32 rw = pu::ui::render::GetTextureWidth(cd.icon);
+                            s32 rh = pu::ui::render::GetTextureHeight(cd.icon);
+                            if (rw > 0 && rh > 0) {
+                                if (rw >= rh) {
+                                    draw_h = box_isz * rh / rw;
+                                } else {
+                                    draw_w = box_isz * rw / rh;
+                                }
+                            }
+                        }
                         pu::ui::render::TextureRenderOptions o;
-                        o.width = isz;
-                        o.height = isz;
-                        drawer->RenderTexture(cd.icon, cx + (cw - isz) / 2,
-                                              cy + 10 - (isz - IconPx), o);
+                        o.width = draw_w;
+                        o.height = draw_h;
+                        // Centering the shrunk logo box in the same slot a
+                        // full-size console icon occupies reads as too high
+                        // -- the console icons fill that slot top-to-bottom
+                        // so their weight sits differently. Nudge the logo
+                        // down within its own box only; console icons
+                        // (draw_h == isz here) are untouched.
+                        s32 draw_y = slot_top + (isz - draw_h) / 2;
+                        if (cd.logo_icon) draw_y += 12;
+                        drawer->RenderTexture(
+                            cd.icon, cx + (cw - draw_w) / 2, draw_y, o);
                     }
                     // Filename under the icon, up to two wrapped lines, with
                     // clear air above the pill below it.
@@ -969,12 +1275,164 @@ class CardGrid : public pu::ui::elm::Element {
                                               cy + 222);
                     }
                     if (cd.prog >= 0.0f) {
-                        this->DrawRing(drawer, cx, cy, cw, CardH, CardRadius,
-                                       4, 6, cd.prog, cd.ring);
+                        this->DrawRing(drawer, cx, cy, cw, ch, CardRadius,
+                                       4, 6, cd.prog, cd.ring, cd.hero,
+                                       this->anim_frame);
                     }
                     continue;
                 }
                 Cell &ce = this->cache[idx];
+                if (this->poster) {
+                    // Poster card: box art (or a centred fallback icon) fills
+                    // the top, title + size sit in the band below it. Real
+                    // cover art already fills the whole image area, so the
+                    // whole-card selection border/glow above is enough there;
+                    // a plain fallback logo icon is much smaller than that
+                    // area though, so it still gets its own glow bloom below
+                    // (matching the plain icon+text card's selected icon).
+                    //
+                    // The image's width is derived from the *height* budget
+                    // left after the fixed text band (not from the card's
+                    // full width, unlike the root console cards) — CardH()
+                    // is a fixed poster row height so two rows fit the
+                    // viewport, and at 6-wide a full-width 2:3 image would
+                    // blow well past that budget. Capping by iw_max still
+                    // lets it use the full card width if the budget ever
+                    // allows it (e.g. fewer columns).
+                    const s32 img_h_budget = ch - 2 * PosterPad - PosterTextH;
+                    const s32 iw_max = cw - 2 * PosterPad;
+                    s32 iw, ih;
+                    if (cd.art) {
+                        // Real cover art doesn't all share one shape: game
+                        // covers (SteamGridDB grids) are portrait 600x900,
+                        // but console art can come from the icons-catalog
+                        // fallback instead (see ba_icon_url in boxart.c),
+                        // which is square-ish, not 2:3. Fit to the texture's
+                        // *actual* aspect ratio -- stretching every cover to
+                        // a hardcoded 2:3 box, as before, squashed those
+                        // square icons into a tall rectangle.
+                        s32 rw = pu::ui::render::GetTextureWidth(cd.icon);
+                        s32 rh = pu::ui::render::GetTextureHeight(cd.icon);
+                        if (rw > 0 && rh > 0) {
+                            ih = img_h_budget;
+                            iw = ih * rw / rh;
+                            if (iw > iw_max) {
+                                iw = iw_max;
+                                ih = iw * rh / rw;
+                            }
+                        } else {
+                            // No texture info (shouldn't happen) -- fall
+                            // back to the old fixed 2:3 assumption.
+                            iw = img_h_budget * 2 / 3;
+                            if (iw > iw_max) {
+                                iw = iw_max;
+                            }
+                            ih = iw * 3 / 2;
+                        }
+                    } else {
+                        iw = img_h_budget * 2 / 3;
+                        if (iw > iw_max) {
+                            iw = iw_max;
+                        }
+                        ih = iw * 3 / 2;
+                    }
+                    if (iw < 1) {
+                        iw = 1;
+                    }
+                    if (ih < 1) {
+                        ih = 1;
+                    }
+                    const s32 ix = cx + (cw - iw) / 2;
+                    const s32 iy = cy + PosterPad;
+                    if (cd.icon) {
+                        pu::ui::render::TextureRenderOptions o;
+                        if (cd.art) {
+                            // Fit to the aspect computed above -- never
+                            // distorted, since iw/ih already match the
+                            // texture's real ratio (or the 2:3 fallback).
+                            o.width = iw;
+                            o.height = ih;
+                            drawer->RenderTexture(cd.icon, ix, iy, o);
+                        } else {
+                            // No cover: centre the fallback icon at a
+                            // natural square size instead of squashing a
+                            // logo-shaped image into a tall rectangle.
+                            s32 isz = (iw < ih ? iw : ih) - 16;
+                            if (isz < 1) {
+                                isz = 1;
+                            }
+                            const s32 icx = ix + iw / 2;
+                            const s32 icy = iy + ih / 2;
+                            // Selected: same soft green glow bloom the plain
+                            // icon+text card gives its icon -- lost when
+                            // these console/settings cards moved to poster
+                            // geometry (the "no separate icon-bloom" call
+                            // above was about real cover art, which already
+                            // fills the whole image area; a plain logo icon
+                            // here still needs its own selected cue).
+                            if (selected) {
+                                for (s32 g = 0; g < 4; g++) {
+                                    auto gc = this->glow_clr;
+                                    gc.a = (u8)((14 + 5 * g) *
+                                               this->sel_alpha / 255);
+                                    drawer->RenderCircleFill(
+                                        gc, icx, icy,
+                                        isz / 2 + 2 - 6 * g);
+                                }
+                            }
+                            o.width = isz;
+                            o.height = isz;
+                            // Disabled entries (e.g. an off repo) fade their
+                            // icon the same way the plain icon+text branch
+                            // does below -- this fallback path is what those
+                            // cards actually render through once they're at
+                            // poster geometry.
+                            if (cd.dim) {
+                                o.alpha_mod = 110;
+                            }
+                            drawer->RenderTexture(cd.icon, icx - isz / 2,
+                                                  icy - isz / 2, o);
+                        }
+                    }
+                    // Title sits flush under the image -- keeps it riding
+                    // high in the card instead of drifting toward the
+                    // count/size pill -- which gets a deliberately generous
+                    // gap of its own below (PosterTextH grew to make room
+                    // for both).
+                    s32 ty = iy + ih;
+                    const s32 band_x = cx + PosterPad;
+                    const s32 band_w = cw - 2 * PosterPad;
+                    if (ce.t1_tex) {
+                        const s32 overflow = ce.t1w - band_w;
+                        if (overflow > 0) {
+                            // Too long for the card even at the smaller
+                            // poster font: clip to the text band and slide
+                            // it back and forth (MarqueeOffset) so the whole
+                            // name is reachable instead of staying cut off.
+                            const s32 off = this->MarqueeOffset(overflow);
+                            SDL_Rect clip{band_x, ty, band_w, ce.t1h};
+                            SDL_RenderSetClipRect(
+                                pu::ui::render::GetMainRenderer(), &clip);
+                            drawer->RenderTexture(ce.t1_tex, band_x + off, ty);
+                            SDL_RenderSetClipRect(
+                                pu::ui::render::GetMainRenderer(), nullptr);
+                        } else {
+                            drawer->RenderTexture(
+                                ce.t1_tex, cx + (cw - ce.t1w) / 2, ty);
+                        }
+                        ty += ce.t1h + 20;
+                    }
+                    if (ce.sub_tex) {
+                        s32 sx = cx + (cw - ce.sw) / 2;
+                        s32 padx = 10, pady = 4;
+                        drawer->RenderRoundedRectangleFill(
+                            this->pill_clr, sx - padx, ty - pady,
+                            ce.sw + 2 * padx, ce.sh + 2 * pady,
+                            (ce.sh + 2 * pady) / 2);
+                        drawer->RenderTexture(ce.sub_tex, sx, ty);
+                    }
+                    continue;
+                }
                 // Cards with no info line (the settings sections) would leave
                 // the icon+title hugging the top, with the empty subtitle band
                 // as dead space below. Centre the icon+title block vertically
@@ -983,7 +1441,7 @@ class CardGrid : public pu::ui::elm::Element {
                 s32 voff = 0;
                 if (!ce.sub_tex) {
                     s32 block_bot = ce.t2_tex ? 178 + ce.t2h : 158 + ce.t1h;
-                    voff = (CardH - (block_bot - 10)) / 2 - 10;
+                    voff = (ch - (block_bot - 10)) / 2 - 10;
                     if (voff < 0) {
                         voff = 0;
                     }
@@ -1109,18 +1567,19 @@ class CardGrid : public pu::ui::elm::Element {
                     this->tch_dragged = true;
                 }
                 if (this->tch_dragged) {
+                    const s32 ch = this->CardH();
                     this->tch_acc += this->tch_last_y - tch.y;
-                    while (this->tch_acc >= CardH + Gap) {
+                    while (this->tch_acc >= ch + Gap) {
                         if (this->scroll_row < this->MaxScroll()) {
                             this->scroll_row++;
                         }
-                        this->tch_acc -= CardH + Gap;
+                        this->tch_acc -= ch + Gap;
                     }
-                    while (this->tch_acc <= -(CardH + Gap)) {
+                    while (this->tch_acc <= -(ch + Gap)) {
                         if (this->scroll_row > 0) {
                             this->scroll_row--;
                         }
-                        this->tch_acc += CardH + Gap;
+                        this->tch_acc += ch + Gap;
                     }
                 }
                 this->tch_last_y = tch.y;

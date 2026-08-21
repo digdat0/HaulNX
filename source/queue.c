@@ -203,6 +203,13 @@ static int dl_progress(void *ud, uint64_t now, uint64_t total) {
     QueueItem *it = ctx->it;
     it->now = now;
     it->total = total;
+    /* Forward progress since the last sample proves the retried attempt is
+     * actually moving bytes again -- clear the stall flag right away rather
+     * than waiting for the 500ms speed-sample gate below, so "reconnecting"
+     * doesn't linger after the connection has already recovered. */
+    if (it->stalled && now > ctx->last_now) {
+        it->stalled = false;
+    }
     uint64_t tick = armGetSystemTick();
     uint64_t dt_ns = armTicksToNs(tick - ctx->last_tick);
     if (dt_ns >= 500000000ULL) {
@@ -216,6 +223,10 @@ static int dl_progress(void *ud, uint64_t now, uint64_t total) {
 
 /* Optional post-import hook (see queue.h). NULL unless an add-on module sets it. */
 void (*queue_post_import)(QueueItem *it, const char *path, bool is_dir) = NULL;
+
+/* "An item just landed" notification (see queue.h) -- independent of the
+ * post-import hook above. NULL unless some subsystem registers it. */
+void (*queue_on_landed)(const char *name, const char *path, bool is_dir) = NULL;
 
 /* Runtime enable flag for the post-import hook (user preference). */
 static bool g_post_import_enabled = true;
@@ -391,16 +402,47 @@ static void save_locked(void) {
     fclose(f);
 }
 
-/* Bytes of this item already staged in its .part file (0 if there is none).
- * Same naming rules as process_item, so the two always agree on the path. */
-static uint64_t part_size(const QueueItem *it) {
+/* This item's .part filename (no directory), and its full path. Every caller
+ * that needs to know where an item's temp file lives goes through these two,
+ * so they can never drift out of agreement with each other again -- they used
+ * to be four hand-copied snprintf calls, and a previous drift between two of
+ * them (raw vs sanitized target) already caused a live-download-deleted-out-
+ * from-under-itself bug (see queue_cancel_by_part's comment).
+ *
+ * The name is keyed by target+name+seq, not just target+name: two queue
+ * entries that happen to share a name and target (e.g. the same file queued
+ * twice, or duplicated in a source collection's metadata) used to collide on
+ * the identical .part path. Downloaded concurrently, both sides fopen() it in
+ * "wb" and each truncates the other's in-flight write -- symptoms exactly
+ * like "download restarts and drops its progress" plus a "write error" on
+ * whichever side loses the race to extract a file the other side already
+ * consumed. seq is a monotonic per-item counter, persisted in queue.json, so
+ * it's unique for the item's whole lifetime including across a relaunch. */
+static bool item_part_name(const QueueItem *it, char *out, size_t out_sz) {
     char safe[600], safet[80];
     if (!safe_rel(it->name, safe, sizeof(safe)) ||
         !safe_rel(it->target, safet, sizeof(safet))) {
+        return false;
+    }
+    snprintf(out, out_sz, "%s_%s_%u.part", safet, safe, (unsigned)it->seq);
+    return true;
+}
+
+static bool item_part_path(const QueueItem *it, char *out, size_t out_sz) {
+    char name[700];
+    if (!item_part_name(it, name, sizeof(name))) {
+        return false;
+    }
+    snprintf(out, out_sz, "%s/%s", DL_TMP_DIR, name);
+    return true;
+}
+
+/* Bytes of this item already staged in its .part file (0 if there is none). */
+static uint64_t part_size(const QueueItem *it) {
+    char tmp[1200];
+    if (!item_part_path(it, tmp, sizeof(tmp))) {
         return 0;
     }
-    char tmp[1200];
-    snprintf(tmp, sizeof(tmp), "%s/%s_%s.part", DL_TMP_DIR, safet, safe);
     struct stat st;
     if (stat(tmp, &st) != 0 || st.st_size <= 0) {
         return 0;
@@ -425,19 +467,10 @@ static uint64_t item_remaining(const QueueItem *it) {
  * size when known). Lets a persisted "downloaded" flag be trusted before we
  * skip the download phase on reload. */
 static bool part_is_complete(const QueueItem *it) {
-    char safe[600];
-    if (!safe_rel(it->name, safe, sizeof(safe))) {
-        return false;
-    }
-    /* Sanitize the target exactly like process_item does when it names the
-     * .part — with the raw target the two paths diverge whenever sanitizing
-     * changes it, and a finished download would be fetched all over again. */
-    char safet[80];
-    if (!safe_rel(it->target, safet, sizeof(safet))) {
-        return false;
-    }
     char tmp[1200];
-    snprintf(tmp, sizeof(tmp), "%s/%s_%s.part", DL_TMP_DIR, safet, safe);
+    if (!item_part_path(it, tmp, sizeof(tmp))) {
+        return false;
+    }
     struct stat st;
     if (stat(tmp, &st) != 0 || st.st_size <= 0) {
         return false;
@@ -614,10 +647,11 @@ static void process_item(QueueItem *it) {
         return;
     }
 
-    /* Key the temp file by target too, so two same-named files headed to
-     * different consoles can download concurrently without sharing a .part. */
     char tmp[1200];
-    snprintf(tmp, sizeof(tmp), "%s/%s_%s.part", DL_TMP_DIR, safet, safe);
+    if (!item_part_path(it, tmp, sizeof(tmp))) {
+        set_fail(it, "bad name");
+        return;
+    }
     fs_ensure_parent(tmp);
 
     char destdir[1200];
@@ -638,6 +672,7 @@ static void process_item(QueueItem *it) {
     it->now = have;
     it->total = it->size;
     it->speed = 0;
+    it->stalled = false;
     DlCtx ctx = { it, have, armGetSystemTick() };
 
     /* Bail out before writing if the SD card can't hold what's still to fetch. */
@@ -650,10 +685,14 @@ static void process_item(QueueItem *it) {
     /* Archive.org public items need NO credentials — a browser sends none, and
      * the data node that /download/ redirects to (ia######.us.archive.org)
      * rejects a LOW S3 header on a public file with 401/403. So download
-     * browser-style: start unauthenticated, and only if we hit an auth error
-     * (the item is actually restricted) retry once WITH the credentials. The
-     * credential is still only ever sent to archive.org over HTTPS, and only
-     * when the server demands it — never leaked, never wasted on public files. */
+     * browser-style: start unauthenticated, and only if the item turns out to
+     * be restricted retry once WITH the credentials. In practice a restricted
+     * item's data node doesn't reliably answer 401/403 for that first,
+     * unauthenticated request — some come back 404 (access-denied masked as
+     * not-found) and a loaded/unhappy node can 502 instead — so both are
+     * treated as "might be restricted" too, not just 401/403. The credential
+     * is still only ever sent to archive.org over HTTPS, and only after an
+     * unauthenticated attempt actually failed — never wasted on public files. */
     const char *cred_auth =
         (it->auth[0] && strncasecmp(it->url, "https://", 8) == 0 &&
          net_is_archive_org_url(it->url))
@@ -663,6 +702,7 @@ static void process_item(QueueItem *it) {
     bool tried_auth = false;
     long code = 0;
     bool ok = false;
+    bool transport_err = false;
     /* Count this transfer among the active downloads so the fair-share rate
      * split (dl_rate_cb) divides the global budget by the true in-flight count.
      * Balanced by the decrement after the retry loop. */
@@ -672,7 +712,7 @@ static void process_item(QueueItem *it) {
      * with a short backoff, resuming from the .part instead of failing. */
     for (int attempt = 0;; attempt++) {
         ok = http_download(it->url, tmp, auth, dl_progress, &ctx,
-                           dl_rate_cb, NULL, have, &code);
+                           dl_rate_cb, NULL, have, &code, &transport_err);
         it->http_code = code;
         if (ok || it->cancel || it->pause || !g_run) {
             break;
@@ -680,11 +720,20 @@ static void process_item(QueueItem *it) {
         if (!net_is_up_fresh()) {
             break; /* connection is down: park instead of burning retries */
         }
-        /* Auth error on an unauthenticated request: the item is likely
-         * restricted. If we have credentials, retry once WITH them (no backoff).
-         * If the authenticated attempt also 401/403s, the creds are wrong or
-         * lack access — that falls through to the normal (non-transient) fail. */
-        if ((code == 401 || code == 403) && cred_auth && !tried_auth) {
+        /* Every path below this point retries rather than giving up: flag the
+         * item as stalled so the UI can show "reconnecting" instead of a
+         * blank speed field for the gap. dl_progress clears it the moment the
+         * retried attempt actually moves a byte. */
+        it->stalled = true;
+        /* Likely-restricted response to an unauthenticated request: 401/403
+         * are the textbook auth errors, but a restricted item's data node
+         * doesn't always answer with those (see the comment above) — 404 gets
+         * the same benefit of the doubt. If we have credentials, retry once
+         * WITH them (no backoff, doesn't burn a transient-retry slot). If the
+         * authenticated attempt also fails, the creds are wrong or lack
+         * access — that falls through to the normal fail handling below. */
+        if ((code == 401 || code == 403 || code == 404) && cred_auth &&
+            !tried_auth) {
             tried_auth = true;
             auth = cred_auth;
             struct stat ast;
@@ -698,8 +747,37 @@ static void process_item(QueueItem *it) {
             ctx.last_tick = armGetSystemTick();
             continue;
         }
-        bool transient = (code == 0 || code == 429 || code >= 500);
+        /* A stall/reset (e.g. the LOW_SPEED_TIME abort in http_download) commonly
+         * happens *after* a 200 status line already arrived and was streaming --
+         * CURLINFO_RESPONSE_CODE still reads 200 in that case, so `code` alone
+         * would misclassify a live-but-broken connection as a clean-but-bad
+         * response and skip straight to giving up instead of the backoff/resume
+         * retry this whole loop exists for. transport_err is the actual signal:
+         * curl itself didn't finish the exchange, regardless of what the last
+         * status line said. */
+        bool transient =
+            (transport_err || code == 0 || code == 429 || code >= 500);
         if (!transient || attempt >= 2) {
+            /* Giving up on the unauthenticated side (a persistent 5xx/502,
+             * not just a blip) — if credentials are available and untried,
+             * take one authenticated shot before failing outright. A loaded
+             * data node can 502 an access-denied request instead of 401/403
+             * just like it can 404 one; without this a restricted item behind
+             * a flaky node would fail with valid credentials sitting unused. */
+            if (cred_auth && !tried_auth) {
+                tried_auth = true;
+                auth = cred_auth;
+                struct stat ast;
+                have = (stat(tmp, &ast) == 0) ? (uint64_t)ast.st_size : 0;
+                if (it->size > 0 && have > it->size) {
+                    remove(tmp);
+                    have = 0;
+                }
+                it->now = have;
+                ctx.last_now = have;
+                ctx.last_tick = armGetSystemTick();
+                continue;
+            }
             break;
         }
         svcSleepThread(2000000000ULL); /* 2s backoff */
@@ -717,6 +795,7 @@ static void process_item(QueueItem *it) {
         ctx.last_now = have;
         ctx.last_tick = armGetSystemTick();
     }
+    it->stalled = false; /* loop is over one way or another; don't let it linger */
     __atomic_sub_fetch(&g_active_dl, 1, __ATOMIC_RELAXED);
 
     if (!g_run) {
@@ -832,6 +911,7 @@ static void process_item(QueueItem *it) {
         it->overwrote = existed ? 1 : 0;
         log_download(it, "done");
         if (g_post_import_enabled && queue_post_import) queue_post_import(it, dest, false);
+        if (queue_on_landed) queue_on_landed(it->name, dest, false);
         it->status = Q_DONE;
     } else {
         set_fail(it, "write error");
@@ -851,7 +931,10 @@ static void install_item(QueueItem *it) {
         return;
     }
     char tmp[1200];
-    snprintf(tmp, sizeof(tmp), "%s/%s_%s.part", DL_TMP_DIR, safet, safe);
+    if (!item_part_path(it, tmp, sizeof(tmp))) {
+        set_fail(it, "bad name");
+        return;
+    }
     char destdir[1200];
     item_destdir(it, safet, destdir, sizeof(destdir));
 
@@ -881,6 +964,7 @@ static void install_item(QueueItem *it) {
         it->overwrote = ow;
         log_download(it, "done");
         if (g_post_import_enabled && queue_post_import) queue_post_import(it, destdir, true);
+        if (queue_on_landed) queue_on_landed(it->name, destdir, true);
         it->status = Q_DONE;
         return;
     }
@@ -969,6 +1053,16 @@ static void dl_worker(void *arg) {
             g_items[pick].status = Q_DOWNLOADING;
         }
         mutexUnlock(&g_mtx);
+
+        /* Marks the exact moment the picker hands an item to process_item(),
+         * so a "sat queued for N seconds before anything happened" report is
+         * a visible gap in the debug log rather than something only guessable
+         * from the DL line that follows once the HTTP attempt itself starts. */
+        if (pick >= 0) {
+            net_log_event("DL pickup [%s] %s (was %s)", g_items[pick].target,
+                          g_items[pick].name,
+                          prev == Q_PAUSED ? "paused" : "queued");
+        }
 
         if (pick < 0) {
             if (blocked > 0) {
@@ -1195,6 +1289,27 @@ bool queue_add(const char *url, const char *name, const char *target,
                const char *auth, uint64_t size, bool is_archive,
                const char *md5, const char *dest) {
     mutexLock(&g_mtx);
+    /* Same name + target already live in the queue: treat as already queued
+     * rather than adding a second entry. Without this, a source collection
+     * that (legitimately, or via a UI double-tap) lists/selects the same file
+     * twice queues two items that fight over the identical .part file path --
+     * item_part_name's seq keying stops that from corrupting each other, but
+     * they'd still burn bandwidth downloading and extracting the same file
+     * twice, and to the user it looks like "the download restarted". Terminal
+     * states (done/saved/failed/cancelled) are excluded so retrying/re-adding
+     * a finished or given-up item still works normally. */
+    for (int i = 0; i < QUEUE_MAX; i++) {
+        QueueItem *ex = &g_items[i];
+        if (ex->external || ex->status == Q_FREE || ex->status == Q_DONE ||
+            ex->status == Q_SAVED || ex->status == Q_FAILED ||
+            ex->status == Q_CANCELLED) {
+            continue;
+        }
+        if (strcmp(ex->name, name) == 0 && strcmp(ex->target, target) == 0) {
+            mutexUnlock(&g_mtx);
+            return true; /* already in flight; nothing more to do */
+        }
+    }
     int slot = -1;
     for (int i = 0; i < QUEUE_MAX; i++) {
         if (g_items[i].status == Q_FREE) {
@@ -1756,7 +1871,7 @@ bool queue_active_info(char *name, size_t name_sz, QStatus *status,
             continue;
         }
         total_items++;
-        if (!found && !g_items[i].external &&
+        if (!found &&
             (s == Q_DOWNLOADING || s == Q_VERIFYING || s == Q_EXTRACTING)) {
             const QueueItem *it = &g_items[i];
             if (name && name_sz) {
@@ -1849,19 +1964,13 @@ int queue_cancel_by_part(const char *partname, bool do_cancel) {
         if (s == Q_FREE || s == Q_DONE || s == Q_SAVED ||
             s == Q_FAILED || s == Q_CANCELLED)
             continue;
-        /* Rebuild the .part name exactly as process_item does — BOTH halves
-         * sanitized. Using the raw target here made the two disagree for any
-         * target safe_rel rewrites (a ':' becomes '_', leading slashes go), so
-         * the caller saw an orphan, skipped the "still queued" warning, and
-         * deleted the file out from under a running download. */
-        char safe[600];
-        if (!safe_rel(g_items[i].name, safe, sizeof(safe)))
-            continue;
-        char safet[80];
-        if (!safe_rel(g_items[i].target, safet, sizeof(safet)))
-            continue;
+        /* Rebuild the .part name exactly as item_part_name does, so this
+         * always agrees with wherever the file actually lives (see its
+         * comment: a prior drift here already deleted a live download out
+         * from under itself once). */
         char expect[700];
-        snprintf(expect, sizeof(expect), "%s_%s.part", safet, safe);
+        if (!item_part_name(&g_items[i], expect, sizeof(expect)))
+            continue;
         if (strcasecmp(expect, partname) == 0) {
             hits++;
             if (do_cancel) {

@@ -13,6 +13,7 @@
 #include <vector>
 
 extern "C" {
+#include "boxart.h"
 #include "config.h"
 #include "i18n.h"
 #include "iarchive.h"
@@ -129,23 +130,23 @@ struct AppTheme {
 static const AppTheme g_theme_dark = {
     {12,12,14,255},       {23,25,30,255},      {16,17,21,255},
     {23,25,30,255},       {255,255,255,255},   {198,205,215,255},
-    {168,176,188,255},    {255,255,255,255},   {146,214,36,255},
+    {168,176,188,255},    {255,255,255,255},   {90,160,245,255},
     {192,199,210,255},    {150,160,185,255},   {232,234,240,255},
     {26,28,34,255},       {255,255,255,255},   {205,212,222,255},
-    {255,255,255,255},    {54,86,20,255},
+    {255,255,255,255},    {70,130,200,255},
     {22,23,27,255},       {28,30,36,255},      {40,44,53,255},
     {80,86,100,255},      {42,56,30,255},
 };
 
 // Light theme keeps the charcoal header/tab shell (the logo's "case") over a
-// light content area; the same green underline/pulse reads on the dark shell.
+// light content area; the same blue underline/pulse reads on the dark shell.
 static const AppTheme g_theme_light = {
     {228,231,237,255},    {30,33,40,255},      {23,25,31,255},
     {30,33,40,255},       {255,255,255,255},   {200,207,217,255},
-    {150,158,172,255},    {255,255,255,255},   {146,214,36,255},
+    {150,158,172,255},    {255,255,255,255},   {90,160,245,255},
     {185,192,204,255},    {88,98,116,255},     {26,30,38,255},
     {240,242,246,255},    {26,30,40,255},      {50,60,80,255},
-    {26,30,40,255},       {206,232,210,255},
+    {26,30,40,255},       {195,220,245,255},
     {252,253,255,255},    {244,246,250,255},   {212,234,214,255},
     {170,178,192,255},    {192,224,200,255},
 };
@@ -198,6 +199,55 @@ static void load_console_icons() {
     g_header_logo = pu::ui::render::LoadImageFromFile("romfs:/header_logo.png");
 }
 
+// One frame — icon, wordmark, version — drawn straight to the renderer before
+// any of OnLoad's slower init (nifm/psm/net/config/queue/icon-cache loading,
+// a few seconds combined) runs. Application::Load() already calls
+// renderer->Initialize() (fonts + romfs mount) before invoking OnLoad(), so
+// everything this needs is ready; without this the user stares at a black
+// screen for that whole stretch instead of seeing the app immediately.
+static void draw_splash(pu::ui::render::Renderer::Ref &renderer) {
+    namespace rnd = pu::ui::render;
+    // credits_logo.png is the big 280px master badge (already used full-size
+    // by the About screen); header_logo.png is the small header badge kept
+    // as a fallback in case the bigger asset is ever missing from romfs.
+    // The badge already bakes in the "HaulNX" wordmark, so no separate title.
+    auto logo = rnd::LoadImageFromFile("romfs:/credits_logo.png");
+    if (!logo) {
+        logo = rnd::LoadImageFromFile("romfs:/header_logo.png");
+    }
+    const std::string vfont =
+        pu::ui::GetDefaultFont(pu::ui::DefaultFontSize::Medium);
+    auto ver_tex = rnd::RenderText(
+        vfont, std::string("v") + APP_VERSION_STR, g_theme_dark.rom_info_clr);
+
+    const s32 SW = (s32)rnd::ScreenWidth, SH = (s32)rnd::ScreenHeight;
+    const s32 logo_sz = (s32)(SH * 0.6); // ~60% of screen height
+    const s32 ver_h = ver_tex ? rnd::GetTextureHeight(ver_tex) : 0;
+    const s32 gap = 20; // logo -> version
+    const s32 block_h = (logo ? logo_sz + gap : 0) + ver_h;
+    s32 y = (SH - block_h) / 2;
+
+    renderer->InitializeRender(g_theme_dark.bg);
+    if (logo) {
+        rnd::TextureRenderOptions opts;
+        opts.width = logo_sz;
+        opts.height = logo_sz;
+        renderer->RenderTexture(logo, (SW - logo_sz) / 2, y, opts);
+        y += logo_sz + gap;
+    }
+    if (ver_tex) {
+        renderer->RenderTexture(ver_tex, (SW - rnd::GetTextureWidth(ver_tex)) / 2, y);
+    }
+    renderer->FinalizeRender();
+
+    if (logo) {
+        rnd::DeleteTexture(logo);
+    }
+    if (ver_tex) {
+        rnd::DeleteTexture(ver_tex);
+    }
+}
+
 // Icon for a console folder key (e.g. "snes"); the generic "default" icon for
 // custom/unknown folders, or nullptr if icons failed to load.
 static pu::sdl2::Texture console_icon(const char *key) {
@@ -210,6 +260,176 @@ static pu::sdl2::Texture console_icon(const char *key) {
     }
     auto d = g_console_icons.find("default");
     return d != g_console_icons.end() ? d->second : nullptr;
+}
+
+// Lazily-loaded, LRU-bounded texture cache for library cover art (see
+// boxart.h). Unlike g_console_icons this can't preload everything -- a big
+// library can hold hundreds of distinct titles, and each cover is a full
+// decoded texture -- so it's capped well below anything that would pressure
+// the Switch's GPU memory, evicting the least-recently-used entry once full.
+// Keyed by title only (not console), matching boxart.c's own cache key: two
+// consoles sharing an exact title share one resolved cover and one texture.
+static const int kBoxArtCacheCap = 48;
+static std::vector<std::pair<std::string, pu::sdl2::Texture>> g_boxart_cache; // MRU-front
+
+// Games only, extension + region/revision tag stripped -- the search term
+// sent to SteamGridDB and the key its result is cached under (see boxart.h).
+// Same tag-splitting rule as onegr_base_title but case-preserved: this is a
+// user-facing query and report label, not a fold-case dedup key. Declared up
+// here (rather than by BoxArtScanThread, its main caller) so GotoInstalled's
+// row-icon lookup, defined earlier in the file, can share the exact same key.
+static std::string boxart_query_title(const std::string &name) {
+    size_t paren = name.find(" (");
+    return (paren != std::string::npos) ? name.substr(0, paren)
+                                        : name.substr(0, name.find_last_of('.'));
+}
+
+// Pending-title queue for the auto-fetch feature (Appearance -> "Auto-Fetch
+// New Art", g_prefs.box_art_auto_fetch): boxart_auto_on_landed below pushes
+// into this from whichever download/extract worker thread just landed an
+// item, and MainApplication::BoxArtAutoThread (its own background thread,
+// UI-thread-started -- see BoxArtAutoPoll) pops from it one title at a time.
+// A plain mutex, not std::atomic, since the payload is a string, not a flag;
+// mirrors queue.c's own Mutex-guarded work queues rather than introducing
+// std::mutex as a second convention for the same job.
+static Mutex g_boxart_auto_mtx;
+static std::vector<std::string> g_boxart_auto_pending;
+
+// Bridge from queue.c's plain-C queue_on_landed hook into the pending queue
+// above. Must return fast and must not touch app state that belongs to the UI
+// thread (g_prefs, g_creds, this->boxart's index) -- it runs on a download or
+// extract worker thread, immediately before the item is marked Q_DONE, so
+// anything slower than a lock+push here delays that worker picking up its
+// next queued item. All of the actual decision-making (is the feature on, is
+// a key set, is a manual scan using the index right now) happens later, on
+// the UI thread, in BoxArtAutoPoll.
+extern "C" void boxart_auto_on_landed(const char *name, const char *path,
+                                      bool is_dir) {
+    (void)path;
+    (void)is_dir;
+    if (!name || !name[0]) {
+        return;
+    }
+    std::string title = boxart_query_title(name);
+    if (title.empty()) {
+        return;
+    }
+    mutexLock(&g_boxart_auto_mtx);
+    g_boxart_auto_pending.push_back(title);
+    mutexUnlock(&g_boxart_auto_mtx);
+}
+
+static pu::sdl2::Texture boxart_icon_for(const std::string &title) {
+    if (title.empty()) {
+        return nullptr;
+    }
+    for (size_t i = 0; i < g_boxart_cache.size(); i++) {
+        if (g_boxart_cache[i].first == title) {
+            auto tex = g_boxart_cache[i].second;
+            if (i != 0) { // bump to front (most-recently-used)
+                g_boxart_cache.erase(g_boxart_cache.begin() + i);
+                g_boxart_cache.insert(g_boxart_cache.begin(), {title, tex});
+            }
+            return tex;
+        }
+    }
+    char path[768];
+    if (!boxart_lookup(title.c_str(), path, sizeof(path))) {
+        return nullptr; // never scanned, or scanned with no match
+    }
+    auto tex = pu::ui::render::LoadImageFromFile(path);
+    if (!tex) {
+        return nullptr; // cached path is stale (file removed out-of-band)
+    }
+    if ((int)g_boxart_cache.size() >= kBoxArtCacheCap) {
+        pu::ui::render::DeleteTexture(g_boxart_cache.back().second);
+        g_boxart_cache.pop_back();
+    }
+    g_boxart_cache.insert(g_boxart_cache.begin(), {title, tex});
+    return tex;
+}
+
+// Drop a title's runtime texture (Manage Box Art's delete action): boxart.c
+// only owns the file on disk, so without this the Library list and this
+// cache would keep showing the deleted cover until the app restarted.
+static void boxart_cache_forget(const std::string &title) {
+    for (size_t i = 0; i < g_boxart_cache.size(); i++) {
+        if (g_boxart_cache[i].first == title) {
+            pu::ui::render::DeleteTexture(g_boxart_cache[i].second);
+            g_boxart_cache.erase(g_boxart_cache.begin() + i);
+            return;
+        }
+    }
+}
+
+// Drop every runtime cover texture (Art Cache's "Clear all"): same reasoning
+// as boxart_cache_forget above, just for the whole cache at once rather than
+// one title.
+static void boxart_cache_forget_all() {
+    for (auto &kv : g_boxart_cache) {
+        pu::ui::render::DeleteTexture(kv.second);
+    }
+    g_boxart_cache.clear();
+}
+
+// Same idea, but only the "console:<target>" entries (Scan Console Art's
+// "Reset All to Default") -- game covers are untouched.
+static void boxart_cache_forget_consoles() {
+    for (size_t i = 0; i < g_boxart_cache.size();) {
+        if (!strncmp(g_boxart_cache[i].first.c_str(), "console:", 8)) {
+            pu::ui::render::DeleteTexture(g_boxart_cache[i].second);
+            g_boxart_cache.erase(g_boxart_cache.begin() + i);
+        } else {
+            i++;
+        }
+    }
+}
+
+// Mirror of boxart_cache_forget_consoles for the other direction (Scan Box
+// Art's own "Reset All to Default"): drops every entry that ISN'T a
+// "console:<target>" key, leaving console art untouched.
+static void boxart_cache_forget_games() {
+    for (size_t i = 0; i < g_boxart_cache.size();) {
+        if (strncmp(g_boxart_cache[i].first.c_str(), "console:", 8)) {
+            pu::ui::render::DeleteTexture(g_boxart_cache[i].second);
+            g_boxart_cache.erase(g_boxart_cache.begin() + i);
+        } else {
+            i++;
+        }
+    }
+}
+
+// Below this score (see ba_name_score in boxart.c: 100 exact, 60 substring
+// containment, 10-50 scaled token overlap, 0 no name info at all) a fresh
+// auto-pick is more guess than match -- worth flagging in the results list
+// rather than silently trusting it the way a plain "Found" implied before.
+static const int kLowConfidenceScore = 60;
+
+// Memory-only check for whether `title` has a cached cover, with the already-
+// decoded texture if one happens to be warm in the runtime cache. Never opens
+// or decodes a file (boxart_lookup is a scan of the already-loaded in-memory
+// index -- see boxart.c -- so this is cheap even called once per row).
+// Returns true when a cover exists on disk; *out is null when it hasn't been
+// decoded into a texture yet, which is the caller's cue to queue it for
+// BoxArtIconsPoll instead of decoding right here in the middle of a list
+// build. This split is what keeps GotoInstalled fast on a large library: a
+// row's icon used to be a full PNG decode at AddRow2 time regardless of
+// whether that row was ever scrolled into view, which thrashed the
+// texture cache's 48-slot budget every time a folder with more than 48
+// distinct titles was opened.
+static bool boxart_row_icon(const std::string &title, pu::sdl2::Texture *out) {
+    *out = nullptr;
+    if (title.empty() || !g_prefs.box_art_enabled) {
+        return false;
+    }
+    for (size_t i = 0; i < g_boxart_cache.size(); i++) {
+        if (g_boxart_cache[i].first == title) {
+            *out = g_boxart_cache[i].second;
+            return true;
+        }
+    }
+    char path[768];
+    return boxart_lookup(title.c_str(), path, sizeof(path));
 }
 
 static void select_theme() {
@@ -230,11 +450,81 @@ static std::string human_size(uint64_t bytes) {
     return std::string(buf);
 }
 
-// Logo green, theme-adjusted: bright on the dark theme, deeper on light so it
-// keeps contrast on light rows.
+// Accent color presets: each pairs a "primary" (the original logo-green
+// role) and "secondary" (the original tab-underline-blue role) color,
+// theme-adjusted the same way the original hardcoded green/blue were --
+// deeper/saturated on the light theme for contrast, brighter on dark. Every
+// ring, glow, progress bar and pulse dot in the app routes through
+// accent_green()/accent_blue() below, so switching the preset recolors all
+// of it from this one table -- see Settings > Appearance > Accent Color
+// (GotoAccent).
+struct AccentPreset {
+    const char *key;   // stored in g_prefs.accent
+    int name_str;       // i18n key for the picker's display name
+    pu::ui::Color light_a, dark_a; // primary (was the hardcoded accent_green)
+    pu::ui::Color light_b, dark_b; // secondary (was the hardcoded accent_blue)
+};
+static const AccentPreset g_accents[] = {
+    // Signature (default): the app's original green/blue, unchanged -- so
+    // existing installs look exactly the same until a user opts into another.
+    {"signature", S_ACCENT_SIGNATURE,
+     pu::ui::Color(30, 124, 54, 255),  pu::ui::Color(146, 214, 36, 255),
+     pu::ui::Color(30, 100, 190, 255), pu::ui::Color(90, 160, 245, 255)},
+    {"violet", S_ACCENT_VIOLET,
+     pu::ui::Color(120, 60, 180, 255), pu::ui::Color(190, 140, 255, 255),
+     pu::ui::Color(170, 50, 130, 255), pu::ui::Color(255, 140, 210, 255)},
+    {"ember", S_ACCENT_EMBER,
+     pu::ui::Color(180, 110, 20, 255), pu::ui::Color(245, 175, 95, 255),
+     pu::ui::Color(180, 60, 40, 255),  pu::ui::Color(255, 130, 90, 255)},
+    {"aqua", S_ACCENT_AQUA,
+     pu::ui::Color(20, 130, 140, 255), pu::ui::Color(80, 220, 230, 255),
+     pu::ui::Color(20, 110, 110, 255), pu::ui::Color(90, 200, 190, 255)},
+    {"rose", S_ACCENT_ROSE,
+     pu::ui::Color(170, 50, 110, 255), pu::ui::Color(255, 130, 180, 255),
+     pu::ui::Color(170, 40, 60, 255),  pu::ui::Color(255, 110, 120, 255)},
+    {"slate", S_ACCENT_SLATE,
+     pu::ui::Color(70, 90, 110, 255),  pu::ui::Color(160, 180, 200, 255),
+     pu::ui::Color(50, 90, 140, 255),  pu::ui::Color(130, 170, 220, 255)},
+};
+static const int g_accent_count = sizeof(g_accents) / sizeof(g_accents[0]);
+
+// Index of g_prefs.accent in g_accents, defaulting to 0 ("signature") for an
+// empty or unrecognized preference -- covers both a fresh install and an old
+// config.json saved before this field existed.
+static int accent_preset_index() {
+    for (int i = 0; i < g_accent_count; i++) {
+        if (strcmp(g_accents[i].key, g_prefs.accent) == 0) {
+            return i;
+        }
+    }
+    return 0;
+}
+
+// Primary accent (was the hardcoded "logo green"), theme-adjusted: bright on
+// the dark theme, deeper on light so it keeps contrast on light rows.
+// Sourced from the selected Appearance > Accent Color preset.
 static pu::ui::Color accent_green() {
-    return is_light_theme() ? pu::ui::Color(30, 124, 54, 255)
-                            : pu::ui::Color(146, 214, 36, 255);
+    const AccentPreset &p = g_accents[accent_preset_index()];
+    return is_light_theme() ? p.light_a : p.dark_a;
+}
+
+// Secondary accent (was the hardcoded "logo blue"/tab underline),
+// theme-adjusted the same way as accent_green(). Sourced from the same
+// preset.
+static pu::ui::Color accent_blue() {
+    const AccentPreset &p = g_accents[accent_preset_index()];
+    return is_light_theme() ? p.light_b : p.dark_b;
+}
+
+// Danger red, theme-adjusted the same way accent_green() is: deeper/more
+// saturated on the light theme so it keeps contrast on the light dialog
+// panel/row backgrounds, brighter on dark. Every "destructive" or "failed"
+// accent in the app should route through this instead of a raw literal, so
+// none of them silently lose contrast on the light theme the way green
+// used to before it got the same treatment.
+static pu::ui::Color warn_red() {
+    return is_light_theme() ? pu::ui::Color(180, 60, 60, 255)
+                            : pu::ui::Color(235, 120, 120, 255);
 }
 
 // Color-code a row by file size magnitude (KB / MB / GB), restoring the size
@@ -355,22 +645,85 @@ static void console_label(const char *abbr, char *out, size_t out_sz) {
     snprintf(out, out_sz, "%s (%s)", full, up);
 }
 
+// Row/card icon for the console at `target` (its target folder or display
+// name -- config_find_console matches either): its chosen SteamGridDB cover
+// if it opted in (ConsoleGroup::use_boxart, set via ConsoleArtMenu) and one
+// is already cached, else the same built-in square icon console_icon always
+// returned. Synchronous decode via boxart_icon_for is fine here -- unlike the
+// per-game path (BoxArtIconsPoll's lazy queue, needed because a library can
+// hold hundreds of distinct titles cycling through the 48-slot texture
+// cache), the console list is capped at MAX_CONSOLES and only the handful a
+// user actually opts into ever get decoded, so they simply stay warm for the
+// app's whole run once loaded. Falls straight through to console_icon for any
+// key that isn't a live console (a settings card, "default", a game/file
+// name) -- safe to call anywhere console_icon was called before.
+//
+// `is_art`, if given, is set true only when the returned texture is a real
+// SteamGridDB cover (as opposed to the built-in square console_icon/badge) --
+// callers feeding a poster-mode AddCard/SetCardIcon need this to pick the
+// aspect-preserving cover path over the centred-square icon path (see
+// CardGrid's Card::art); a plain console_icon lookup can ignore it.
+//
+// `allow_boxart` (default true): pass false to force the built-in stock icon
+// even when the console opted into custom box art. The download queue uses
+// this -- a queue card is a small, uniform-grid status tile, not a library
+// browse card, so it deliberately stays on the stock icon set for every
+// console and only ever shows a custom image for the one non-console entry,
+// the HaulNX self-update badge (handled below, unaffected by this flag).
+//
+// Also gated on g_prefs.box_art_enabled (Settings > Appearance): that's the
+// global "show box art" switch boxart_row_icon already honors for per-game
+// covers, so turning it off has to fall every console row back to its stock
+// icon the same way, not just leave whichever cover a console had already
+// opted into (via ConsoleArtMenu) showing regardless.
+static pu::sdl2::Texture console_display_icon(const char *target,
+                                              bool *is_art = nullptr,
+                                              bool allow_boxart = true) {
+    if (is_art) {
+        *is_art = false;
+    }
+    // The self-update Queue entry (see UpdStart) carries the literal target
+    // "HaulNX" -- never a real console key -- so it can be told apart here
+    // and shown the app's own badge instead of falling through to the
+    // generic "default" folder icon.
+    if (target && !strcmp(target, "HaulNX") && g_header_logo) {
+        return g_header_logo;
+    }
+    if (allow_boxart && g_prefs.box_art_enabled && target && target[0]) {
+        ConsoleGroup *g = config_find_console(&g_cfg, target);
+        if (g && g->use_boxart) {
+            pu::sdl2::Texture tex =
+                boxart_icon_for(std::string("console:") + g->target);
+            if (tex) {
+                if (is_art) {
+                    *is_art = true;
+                }
+                return tex;
+            }
+        }
+    }
+    return console_icon(target);
+}
+
 static void style_dialog(pu::ui::Dialog::Ref &d) {
     d->SetDialogColor(g_theme->dialog_bg);
     d->SetTitleColor(g_theme->dialog_title);
     d->SetContentColor(g_theme->dialog_body);
     d->SetOptionColor(g_theme->dialog_opt);
-    d->SetOverColor(g_theme->dialog_over);
+    // Was g_theme->dialog_over, a fixed blue literal ignoring the selected
+    // accent preset -- every dialog in the app uses this style, so it was
+    // the single biggest "accent didn't really apply" gap.
+    d->SetOverColor(accent_blue());
 }
 
 // Destructive-action dialog: same as style_dialog but with a red title so it
 // clearly reads as "danger" at a glance.
 static void style_dialog_danger(pu::ui::Dialog::Ref &d) {
     d->SetDialogColor(g_theme->dialog_bg);
-    d->SetTitleColor(pu::ui::Color(224, 78, 78, 255));
+    d->SetTitleColor(warn_red());
     d->SetContentColor(g_theme->dialog_body);
     d->SetOptionColor(g_theme->dialog_opt);
-    d->SetOverColor(g_theme->dialog_over);
+    d->SetOverColor(accent_blue());
 }
 
 // Compact "time remaining" string from a seconds count.
@@ -1281,11 +1634,32 @@ static std::vector<DirEnt> list_dir(const std::string &path) {
         de.is_dir = false;
         de.size = 0;
         std::string full = path + "/" + e->d_name;
-        struct stat st;
-        if (stat(full.c_str(), &st) == 0) {
-            de.is_dir = S_ISDIR(st.st_mode);
-            de.size = (uint64_t)st.st_size;
-            de.mtime = (uint64_t)st.st_mtime;
+        // Folder rows never show size/mtime here (folder totals come from the
+        // separate persisted stat cache — see inst_stat_load — since a real
+        // folder size needs a recursive walk, not a raw stat() on the folder
+        // itself), so a directory only needs the is_dir classification.
+        // libnx hands that back for free as dirent::d_type in the same
+        // readdir() batch that just listed the entry, so skip stat() (its own
+        // FS IPC round-trip) whenever d_type already answers it, and only pay
+        // for stat() on files, which do need size + mtime. Every screen that
+        // lists a folder (Library, ROM picker, Downloads, Inbox, Cache,
+        // Backups, DATs, box art) goes through this, so cutting a stat() per
+        // directory entry adds up across an entire console folder at once.
+        if (e->d_type == DT_DIR) {
+            de.is_dir = true;
+        } else if (e->d_type == DT_REG) {
+            struct stat st;
+            if (stat(full.c_str(), &st) == 0) {
+                de.size = (uint64_t)st.st_size;
+                de.mtime = (uint64_t)st.st_mtime;
+            }
+        } else {
+            struct stat st;
+            if (stat(full.c_str(), &st) == 0) {
+                de.is_dir = S_ISDIR(st.st_mode);
+                de.size = (uint64_t)st.st_size;
+                de.mtime = (uint64_t)st.st_mtime;
+            }
         }
         v.push_back(de);
     }
@@ -1362,7 +1736,7 @@ MainLayout::MainLayout() : Layout::Layout() {
     this->Add(this->title);
     for (int i = 0; i < 2; i++) {
         auto sp = pu::ui::elm::TextBlock::New(-100, 24, " ");
-        sp->SetColor(pu::ui::Color(146, 214, 36, 255));
+        sp->SetColor(accent_green()); // re-colored per accent in ApplyTheme()
         this->Add(sp);
         this->bc_seps.push_back(sp);
         auto pt = pu::ui::elm::TextBlock::New(-100, 24, " ");
@@ -1395,11 +1769,21 @@ MainLayout::MainLayout() : Layout::Layout() {
         0, strip_y, sw, strip_h, g_theme->tab_bar_bg);
     this->Add(this->tab_bar);
 
+    // Soft background capsule behind the active tab's whole label (bounds set
+    // per active tab in SetActiveTab). Added before the labels so it renders
+    // behind the text -- unlike the thin underline pill below, this one does
+    // overlap the label vertically.
+    this->tab_chip = PillElement::New(0, strip_y + 6, 120, 64, 10,
+                                      pu::ui::Color(accent_blue().r,
+                                                    accent_blue().g,
+                                                    accent_blue().b, 42));
+    this->Add(this->tab_chip);
+
     // Accent underline beneath the active tab label (its bounds are set per
     // active tab in SetActiveTab). Added before the labels, but it now sits
     // below them rather than behind, so ordering no longer matters.
     this->tab_pill = PillElement::New(0, strip_y + 8, 120, 6, 3,
-                                      g_theme->tab_under);
+                                      accent_blue());
     this->Add(this->tab_pill);
 
     // Library first (front door), then Add — see the Tab enum comment.
@@ -1414,15 +1798,25 @@ MainLayout::MainLayout() : Layout::Layout() {
         this->tabs.push_back(tb);
     }
 
-    // The icon's ring gradient as a signature strip along the bottom edge of
-    // the charcoal shell (constant in both themes — the shell stays charcoal).
-    this->accent_line = GradientLineElement::New(
-        0, strip_y + strip_h, sw, 3, pu::ui::Color(146, 214, 36, 255),
-        pu::ui::Color(56, 130, 225, 255));
+    // Thin, faint strip along the bottom edge of the charcoal tab shell
+    // (constant in both themes — the shell stays charcoal).
+    this->accent_line = PillElement::New(0, strip_y + strip_h, sw, 2, 0,
+                                         pu::ui::Color(150, 155, 165, 160));
     this->Add(this->accent_line);
 
+    // Ambient progress sliver: a touch thicker than accent_line and drawn
+    // after it, so it reads as an overlay riding on top of the strip rather
+    // than a second competing line. Starts hidden/zero-width; SetQueueProgress
+    // drives it every frame while something is actually moving bytes.
+    this->queue_progress = PillElement::New(0, strip_y + strip_h - 1, 0, 4, 0,
+                                            accent_blue());
+    this->queue_progress->SetVisible(false);
+    this->Add(this->queue_progress);
+
     const s32 footer_h = 64;
-    const s32 list_y = 158;
+    // A little breathing room under the line below the tabs before the
+    // list/card content starts.
+    const s32 list_y = 172;
     const s32 row_h = 84;
     const s32 avail = sh - list_y - footer_h;
     const s32 rows_visible = avail / row_h;
@@ -1438,6 +1832,7 @@ MainLayout::MainLayout() : Layout::Layout() {
     this->empty_icon = IconElement::New(sw / 2 - 90, list_y + avail / 2 - 150,
                                         180);
     this->empty_icon->SetTexture(nullptr);
+    this->empty_icon->SetBreathe(true);
     this->Add(this->empty_icon);
     this->empty_text = pu::ui::elm::TextBlock::New(0, list_y + avail / 2 + 50,
                                                    "");
@@ -1491,13 +1886,18 @@ MainLayout::MainLayout() : Layout::Layout() {
 
     // "Downloads running" pulse on the Queue tab (positioned in SetActiveTab).
     this->queue_dot = PulseDotElement::New(0, 0, 6);
-    // Bright logo green in both themes: the dot sits on the charcoal shell.
-    this->queue_dot->SetColor(pu::ui::Color(146, 214, 36, 255));
+    // Accent-blue in both themes: the dot sits on the charcoal shell.
+    // ApplyTheme() re-colors this on every accent change, but it's set here
+    // via accent_blue() too (not the old fixed literal) so it's never wrong
+    // even for the single frame before the first ApplyTheme() call.
+    this->queue_dot->SetColor(accent_blue());
     this->Add(this->queue_dot);
 
-    // "Update available" pulse on the Settings tab (positioned in SetActiveTab).
+    // "Update available" pulse on the Settings tab (positioned in
+    // SetActiveTab). Same accent-blue as queue_dot — both are "there's
+    // something to look at on this tab" notifications.
     this->settings_dot = PulseDotElement::New(0, 0, 6);
-    this->settings_dot->SetColor(pu::ui::Color(146, 214, 36, 255));
+    this->settings_dot->SetColor(accent_blue());
     this->Add(this->settings_dot);
 
     this->SetActiveTab(0);
@@ -1511,25 +1911,45 @@ void MainLayout::ApplyTheme() {
     this->title->SetColor(g_theme->title_clr);
     for (auto &p : this->bc_parts)
         p->SetColor(g_theme->title_clr);
+    // Breadcrumb "›" chevrons were set once at construction and never
+    // revisited (a pre-existing gap predating accent theming); refresh them
+    // here too so they track both the theme and the selected accent.
+    for (auto &s : this->bc_seps)
+        s->SetColor(accent_green());
     this->status->SetColor(g_theme->status_clr);
     this->bat_info->SetColor(g_theme->status_clr);
     this->rom_info->SetColor(g_theme->rom_info_clr);
-    this->tab_pill->SetColor(g_theme->tab_under);
-    this->queue_dot->SetColor(pu::ui::Color(146, 214, 36, 255));
-    this->settings_dot->SetColor(pu::ui::Color(146, 214, 36, 255));
+    this->tab_pill->SetColor(accent_blue());
+    this->tab_chip->SetColor(pu::ui::Color(accent_blue().r,
+                                           accent_blue().g,
+                                           accent_blue().b, 42));
+    // Was a hardcoded dark-theme blue literal (it happened to equal the old
+    // accent_blue() dark value) -- now routed through accent_blue() so the
+    // dots pick up both the light-theme deepened shade and any accent
+    // preset the user picks in Appearance > Accent Color.
+    this->queue_dot->SetColor(accent_blue());
+    this->settings_dot->SetColor(accent_blue());
+    // The ambient queue-progress sliver on the tab strip was set once at
+    // construction and never revisited; recolor it here too so it follows
+    // theme/accent changes the same as everything else.
+    this->queue_progress->SetColor(accent_blue());
     this->empty_text->SetColor(g_theme->rom_info_clr);
     this->empty_code->SetColor(accent_green());
     this->empty_hint->SetColor(g_theme->rom_info_clr);
-    this->spinner->SetColors(accent_green(), g_theme->rom_info_clr);
+    this->spinner->SetColors(accent_blue(), g_theme->rom_info_clr);
     for (auto &s : this->footer_segs)
         s->SetLabelColor(g_theme->footer_clr);
     for (auto &t : this->tabs)
         t->SetColor(g_theme->tab_clr);
-    // Activity = logo green: progress bars and the active-download hero tint.
+    // Force the next SetActiveTab (its cache would otherwise see the same
+    // idx and skip re-highlighting the active tab in the new theme's color).
+    this->last_tab_idx = -1;
+    // Selection border/glow, marks, pins and the progress-bar success color:
+    // accent blue (matches the tab underline), not the logo green.
     this->list->SetThemeColors(g_theme->tl_row_bg, g_theme->tl_row_alt,
                                g_theme->tl_focus, g_theme->tl_scroll,
                                g_theme->tl_mark,
-                               accent_green(),
+                               accent_blue(),
                                is_light_theme()
                                    ? pu::ui::Color(198, 232, 204, 255)
                                    : pu::ui::Color(34, 54, 20, 255),
@@ -1540,7 +1960,16 @@ void MainLayout::ApplyTheme() {
                                    ? pu::ui::Color(0, 0, 0, 34)
                                    : pu::ui::Color(0, 0, 0, 95),
                                // Page bg drives the list's enter fade-in.
-                               g_theme->bg);
+                               g_theme->bg,
+                               // Failed-transfer bar: theme-adjusted red, same
+                               // helper the dialogs use, instead of a raw
+                               // literal that stayed too pale on light rows.
+                               warn_red(),
+                               // Progress-bar gradient's far stop: the other
+                               // half of the selected accent pair (was a
+                               // fixed blue literal, ignoring both theme and
+                               // any accent preset).
+                               accent_green());
     // Card subtitle must stay readable on BOTH the card background and the
     // blue selection fill, so it gets its own shade per theme.
     this->grid->SetThemeColors(g_theme->tl_row_alt, g_theme->tl_focus,
@@ -1548,7 +1977,7 @@ void MainLayout::ApplyTheme() {
                                is_light_theme()
                                    ? pu::ui::Color(45, 55, 75, 255)
                                    : pu::ui::Color(195, 205, 225, 255),
-                               accent_green(),
+                               accent_blue(),
                                is_light_theme() ? pu::ui::Color(0, 0, 0, 34)
                                                 : pu::ui::Color(0, 0, 0, 95),
                                // Page bg drives the grid's enter fade-in.
@@ -1557,24 +1986,48 @@ void MainLayout::ApplyTheme() {
                                // theme's pale cards, so darken it there.
                                is_light_theme()
                                    ? pu::ui::Color(0, 0, 0, 40)
-                                   : pu::ui::Color(255, 255, 255, 20));
+                                   : pu::ui::Color(255, 255, 255, 20),
+                               // Failed-transfer ring: same theme-adjusted red
+                               // as the list and the dialogs.
+                               warn_red(),
+                               // Ring/scrollbar gradient's far stop: same
+                               // accent pairing as the list view above.
+                               accent_green());
 }
 
 void MainLayout::SetActiveTab(int idx) {
     if (idx < 0 || idx >= (int)this->tabs.size()) {
         return;
     }
+    if (idx == this->last_tab_idx) {
+        // Called every frame via SyncTab(); nothing to redo when the active
+        // tab hasn't moved (see last_tab_idx's declaration for why this
+        // matters -- SetColor() below is not a cheap no-op).
+        return;
+    }
+    this->last_tab_idx = idx;
     for (int i = 0; i < (int)this->tabs.size(); i++) {
         this->tabs[i]->SetColor(i == idx
                                     ? g_theme->tab_active
                                     : g_theme->tab_clr);
     }
-    // Underline the active label, extending a touch past it on each side. Sits
-    // just above the strip's accent line so the active tab "owns" that segment.
-    const s32 pad = 10;
-    s32 lx = this->tabs[idx]->GetX();
-    s32 lw = this->tabs[idx]->GetWidth();
-    this->tab_pill->SetBounds(lx - pad, 140, lw + 2 * pad, 6);
+    // Underline + background capsule are both a fixed size, centred on the
+    // tab's segment rather than sized to the label -- deliberately NOT
+    // tied to this->tabs[idx]->GetWidth(), so "Queue" and "Settings" get
+    // the exact same indicator instead of the mark growing/shrinking as the
+    // active tab changes. Both are comfortably wider than any label at this
+    // font. Sits just above the strip's accent line so the active tab
+    // "owns" that segment.
+    const s32 seg = 1920 / 4; // matches the tab layout in OnLoad/RefreshTabs
+    const s32 seg_cx = seg * idx + seg / 2;
+    const s32 pill_w = 200, chip_w = 280;
+    this->tab_pill->SetBounds(seg_cx - pill_w / 2, 140, pill_w, 6);
+    // Wider, taller capsule behind the whole label -- see the tab_chip
+    // declaration for why this exists alongside the thin underline above.
+    // Tall enough (86 to 150) to run past the underline's own bottom edge
+    // (140-146), so the underline sits fully inside the capsule instead of
+    // poking out below it as two separate shapes.
+    this->tab_chip->SetBounds(seg_cx - chip_w / 2, 86, chip_w, 64);
     // Park the Queue-tab pulse just after the Queue (index 2) label.
     if (this->tabs.size() > 2) {
         this->queue_dot->SetPos(this->tabs[2]->GetX() +
@@ -1591,6 +2044,18 @@ void MainLayout::SetActiveTab(int idx) {
 void MainLayout::SetQueueActivity(bool active) {
     this->queue_dot->SetActive(active);
 }
+void MainLayout::SetQueueProgress(float frac) {
+    if (frac < 0.0f) {
+        this->queue_progress->SetVisible(false);
+        return;
+    }
+    if (frac > 1.0f) frac = 1.0f;
+    const s32 strip_y = 80, strip_h = 70;
+    const s32 sw = (s32)pu::ui::render::ScreenWidth;
+    this->queue_progress->SetBounds(0, strip_y + strip_h - 1,
+                                    (s32)(sw * frac), 4);
+    this->queue_progress->SetVisible(true);
+}
 void MainLayout::SetUpdateAvailable(bool avail) {
     this->settings_dot->SetActive(avail);
 }
@@ -1602,6 +2067,10 @@ void MainLayout::RefreshTabs() {
         this->tabs[i]->SetText(labels[i]);
         this->tabs[i]->SetX(seg * i + (seg - this->tabs[i]->GetWidth()) / 2);
     }
+    // Label widths just changed (new language), which the pulse dots are
+    // parked relative to -- force SetActiveTab to recompute even if the
+    // active idx itself didn't change.
+    this->last_tab_idx = -1;
 }
 
 void MainLayout::SetTitle(const std::string &t) {
@@ -1795,8 +2264,14 @@ u64 MainLayout::FooterButtonAt(s32 tx, s32 ty) const {
     return 0;
 }
 void MainLayout::ClearMenu(bool fade) {
-    this->list->Clear(fade);
-    this->grid->Clear();
+    // Whole-list/grid fade-in was previously removed outright (stuttered
+    // under download load: re-rendering everything for ~8 frames competes
+    // with real I/O). Re-enabled, but only while nothing is actually moving
+    // bytes — queue_io_active() excludes merely-queued/paused items, so a
+    // populated-but-idle queue still gets the fade.
+    const bool animate = fade && !queue_io_active();
+    this->list->Clear(animate);
+    this->grid->Clear(animate);
     this->cards_mode = false; // card screens opt back in after ClearMenu
     this->rom_info->SetText("");
     this->ClearEmptyState();
@@ -1818,7 +2293,7 @@ void MainLayout::SetEmptyState(pu::sdl2::Texture icon, const std::string &msg,
     // sheet" — icon lifted, a gap below the address, and larger step text — so
     // it reads like directions rather than an empty-state notice. Positions are
     // reset on every call so switching screens restores the right layout.
-    const s32 list_y = 158, footer_h = 64;
+    const s32 list_y = 172, footer_h = 64;
     // The spacious "instruction sheet" is bottom-heavy — tall step text plus an
     // optional accent chip (e.g. the "push from the app utility" note) — so
     // anchor it higher than dead-centre; otherwise the chip runs into the footer
@@ -1918,9 +2393,17 @@ void MainLayout::ShowSpinner(const std::string &msg) {
 void MainLayout::HideSpinner() { this->spinner->Hide(); }
 void MainLayout::SetCardsMode(bool on) { this->cards_mode = on; }
 void MainLayout::AddCard(const std::string &title, const std::string &subtitle,
-                         pu::sdl2::Texture icon, bool pinned, bool dim) {
-    this->grid->AddCard(title, subtitle, icon, pinned, dim);
+                         pu::sdl2::Texture icon, bool pinned, bool dim,
+                         bool art) {
+    this->grid->AddCard(title, subtitle, icon, pinned, dim, art);
 }
+void MainLayout::SetCardCols(s32 n) { this->grid->SetCols(n); }
+void MainLayout::SetCardPoster(bool on) { this->grid->SetPoster(on); }
+void MainLayout::SetCardIcon(s32 i, pu::sdl2::Texture icon) {
+    this->grid->SetCardIcon(i, icon);
+}
+s32 MainLayout::CardFirstVisible() { return this->grid->FirstVisibleCard(); }
+s32 MainLayout::CardVisibleCount() { return this->grid->VisibleCardCount(); }
 void MainLayout::SetSingleCard(bool on) { this->grid->SetSingle(on); }
 void MainLayout::SetQueueCount(s32 n) { this->grid->SetQueueCount(n); }
 void MainLayout::SetQueueCard(s32 i, const std::string &console,
@@ -1929,9 +2412,10 @@ void MainLayout::SetQueueCard(s32 i, const std::string &console,
                               const std::string &size, const std::string &speed,
                               const std::string &eta, const std::string &file,
                               float prog, bool hero, s32 ring, s32 qpos,
-                              bool refresh_text) {
+                              bool refresh_text, bool logo_icon, bool art) {
     this->grid->SetQueueCard(i, console, icon, status, st_clr, size, speed,
-                             eta, file, prog, hero, ring, qpos, refresh_text);
+                             eta, file, prog, hero, ring, qpos, refresh_text,
+                             logo_icon, art);
 }
 void MainLayout::CardMove(s32 dx, s32 dy) { this->grid->Move(dx, dy); }
 void MainLayout::AddRow(const std::string &name) {
@@ -1952,6 +2436,11 @@ void MainLayout::SetRowRight(s32 i, const std::string &right,
                              pu::ui::Color rclr) {
     this->list->SetRowRight(i, right, rclr);
 }
+void MainLayout::SetRowIcon(s32 i, pu::sdl2::Texture icon) {
+    this->list->SetRowIcon(i, icon);
+}
+s32 MainLayout::ScrollTop() { return this->list->ScrollTop(); }
+s32 MainLayout::RowsVisible() { return this->list->RowsVisible(); }
 s32 MainLayout::Sel() {
     return this->cards_mode ? this->grid->GetSelected()
                             : this->list->GetSelected();
@@ -1990,17 +2479,38 @@ void MainLayout::PageDown() {
         this->MoveBy(this->list->RowsVisible());
     }
 }
-void MainLayout::ToggleMark(s32 i) { this->list->ToggleMark(i); }
-void MainLayout::SetMark(s32 i, bool on) { this->list->SetMark(i, on); }
-int MainLayout::MarkedCount() { return this->list->MarkedCount(); }
-const std::set<s32> &MainLayout::Marked() { return this->list->Marked(); }
-void MainLayout::ClearMarks() { this->list->ClearMarks(); }
+// Marks route to whichever element is actually showing selection - the card
+// grid needs its own set for the Installed poster view's Y multi-select
+// (blue border), rather than always hitting the (empty, hidden) list.
+void MainLayout::ToggleMark(s32 i) {
+    if (this->cards_mode) this->grid->ToggleMark(i);
+    else this->list->ToggleMark(i);
+}
+void MainLayout::SetMark(s32 i, bool on) {
+    if (this->cards_mode) this->grid->SetMark(i, on);
+    else this->list->SetMark(i, on);
+}
+int MainLayout::MarkedCount() {
+    return this->cards_mode ? this->grid->MarkedCount() : this->list->MarkedCount();
+}
+const std::set<s32> &MainLayout::Marked() {
+    return this->cards_mode ? this->grid->Marked() : this->list->Marked();
+}
+void MainLayout::ClearMarks() {
+    this->grid->ClearMarks();
+    this->list->ClearMarks();
+}
 
 // ---- app: feedback --------------------------------------------------------
 void MainApplication::Toast(const std::string &msg) {
     auto tb = pu::ui::elm::TextBlock::New(0, 0, msg);
     tb->SetColor(pu::ui::Color(255, 255, 255, 255));
-    auto t = pu::ui::extras::Toast::New(tb, pu::ui::Color(58, 110, 22, 240));
+    // Was a fixed blue literal, independent of the selected accent preset --
+    // this is the toast every "Queued: X" / settings-saved confirmation shows
+    // app-wide, so a hardcoded color here reads as "the accent didn't really
+    // apply" no matter which screen it pops up on.
+    pu::ui::Color ac = accent_blue();
+    auto t = pu::ui::extras::Toast::New(tb, pu::ui::Color(ac.r, ac.g, ac.b, 240));
     this->StartOverlayWithTimeout(t, 1200);
 }
 
@@ -2107,14 +2617,25 @@ s32 MainApplication::SideMenu(const std::string &title,
                               const std::vector<std::string> &opts, s32 sel,
                               const std::string &body, bool danger,
                               bool from_left, pu::sdl2::Texture icon,
-                              SideMenuLive *live, u64 switch_btn) {
+                              SideMenuLive *live, u64 switch_btn,
+                              pu::sdl2::Texture backdrop) {
     namespace rnd = pu::ui::render;
     // Destructive confirmations get a red title and highlight pill; everything
     // else uses the theme's dialog colors.
-    const pu::ui::Color title_clr =
-        danger ? pu::ui::Color(200, 66, 66, 255) : g_theme->dialog_title;
+    const pu::ui::Color title_clr = danger ? warn_red() : g_theme->dialog_title;
+    // Was g_theme->dialog_over (a fixed blue literal) for the non-danger case
+    // -- edge_clr right below already followed the accent, so the fill and
+    // the outline of the same selection pill were visibly different colors
+    // whenever a non-default accent was chosen.
     const pu::ui::Color hi_clr =
-        danger ? pu::ui::Color(150, 40, 40, 255) : g_theme->dialog_over;
+        danger ? pu::ui::Color(150, 40, 40, 255) : accent_blue();
+    // Selected-row outline/glow, matching the "lit" treatment TableList and
+    // CardGrid use for their selection — SideMenu is the most-seen selection
+    // state in the app (every settings toggle, every confirmation) but used
+    // to be the one place selection was just a flat fill. Danger menus get
+    // the same red as the title instead of blue, so the outline doesn't
+    // contradict the "this is destructive" cue.
+    const pu::ui::Color edge_clr = danger ? warn_red() : accent_blue();
     const s32 SW = rnd::ScreenWidth, SH = rnd::ScreenHeight;
     const s32 panel_w = 640;   // ~1/3 of the 1920px canvas
     const s32 pad = 40;
@@ -2166,7 +2687,19 @@ s32 MainApplication::SideMenu(const std::string &title,
     bool foot_dirty = live != nullptr;
     if (live) {
         on_tex = rnd::RenderText(ofont, "ON", accent_green());
-        off_tex = rnd::RenderText(ofont, "OFF", pu::ui::Color(200, 66, 66, 255));
+        off_tex = rnd::RenderText(ofont, "OFF", warn_red());
+    }
+    // Hero backdrop: `backdrop`'s art faux-blurred to fill the panel, then a
+    // top-to-bottom scrim fading from a light haze into the panel's own
+    // background colour so the option rows stay fully legible over it. Baked
+    // once per open (not per frame) — see BakeBlurredFill/BakeVGradient.
+    pu::sdl2::Texture bd_blur_tex = nullptr, bd_scrim_tex = nullptr;
+    if (backdrop) {
+        bd_blur_tex = BakeBlurredFill(backdrop, panel_w, SH);
+        bd_scrim_tex = BakeVGradient(
+            SH, pu::ui::Color(0, 0, 0, 90),
+            pu::ui::Color(g_theme->dialog_bg.r, g_theme->dialog_bg.g,
+                         g_theme->dialog_bg.b, 235));
     }
 
     s32 result = -1;
@@ -2177,6 +2710,11 @@ s32 MainApplication::SideMenu(const std::string &title,
     int top = 0;        // index of the first visible row (scroll offset)
     double anim = 0.0; // 0 = off-screen right, 1 = fully slid out
     u64 foot_poll_ns = 0; // next tick to rebuild a live footer (connection state)
+    // Selection-highlight fade: restarted whenever `sel` moves, matching
+    // TableList/CardGrid's sel_alpha so the glow eases in instead of
+    // teleporting between rows here too.
+    s32 anim_sel = sel;
+    s32 sel_alpha = 255;
     while (true) {
         const bool ok = this->CallForRenderWithRenderOver(
             [&](rnd::Renderer::Ref &d) -> bool {
@@ -2291,13 +2829,29 @@ s32 MainApplication::SideMenu(const std::string &title,
                 // Screen dim behind the panel, fading in step with the slide.
                 d->RenderRectangleFill(pu::ui::Color(0, 0, 0, (u8)(150 * anim)),
                                        0, 0, SW, SH);
-                d->RenderRectangleFill(g_theme->dialog_bg, panel_x, 0, panel_w,
-                                       SH);
+                if (bd_blur_tex) {
+                    // Flat fill first (covers the sliver the stretch-blit's
+                    // rounding can miss at the panel edge), then the blurred
+                    // art, then the scrim -- all stretched to the full panel
+                    // rect each frame so they track the slide with it.
+                    d->RenderRectangleFill(g_theme->dialog_bg, panel_x, 0,
+                                           panel_w, SH);
+                    pu::ui::render::TextureRenderOptions bo;
+                    bo.width = panel_w;
+                    bo.height = SH;
+                    d->RenderTexture(bd_blur_tex, panel_x, 0, bo);
+                    if (bd_scrim_tex) {
+                        d->RenderTexture(bd_scrim_tex, panel_x, 0, bo);
+                    }
+                } else {
+                    d->RenderRectangleFill(g_theme->dialog_bg, panel_x, 0,
+                                           panel_w, SH);
+                }
                 // Accent bar down the panel's leading edge, in the same green as
                 // the tab-header underline, so the slide-out is clearly a panel
                 // over the screen rather than part of it. The leading edge is the
                 // right edge for a left panel, the left edge for a right one.
-                d->RenderRectangleFill(g_theme->tab_under,
+                d->RenderRectangleFill(accent_blue(),
                                        from_left ? panel_x + panel_w - 6 : panel_x,
                                        0, 6, SH);
                 // Optional console icon left of the title (per-console Options),
@@ -2325,13 +2879,40 @@ s32 MainApplication::SideMenu(const std::string &title,
                 // the minimum needed when it moves past either edge.
                 if (sel < top) top = sel;
                 else if (sel >= top + visible) top = sel - visible + 1;
+                // Advance the selection fade (restart when the selection moved).
+                if (anim_sel != sel) {
+                    anim_sel = sel;
+                    sel_alpha = 90;
+                } else if (sel_alpha < 255) {
+                    sel_alpha = sel_alpha + 30 > 255 ? 255 : sel_alpha + 30;
+                }
                 s32 y = list_top;
                 for (u32 i = top;
                      i < opt_texs.size() && (s32)i < top + visible; i++) {
                     if ((s32)i == sel) {
-                        d->RenderRoundedRectangleFill(
-                            hi_clr, panel_x + pad - 12, y,
-                            panel_w - 2 * (pad - 12), row_h - row_gap, 10);
+                        const s32 hrx = panel_x + pad - 12, hry = y,
+                                  hrw = panel_w - 2 * (pad - 12),
+                                  hrh = row_h - row_gap, hrr = 10;
+                        auto fill = hi_clr;
+                        fill.a = (u8)((s32)hi_clr.a * sel_alpha / 255);
+                        d->RenderRoundedRectangleFill(fill, hrx, hry, hrw, hrh,
+                                                      hrr);
+                        // Soft outer glow rings + a crisp edge outline, same
+                        // layered technique as TableList/CardGrid selection.
+                        for (s32 g = 1; g <= 3; g++) {
+                            auto gc = edge_clr;
+                            gc.a = (u8)((36 - g * 10) * sel_alpha / 255);
+                            d->RenderRoundedRectangle(gc, hrx - g, hry - g,
+                                                      hrw + 2 * g, hrh + 2 * g,
+                                                      hrr + g);
+                        }
+                        auto edge = edge_clr;
+                        edge.a = (u8)sel_alpha;
+                        for (s32 t = 0; t < 2; t++) {
+                            d->RenderRoundedRectangle(
+                                edge, hrx + t, hry + t, hrw - 2 * t,
+                                hrh - 2 * t, hrr - t > 4 ? hrr - t : 4);
+                        }
                     }
                     const s32 th = rnd::GetTextureHeight(opt_texs[i]);
                     d->RenderTexture(opt_texs[i], panel_x + pad,
@@ -2398,6 +2979,8 @@ s32 MainApplication::SideMenu(const std::string &title,
     if (on_tex) rnd::DeleteTexture(on_tex);
     if (off_tex) rnd::DeleteTexture(off_tex);
     if (foot_tex) rnd::DeleteTexture(foot_tex);
+    if (bd_blur_tex) rnd::DeleteTexture(bd_blur_tex);
+    if (bd_scrim_tex) rnd::DeleteTexture(bd_scrim_tex);
     for (auto &t : opt_texs) rnd::DeleteTexture(t);
     return result;
 }
@@ -2728,6 +3311,14 @@ void MainApplication::GotoHome() {
             bool pinned;
         };
         std::vector<HomeRow> rows;
+        // 6-wide/2-row poster geometry, matching the Installed library's
+        // card view -- these are plain logo icons (never real art), so they
+        // fall through poster's "no cover" centred-icon path rather than
+        // stretching into a cover-art rectangle. See CardGrid::SetPoster.
+        if (cards) {
+            this->layout->SetCardCols(6);
+            this->layout->SetCardPoster(true);
+        }
         for (int i = 0; i < g_cfg.console_count; i++) {
             if (!g_cfg.consoles[i].shown) {
                 continue;
@@ -2765,13 +3356,15 @@ void MainApplication::GotoHome() {
                 // Card: full name as the (wrappable) title; counts beneath.
                 const char *cname = g_cfg.consoles[row.idx].console;
                 const char *full = console_full_name(cname);
-                this->layout->AddCard(full ? full : cname, cnt,
-                                      console_icon(cname), row.pinned);
+                bool is_art = false;
+                pu::sdl2::Texture cic = console_display_icon(cname, &is_art);
+                this->layout->AddCard(full ? full : cname, cnt, cic,
+                                      row.pinned, false, is_art);
             } else {
                 this->layout->AddRow2(
                     row.label, cnt, g_theme->row_text, count_color(), -1.0f,
-                    console_icon(g_cfg.consoles[row.idx].console), "", false,
-                    true, row.pinned);
+                    console_display_icon(g_cfg.consoles[row.idx].console), "",
+                    false, true, row.pinned);
             }
             g_home_map.push_back(row.idx);
         }
@@ -2794,6 +3387,10 @@ void MainApplication::GotoHome() {
             bool enabled;
         };
         std::vector<FlatRow> flat_rows;
+        if (cards) {
+            this->layout->SetCardCols(6);
+            this->layout->SetCardPoster(true);
+        }
         for (int c = 0; c < g_cfg.console_count; c++) {
             if (!g_cfg.consoles[c].shown) continue;
             for (int r = 0; r < g_cfg.consoles[c].repo_count; r++) {
@@ -2813,9 +3410,11 @@ void MainApplication::GotoHome() {
                                       : fr.repo + " · " + tr(S_OFF);
                 // Disabled repos also dim their icon so on/off scans
                 // without reading the subtitle.
-                this->layout->AddCard(fr.cname, sub,
-                                      console_icon(fr.key.c_str()),
-                                      fr.pinned, !fr.enabled);
+                bool is_art = false;
+                pu::sdl2::Texture cic =
+                    console_display_icon(fr.key.c_str(), &is_art);
+                this->layout->AddCard(fr.cname, sub, cic, fr.pinned,
+                                      !fr.enabled, is_art);
             } else {
                 // "Full Console Name › repo label", matching the breadcrumb;
                 // the on/off state moves to a right-hand chip.
@@ -2823,8 +3422,8 @@ void MainApplication::GotoHome() {
                                       fr.enabled ? tr(S_ON) : tr(S_OFF),
                                       g_theme->row_text,
                                       onoff_color(fr.enabled), -1.0f,
-                                      console_icon(fr.key.c_str()), "", false,
-                                      true, fr.pinned);
+                                      console_display_icon(fr.key.c_str()), "",
+                                      false, true, fr.pinned);
             }
         }
         if (flat_count() == 0) {
@@ -2844,7 +3443,7 @@ void MainApplication::GotoRepos(int ci) {
     char ctitle[192];
     snprintf(ctitle, sizeof(ctitle), tr(S_CONSOLE_PREFIX), g->console);
     this->layout->SetTitle(ctitle);
-    this->layout->SetTitleIcon(console_icon(g->console));
+    this->layout->SetTitleIcon(console_display_icon(g->console));
     this->layout->SetSubtitle(tr(S_SUB_REPOS));
     this->layout->ClearMenu();
     // Float pinned repos to the top for display only, keeping the stored array
@@ -2878,7 +3477,7 @@ void MainApplication::GotoFiles(int ci, int ri, bool force) {
     ConsoleGroup *g = &g_cfg.consoles[ci];
     Repo *rp = &g->repos[ri];
     this->layout->SetTitle(std::string(g->console) + " > " + rp->label);
-    this->layout->SetTitleIcon(console_icon(g->console));
+    this->layout->SetTitleIcon(console_display_icon(g->console));
     this->screen = Screen::Files;
     this->StartMetaLoad(rp->id, rp->download_base, g->target, force,
                         FILES_SUBTITLE);
@@ -2894,6 +3493,8 @@ MainApplication::Tab MainApplication::CurrentTab() {
     case Screen::SortInbox:
     case Screen::UsbMtp:
     case Screen::Tidy:
+    case Screen::BoxArtResults:
+    case Screen::BoxArtPicker:
     case Screen::InstSearch: return Tab::Installed;
     case Screen::Queue:     return Tab::Queue;
     case Screen::Settings:
@@ -2906,6 +3507,7 @@ MainApplication::Tab MainApplication::CurrentTab() {
     case Screen::RomPicker:
     case Screen::Downloads:
     case Screen::Language:
+    case Screen::Accent:
     case Screen::Cache:
     case Screen::Transfers:
     case Screen::RecvConsole:
@@ -2918,6 +3520,8 @@ MainApplication::Tab MainApplication::CurrentTab() {
     case Screen::RegionOrder:
     case Screen::LargestFiles:
     case Screen::InstallFolders:
+    case Screen::BoxArtManageConsoles:
+    case Screen::BoxArtManageList:
     case Screen::Backups:
     case Screen::Account:
     case Screen::Updates:
@@ -3094,18 +3698,17 @@ static pu::ui::Color onoff_color(bool on) {
                  : pu::ui::Color(135, 140, 155, 255);
 }
 static pu::ui::Color value_color() {
-    return is_light_theme() ? pu::ui::Color(40, 90, 155, 255)
-                            : pu::ui::Color(150, 190, 240, 255);
+    // Was a fixed blue literal, independent of the selected accent preset;
+    // now the same accent_blue() every ring/glow/progress-bar routes
+    // through, so a settings row's "value" text follows Appearance > Accent
+    // Color too.
+    return accent_blue();
 }
 // Amber "needs attention" (an update is waiting) and red "problem" (source
 // unreachable) — distinct from the green up-to-date / grey no-source cues.
 static pu::ui::Color attention_color() {
     return is_light_theme() ? pu::ui::Color(190, 120, 20, 255)
                             : pu::ui::Color(245, 190, 90, 255);
-}
-static pu::ui::Color warn_red() {
-    return is_light_theme() ? pu::ui::Color(180, 60, 60, 255)
-                            : pu::ui::Color(235, 120, 120, 255);
 }
 static pu::ui::Color chevron_color() {
     return pu::ui::Color(125, 132, 150, 255);
@@ -3145,6 +3748,8 @@ void MainApplication::GotoSettings() {
     const char *chip = tr(this->update_installed ? S_RESTART_TO_UPDATE
                                                   : S_UPDATE_AVAIL);
     if (g_prefs.card_view) {
+        this->layout->SetCardCols(6);
+        this->layout->SetCardPoster(true);
         for (const auto &e : kEntries) {
             this->layout->AddCard(tr(e.str), has_chip(e.str) ? chip : "",
                                   console_icon(e.icon), false);
@@ -3288,25 +3893,59 @@ void MainApplication::GotoAppearance() {
     this->layout->AddRow2(settings_label(tr(S_THEME)),
                           is_light_theme() ? tr(S_THEME_LIGHT) : tr(S_THEME_DARK),
                           lbl, value_color());                                 // 1
+    // Recolors every ring/glow/progress bar app-wide (see g_accents); opens
+    // a picker the same way Language does below.
+    this->layout->AddRow2(
+        settings_label(tr(S_ACCENT)),
+        tr(g_accents[accent_preset_index()].name_str), lbl, value_color());    // 2
     const char *cur = g_prefs.lang[0] ? g_prefs.lang : "en";
     this->layout->AddRow2(settings_label(tr(S_LANGUAGE)), lang_display_name(cur),
-                          lbl, value_color());                                 // 2
+                          lbl, value_color());                                 // 3
     b = g_prefs.group_consoles;
     this->layout->AddRow2(settings_label(tr(S_GROUP_CONSOLES)),
-                          b ? tr(S_ON) : tr(S_OFF), lbl, onoff_color(b)); // 3
+                          b ? tr(S_ON) : tr(S_OFF), lbl, onoff_color(b)); // 4
     // Curation folded in from the old Filters section: the file-type filter
     // that hides junk in a repo's file list.
     b = g_prefs.filter_exts;
     this->layout->AddRow2(settings_label(tr(S_FILTER_EXTS)),
-                          b ? tr(S_ON) : tr(S_OFF), lbl, onoff_color(b));      // 4
+                          b ? tr(S_ON) : tr(S_OFF), lbl, onoff_color(b));      // 5
     // Off lists a disc set's raw files again — the way to reach one track.
     b = g_prefs.group_sets;
     this->layout->AddRow2(settings_label(tr(S_GROUP_SETS)),
-                          b ? tr(S_ON) : tr(S_OFF), lbl, onoff_color(b));      // 5
+                          b ? tr(S_ON) : tr(S_OFF), lbl, onoff_color(b));      // 6
+    // Off skips box-art lookups entirely (list stays plain/fast; cached
+    // covers already on disk are untouched, just not shown or fetched).
+    b = g_prefs.box_art_enabled;
+    this->layout->AddRow2(settings_label(tr(S_BOX_ART_TOGGLE)),
+                          b ? tr(S_ON) : tr(S_OFF), lbl, onoff_color(b));      // 7
+    // Independent of the toggle above: this only decides whether a newly
+    // landed game queues a quiet background fetch, not whether cached covers
+    // are shown (see g_prefs.box_art_auto_fetch's own comment in config.h).
+    b = g_prefs.box_art_auto_fetch;
+    this->layout->AddRow2(settings_label(tr(S_BOX_ART_AUTO_TOGGLE)),
+                          b ? tr(S_ON) : tr(S_OFF), lbl, onoff_color(b));      // 8
     // Console show/hide: last row — a navigation-heavy sub-screen, so it sits
     // below the toggles/values that are actionable right on this list.
     this->layout->AddRow2(tr(S_MANAGE_CONSOLES), CHEVRON, lbl, chevron_color(),
-                          -1.0f, nullptr, "", false, false);                   // 6
+                          -1.0f, nullptr, "", false, false);                   // 9
+}
+
+// Accent color picker: one row per g_accents preset, "◀" marking the active
+// one -- same list-of-options pattern as GotoLanguage.
+void MainApplication::GotoAccent() {
+    this->screen = Screen::Accent;
+    this->layout->SetTitle(tr(S_TITLE_ACCENT));
+    this->layout->SetSubtitle(tr(S_SUB_ACCENT));
+    this->layout->ClearMenu();
+    int cur = accent_preset_index();
+    for (int i = 0; i < g_accent_count; i++) {
+        bool active = (i == cur);
+        this->layout->AddRow2(
+            tr(g_accents[i].name_str), active ? "◀" : "",
+            g_theme->row_text,
+            accent_blue(),
+            -1.0f, nullptr, "", false, false);
+    }
 }
 
 // Browse file-view extension filter editor: a master ON/OFF switch, one
@@ -3587,6 +4226,7 @@ void MainApplication::GotoStorage() {
     // section ("Data Files").
     this->layout->AddRow(tr(S_MANAGE_BACKUPS));     // 6 emulator/app rollback backups
     this->layout->AddRow(tr(S_LARGE_FILES));        // 7 whole-library biggest files
+    this->layout->AddRow(tr(S_MANAGE_BOX_ART));     // 8 view/delete cached covers
 }
 
 // Storage sub-screen: the list of consoles, each showing its install folder
@@ -3655,6 +4295,10 @@ void MainApplication::GotoAccount() {
     bool gh = g_creds.github_token[0] != '\0';
     this->layout->AddRow2(settings_label(tr(S_GITHUB_TOKEN)),
                           gh ? tr(S_SET) : tr(S_UNSET), lbl, onoff_color(gh)); // 1
+    bool sgdb = g_creds.steamgriddb_key[0] != '\0';
+    this->layout->AddRow2(settings_label(tr(S_STEAMGRIDDB_KEY)),
+                          sgdb ? tr(S_SET) : tr(S_UNSET), lbl,
+                          onoff_color(sgdb)); // 2
 }
 
 // Updates: check now (GitHub release or a pushed .nro over Wi-Fi) and whether
@@ -3818,32 +4462,38 @@ void MainApplication::ExportBundle() {
 }
 
 // Worker for the network self-test: does the LAN check (instant) and a single
-// small GET to archive.org (which can block on a dead link, hence off-thread).
+// small GET to archive.org, on net_selftest's own curl handle so it can't
+// stall behind unrelated http_get() traffic and B can actually cancel it.
 void MainApplication::DiagThread(void *arg) {
     auto self = static_cast<MainApplication *>(arg);
     self->diag_lan = httpsrv_local_ip(self->diag_ip, sizeof(self->diag_ip));
     self->diag_net = false;
-    if (self->diag_lan) {
-        long code = 0;
-        char *body = http_get("https://archive.org/robots.txt", &code, NULL);
-        self->diag_net = (body != NULL && code >= 200 && code < 400);
-        free(body);
+    if (self->diag_lan && !self->diag_cancel) {
+        self->diag_net =
+            net_selftest("https://archive.org/robots.txt", &self->diag_cancel);
     }
+    self->diag_net_cancelled = self->diag_cancel != 0;
     self->diag.done = true;
 }
 
 // Diagnostics -> Network self-test: kick the worker and show a spinner. The
-// screen stays put; DiagTick reaps the result and shows it in a dialog.
+// screen stays put; DiagTick reaps the result and shows it in a dialog. B
+// cancels while it runs (see the diag.running dispatch in OnInput).
 void MainApplication::NetSelfTest() {
     this->diag_speed = false;
     this->diag_lan = false;
     this->diag_net = false;
     this->diag_ip[0] = '\0';
+    this->diag_cancel = 0;
+    this->diag_net_cancelled = false;
     if (!this->diag.Start(&MainApplication::DiagThread, this)) {
         this->ToastErr(tr(S_SELFTEST_NET_FAIL));
         return;
     }
     this->layout->ClearMenu();
+    // Same "B cancel" footer convention as the other cancellable spinners
+    // (Search, box art scan, etc.) — see the diag.running dispatch in OnInput.
+    this->layout->SetSubtitle(tr(S_SPEEDTEST_CANCEL_HINT));
     this->layout->ShowSpinner(tr(S_SELFTEST_RUNNING));
 }
 
@@ -3929,8 +4579,8 @@ void MainApplication::SpeedRender() {
 
     const SpeedProg &p = this->sp_prog;
     // One row: a phase label on the left, its live rate (+ ETA) on the right,
-    // and a progress bar underneath. Green + accent while it's the live phase,
-    // a full green bar once it's finished, dim "--" before it starts.
+    // and a progress bar underneath. Accent blue while it's the live phase, a
+    // full blue bar once it's finished, dim "--" before it starts.
     auto meter = [&](int phase, const char *label, uint64_t nowb, uint64_t total,
                      double bps) {
         bool active = (p.phase == phase);
@@ -3951,11 +4601,11 @@ void MainApplication::SpeedRender() {
             snprintf(right, sizeof(right), "--");
         }
         pu::ui::Color lc = g_theme->row_text;
-        pu::ui::Color rc = active ? accent_green() : value_color();
+        pu::ui::Color rc = active ? accent_blue() : value_color();
         int bar = 0;
         if (done) {
             prog = 1.0f;
-            bar = 1; // solid green bar, matching a completed queue item
+            bar = 1; // solid blue bar, matching a completed queue item
         }
         this->layout->AddRow2(label, right, lc, rc, prog, nullptr, "", active,
                               false, false, bar);
@@ -3994,6 +4644,14 @@ void MainApplication::DiagTick() {
         }
         this->CreateShowDialog(tr(S_SPEEDTEST), body, {tr(S_OK)}, true, {},
                                style_dialog);
+        this->GotoDiagnostics();
+        this->layout->SetSel(0);
+        return;
+    }
+    // Self-test cancelled mid-request: same as the speed test, just drop back
+    // without a result dialog — a cancelled check has no verdict to report.
+    if (this->diag_net_cancelled) {
+        this->diag_net_cancelled = false;
         this->GotoDiagnostics();
         this->layout->SetSel(0);
         return;
@@ -4118,16 +4776,28 @@ static bool nro_file_version(const char *path, char *out, size_t out_sz) {
 // document. Runs on the UI thread (see InvServerPoll), so it never races the
 // server that serves the file.
 void MainApplication::WriteInventoryJson() {
+    // One-shot synchronous build (InvServerStart only), so inventory.json
+    // exists before a companion's first GET. This just drives the same steps
+    // InvServerPoll spreads across frames to completion in one call — see
+    // inv_json_ci's header comment for why the split exists at all.
+    this->InvJsonBegin();
+    while (this->inv_json_ci >= 0) {
+        this->InvJsonStep();
+    }
+}
+
+void MainApplication::InvJsonBegin() {
     FILE *f = fopen(INVENTORY_TMP_PATH, "wb");
     if (!f) {
-        return;
+        return; // leave inv_json_ci at -1; the next due regen just retries
     }
+    this->inv_json_f = f;
     uint64_t freeb = fs_free_bytes("sdmc:/");
     uint64_t totalb = fs_total_bytes("sdmc:/");
     // The USB-3 enable flag only changes via a System Settings toggle (which
     // needs a reboot), so read it once instead of opening a setsys session on
-    // every regen. Safe as a static: WriteInventoryJson runs only on the UI
-    // thread (see the header comment).
+    // every regen. Safe as a static: this and the rest of the inv_json_* build
+    // run only on the UI thread (see the header comment).
     static const char *usb3 = NULL;
     if (!usb3) {
         usb3 = "unknown";
@@ -4155,100 +4825,130 @@ void MainApplication::WriteInventoryJson() {
     json_write_escaped(f, usb3);
     fputs(",\n  \"consoles\": [", f);
 
-    // Rebuilt in lockstep with the JSON: the folders the pull/delete endpoints
-    // are confined to (each console folder below, plus the inbox after the loop).
-    this->inv_roots.clear();
+    // Rebuilt in lockstep with the JSON, one console at a time in
+    // InvJsonStepConsole — kept apart from inv_roots (which inv_srv.roots
+    // borrows) until InvJsonFinish; see the header comment on inv_json_roots.
+    this->inv_json_roots.clear();
+    this->inv_json_first_console = true;
+    this->inv_json_ci = 0; // next step scans console 0, or finalizes if there are none
+}
 
-    for (int i = 0; i < g_cfg.console_count; i++) {
-        ConsoleGroup &c = g_cfg.consoles[i];
-        const char *custom = install_folder_for(c.target);
-        std::string dir = (custom && custom[0])
-                              ? std::string(custom)
-                              : std::string(roms_root(&g_tico)) + "/" + c.target;
-        this->inv_roots += dir;
-        this->inv_roots += '\n';
-        int count = 0, raw = 0;
-        uint64_t bytes = 0;
-        // Recursive size, cached like Installed. The companion pairs "count"
-        // with the "files" array written below, so it wants the raw file
-        // count even when the Library chips show games — inst_dir_stats
-        // already knows that number internally, so take it from raw_out
-        // instead of paying for a second full readdir here.
-        inst_dir_stats(dir, &count, &bytes, &raw);
-        count = raw;
-
-        std::string datp = std::string(DATS_DIR) + "/" + c.target + ".dat";
-        struct stat ds;
-        bool has_dat = stat(datp.c_str(), &ds) == 0;
-        uint64_t dat_size = has_dat ? (uint64_t)ds.st_size : 0;
-
-        int active = 0;
-        for (int r = 0; r < c.repo_count; r++) {
-            if (c.repos[r].enabled) {
-                active++;
-            }
-        }
-        const char *full = console_full_name(c.target);
-
-        if (i) {
-            fputc(',', f);
-        }
-        fputs("\n    {\n      \"key\": ", f);
-        json_write_escaped(f, c.target);
-        fputs(",\n      \"name\": ", f);
-        json_write_escaped(f, full ? full : c.target);
-        fputs(",\n      \"folder\": ", f);
-        json_write_escaped(f, dir.c_str()); // companion joins folder + file name
-        fprintf(f,
-                ",\n      \"count\": %d,\n      \"bytes\": %llu,\n"
-                "      \"has_dat\": %s,\n      \"dat_bytes\": %llu,\n"
-                "      \"repo_count\": %d,\n      \"active_repos\": %d,\n"
-                "      \"shown\": %s,\n      \"shown_installed\": %s,\n",
-                count, (unsigned long long)bytes, has_dat ? "true" : "false",
-                (unsigned long long)dat_size, c.repo_count, active,
-                c.shown ? "true" : "false",
-                c.shown_installed ? "true" : "false");
-        fputs("      \"files\": [", f);
-        bool first = true;
-        // Read once, reused below for "sets" too -- one listing per console,
-        // same as before this existed.
-        std::vector<DirEnt> dents = list_dir(dir);
-        for (const auto &e : dents) {
-            if (e.is_dir) {
-                continue; // list the games, not any nested folders
-            }
-            fputs(first ? "\n        {\"name\": " : ",\n        {\"name\": ", f);
-            first = false;
-            json_write_escaped(f, e.name.c_str());
-            fprintf(f, ", \"size\": %llu}", (unsigned long long)e.size);
-        }
-        // Multi-file games (a .cue with its .bin tracks, an m3u's per-disc
-        // set): every member is still listed above in "files" so an older
-        // companion build keeps working unchanged, but a set-aware one can use
-        // this to show one row per game and, critically, to delete/move every
-        // member together instead of orphaning the rest of a set. Empty when
-        // grouping is off on the console, matching the Library's own display.
-        fputs("\n      ],\n      \"sets\": [", f);
-        if (g_prefs.group_sets) {
-            bool sfirst = true;
-            for (const auto &g : inst_detect_groups(dir, dents)) {
-                fputs(sfirst ? "\n        {\"name\": " : ",\n        {\"name\": ",
-                      f);
-                sfirst = false;
-                json_write_escaped(f, g.name.c_str());
-                fprintf(f, ", \"size\": %llu, \"members\": [",
-                        (unsigned long long)g.size);
-                bool mfirst = true;
-                for (const auto &m : g.members) {
-                    fputs(mfirst ? "" : ", ", f);
-                    mfirst = false;
-                    json_write_escaped(f, m.c_str());
-                }
-                fputs("]}", f);
-            }
-        }
-        fputs("\n      ]\n    }", f);
+void MainApplication::InvJsonStep() {
+    if (this->inv_json_ci < g_cfg.console_count) {
+        this->InvJsonStepConsole();
+    } else {
+        this->InvJsonFinish();
     }
+}
+
+// One console's worth of the sweep -- the expensive part (a directory listing
+// plus set-detection over it, potentially thousands of entries), which is why
+// this is the unit InvJsonStep spreads one-per-frame instead of the whole
+// console loop running in a single call. Identical output to the old
+// single-pass loop body, just addressing g_cfg.consoles[inv_json_ci] instead
+// of iterating i itself.
+void MainApplication::InvJsonStepConsole() {
+    FILE *f = this->inv_json_f;
+    int i = this->inv_json_ci;
+    ConsoleGroup &c = g_cfg.consoles[i];
+    const char *custom = install_folder_for(c.target);
+    std::string dir = (custom && custom[0])
+                          ? std::string(custom)
+                          : std::string(roms_root(&g_tico)) + "/" + c.target;
+    this->inv_json_roots += dir;
+    this->inv_json_roots += '\n';
+    int count = 0, raw = 0;
+    uint64_t bytes = 0;
+    // Recursive size, cached like Installed. The companion pairs "count"
+    // with the "files" array written below, so it wants the raw file
+    // count even when the Library chips show games — inst_dir_stats
+    // already knows that number internally, so take it from raw_out
+    // instead of paying for a second full readdir here.
+    inst_dir_stats(dir, &count, &bytes, &raw);
+    count = raw;
+
+    std::string datp = std::string(DATS_DIR) + "/" + c.target + ".dat";
+    struct stat ds;
+    bool has_dat = stat(datp.c_str(), &ds) == 0;
+    uint64_t dat_size = has_dat ? (uint64_t)ds.st_size : 0;
+
+    int active = 0;
+    for (int r = 0; r < c.repo_count; r++) {
+        if (c.repos[r].enabled) {
+            active++;
+        }
+    }
+    const char *full = console_full_name(c.target);
+
+    if (!this->inv_json_first_console) {
+        fputc(',', f);
+    }
+    this->inv_json_first_console = false;
+    fputs("\n    {\n      \"key\": ", f);
+    json_write_escaped(f, c.target);
+    fputs(",\n      \"name\": ", f);
+    json_write_escaped(f, full ? full : c.target);
+    fputs(",\n      \"folder\": ", f);
+    json_write_escaped(f, dir.c_str()); // companion joins folder + file name
+    fprintf(f,
+            ",\n      \"count\": %d,\n      \"bytes\": %llu,\n"
+            "      \"has_dat\": %s,\n      \"dat_bytes\": %llu,\n"
+            "      \"repo_count\": %d,\n      \"active_repos\": %d,\n"
+            "      \"shown\": %s,\n      \"shown_installed\": %s,\n",
+            count, (unsigned long long)bytes, has_dat ? "true" : "false",
+            (unsigned long long)dat_size, c.repo_count, active,
+            c.shown ? "true" : "false",
+            c.shown_installed ? "true" : "false");
+    fputs("      \"files\": [", f);
+    bool first = true;
+    // Read once, reused below for "sets" too -- one listing per console,
+    // same as before this existed.
+    std::vector<DirEnt> dents = list_dir(dir);
+    for (const auto &e : dents) {
+        if (e.is_dir) {
+            continue; // list the games, not any nested folders
+        }
+        fputs(first ? "\n        {\"name\": " : ",\n        {\"name\": ", f);
+        first = false;
+        json_write_escaped(f, e.name.c_str());
+        fprintf(f, ", \"size\": %llu}", (unsigned long long)e.size);
+    }
+    // Multi-file games (a .cue with its .bin tracks, an m3u's per-disc
+    // set): every member is still listed above in "files" so an older
+    // companion build keeps working unchanged, but a set-aware one can use
+    // this to show one row per game and, critically, to delete/move every
+    // member together instead of orphaning the rest of a set. Empty when
+    // grouping is off on the console, matching the Library's own display.
+    fputs("\n      ],\n      \"sets\": [", f);
+    if (g_prefs.group_sets) {
+        bool sfirst = true;
+        for (const auto &g : inst_detect_groups(dir, dents)) {
+            fputs(sfirst ? "\n        {\"name\": " : ",\n        {\"name\": ",
+                  f);
+            sfirst = false;
+            json_write_escaped(f, g.name.c_str());
+            fprintf(f, ", \"size\": %llu, \"members\": [",
+                    (unsigned long long)g.size);
+            bool mfirst = true;
+            for (const auto &m : g.members) {
+                fputs(mfirst ? "" : ", ", f);
+                mfirst = false;
+                json_write_escaped(f, m.c_str());
+            }
+            fputs("]}", f);
+        }
+    }
+    fputs("\n      ]\n    }", f);
+    this->inv_json_ci++; // next step does the next console, or finalizes
+}
+
+// Everything after the per-console loop: the inbox listing, the switch-apps
+// / retroarch scan, and the footer -- all flat, single-directory listings, so
+// (unlike the per-console loop) doing them in one shot here isn't worth
+// spreading further. Closes the file, publishes it, and swaps the just-built
+// root list into inv_roots/inv_srv.roots.
+void MainApplication::InvJsonFinish() {
+    FILE *f = this->inv_json_f;
     fputs("\n  ],\n  \"inbox\": [", f);
     {
         bool first = true;
@@ -4262,8 +4962,8 @@ void MainApplication::WriteInventoryJson() {
             fprintf(f, ", \"size\": %llu}", (unsigned long long)e.size);
         }
     }
-    this->inv_roots += INBOX_DIR; // the inbox is a pull/delete root too
-    this->inv_roots += '\n';
+    this->inv_json_roots += INBOX_DIR; // the inbox is a pull/delete root too
+    this->inv_json_roots += '\n';
     fputs("\n  ],\n  \"inbox_folder\": ", f);
     json_write_escaped(f, INBOX_DIR);
     // Raw listings of the two common emulator locations. The app stays "dumb":
@@ -4351,11 +5051,15 @@ void MainApplication::WriteInventoryJson() {
     }
     fputs(" ]\n  }\n}\n", f);
     fclose(f);
+    this->inv_json_f = NULL;
     fs_move(INVENTORY_TMP_PATH, INVENTORY_PATH);
-    // Re-point the server at the roots we just rebuilt: the string may have
-    // reallocated, and both this and httpsrv_poll run on the UI thread, so the
-    // pointer is safe to swap here.
+    // Swap the just-built root list in now that it's complete — a mid-build
+    // frame never re-points inv_srv.roots, so httpsrv_poll (also UI-thread,
+    // possibly running in between two of these frame-spread steps) always sees
+    // either the previous full set or this new full set, never a partial one.
+    this->inv_roots = std::move(this->inv_json_roots);
     this->inv_srv.roots = this->inv_roots.c_str();
+    this->inv_json_ci = -1; // idle again
 }
 
 void MainApplication::InvServerStart() {
@@ -4407,6 +5111,16 @@ void MainApplication::InvServerStop() {
     }
     httpsrv_close(&this->inv_srv);
     this->inv_open = false;
+    // Abandon a mid-build regen rather than leaving its tmp file handle open
+    // forever: the server is going away, so there's no companion left to read
+    // the result anyway. The next InvServerStart does a fresh synchronous
+    // WriteInventoryJson, which reopens INVENTORY_TMP_PATH from scratch.
+    if (this->inv_json_f) {
+        fclose(this->inv_json_f);
+        this->inv_json_f = NULL;
+    }
+    this->inv_json_ci = -1;
+    this->inv_json_roots.clear();
     // The USB companion link is part of the inventory server: tear the background
     // MTP instance down with it (frees usb:ds so the port can host a controller
     // again). If the connect screen is open it owns the link, so leave that alone.
@@ -4545,20 +5259,31 @@ void MainApplication::InvServerPoll() {
     // full recursive scan every 4s forever, which made the whole UI sluggish.
     //
     // The rebuild (per-console directory scan + two statvfs) runs on the render
-    // thread, so each one is a brief hitch on a large library. A companion polls
-    // every few seconds and keeps companion_active latched, so a 4s cadence meant
-    // a hitch every 4s the whole time one was connected. 15s staleness is fine for
-    // a free-space / install-count readout, so throttle to that and cut the
-    // hitches ~4x. A data change (inv_last_gen_ns reset to 0) still regenerates at
-    // once, so the companion still sees edits promptly.
+    // thread, spread one console per frame (InvJsonStep) rather than one big
+    // call, so a companion polling every few seconds no longer costs a single
+    // fat hitch each time — just several much smaller ones. 15s staleness is
+    // fine for a free-space / install-count readout, so kickoffs are still
+    // throttled to that cadence on top. A data change (inv_last_gen_ns reset to
+    // 0) still regenerates at once, so the companion still sees edits promptly.
     bool companion_active =
         this->inv_srv.last_inv_ns != 0 &&
         armTicksToNs(now) - this->inv_srv.last_inv_ns <= 15000000000ULL;
-    if (companion_active && !busy &&
-        (this->inv_last_gen_ns == 0 ||
-         armTicksToNs(now - this->inv_last_gen_ns) >= 15000000000ULL)) {
-        this->WriteInventoryJson();
-        this->inv_last_gen_ns = now;
+    if (this->inv_json_ci < 0) {
+        // Idle: kick off a fresh regen once it's actually due. Stamped at
+        // kickoff (not completion) so the still-mid-build frames below can't
+        // be mistaken for "due again" while inv_last_gen_ns is still 0/stale.
+        if (companion_active && !busy &&
+            (this->inv_last_gen_ns == 0 ||
+             armTicksToNs(now - this->inv_last_gen_ns) >= 15000000000ULL)) {
+            this->inv_last_gen_ns = now;
+            this->InvJsonBegin();
+        }
+    } else if (!busy) {
+        // Mid-build: advance by exactly one console (or the finalize step)
+        // this frame -- see inv_json_ci's header comment for why this isn't
+        // just one big call like it used to be. Paused (not abandoned) while
+        // busy, same as the old gate did for starting one at all.
+        this->InvJsonStep();
     }
     // A push arriving over the live link gets a transient "Receiving from PC"
     // page — opened once per transfer (edge-detected on the receiving state),
@@ -5007,11 +5732,37 @@ static bool detect_match(const std::string &detect, const std::string &fname) {
 }
 
 // Collect every .nro under `dir`, recursing up to `depth` more folder levels.
+// Walks the directory itself instead of going through list_dir(): list_dir
+// stat()s every entry to fill in size/mtime for the file-browser screens that
+// need them, and each stat() is its own FS IPC round-trip on top of the
+// readdir() that already listed the entry. This scan only needs is-a-folder
+// vs is-a-file, which libnx hands back for free as dirent::d_type in the same
+// readdir() batch, so skip the stat() in the common case (a scan across a few
+// hundred sdmc:/switch folders is where that per-entry cost actually adds up).
+// Falls back to stat() only if d_type ever comes back unknown, so this can't
+// silently misclassify an entry if that ever stops being populated.
 static void collect_nros(const std::string &dir, int depth,
                          std::vector<NroFile> &v) {
-    for (const auto &f : list_dir(dir)) {
-        std::string full = dir + "/" + f.name;
-        if (f.is_dir) {
+    DIR *d = opendir(dir.c_str());
+    if (!d) {
+        return;
+    }
+    struct dirent *e;
+    while ((e = readdir(d)) != NULL) {
+        if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..")) {
+            continue;
+        }
+        std::string full = dir + "/" + e->d_name;
+        bool is_dir;
+        if (e->d_type == DT_DIR) {
+            is_dir = true;
+        } else if (e->d_type == DT_REG) {
+            is_dir = false;
+        } else {
+            struct stat st;
+            is_dir = (stat(full.c_str(), &st) == 0) && S_ISDIR(st.st_mode);
+        }
+        if (is_dir) {
             // Never descend into the update manager's rollback store: those are
             // old builds kept for revert, not installed apps — scanning them
             // would list every backup as a phantom entry in the App updates list.
@@ -5021,10 +5772,11 @@ static void collect_nros(const std::string &dir, int depth,
             if (depth > 0) {
                 collect_nros(full, depth - 1, v);
             }
-        } else if (is_nro_name(f.name)) {
-            v.push_back({f.name, full});
+        } else if (is_nro_name(e->d_name)) {
+            v.push_back({e->d_name, full});
         }
     }
+    closedir(d);
 }
 
 // Every .nro under sdmc:/switch. Recurse a few folders deep so apps and
@@ -5258,83 +6010,105 @@ void MainApplication::GotoBackups() {
 }
 
 // Worker: download the chosen release .nro to a temp file. Mirrors UpdThread.
+// `ud`/`arg` is a UmiJob* (not `this`) so concurrent jobs never touch each
+// other's state -- see the UmiJob comment in MainApplication.hpp.
 int MainApplication::UmiProgress(void *ud, u64 now, u64 total) {
-    auto self = static_cast<MainApplication *>(ud);
-    self->umi_now = now;
-    self->umi_total = total;
-    return self->umi_cancel ? 1 : 0;
+    auto job = static_cast<UmiJob *>(ud);
+    job->now = now;
+    job->total = total;
+    return job->cancel ? 1 : 0;
 }
 
 void MainApplication::UmiThread(void *arg) {
-    auto self = static_cast<MainApplication *>(arg);
+    auto job = static_cast<UmiJob *>(arg);
     long code = 0;
-    bool ok = http_download(self->umi_url.c_str(), self->umi_dl.c_str(), NULL,
-                            &MainApplication::UmiProgress, self, NULL, NULL, 0,
-                            &code);
-    self->umi_ok = ok && code >= 200 && code < 300;
-    self->umi.done = true;
+    bool ok = http_download(job->url.c_str(), job->dl.c_str(), NULL,
+                            &MainApplication::UmiProgress, job, NULL, NULL, 0,
+                            &code, NULL);
+    job->ok = ok && code >= 200 && code < 300;
+    job->task.done = true;
 }
 
 void MainApplication::UmiStart(const UpdSource &e, const std::string &url,
                                const std::string &tag, const std::string &dest,
                                const std::string &cur_ver, bool fresh,
                                const std::string &asset) {
-    this->umi_url = url;
-    this->umi_asset = asset;
+    // First free slot: one not currently running a download (its previous job,
+    // if any, has already been reaped by UmiTick). Concurrent jobs each get
+    // their own temp path (suffixed by slot) so they never collide on disk.
+    int j = -1;
+    for (int i = 0; i < UMI_MAX; i++) {
+        if (!this->umi_jobs[i].task.running) {
+            j = i;
+            break;
+        }
+    }
+    if (j < 0) {
+        // All slots busy: rather than stomp an in-flight job's state (the bug
+        // this pool replaced), make the user wait for one to finish.
+        this->ToastErr(tr(S_UPDATE_TOO_MANY));
+        return;
+    }
+    UmiJob &job = this->umi_jobs[j];
+    job.url = url;
+    job.asset = asset;
     // Some releases ship the .nro inside a .zip (flat, or nested under
     // switch/<app>/); an archive asset is downloaded, then unpacked in UmiTick.
-    this->umi_zip = is_archive_name(asset.c_str());
-    this->umi_dl = std::string(DL_TMP_DIR) +
-                   (this->umi_zip ? "/appupd.zip" : "/appupd.part");
-    this->umi_dest = dest;
-    this->umi_id = e.id;
-    this->umi_name = e.name;
-    this->umi_tag = tag;
-    this->umi_bakver = cur_ver;
-    this->umi_fresh = fresh;
-    this->umi_now = 0;
-    this->umi_total = 0;
-    this->umi_ok = false;
-    this->umi_cancel = false;
-    fs_ensure_parent(this->umi_dl.c_str());
-    if (!this->umi.Start(&MainApplication::UmiThread, this)) {
+    job.zip = is_archive_name(asset.c_str());
+    char tmp[64];
+    snprintf(tmp, sizeof(tmp), "/appupd%d%s", j, job.zip ? ".zip" : ".part");
+    job.dl = std::string(DL_TMP_DIR) + tmp;
+    job.dest = dest;
+    job.id = e.id;
+    job.name = e.name;
+    job.tag = tag;
+    job.bakver = cur_ver;
+    job.fresh = fresh;
+    job.now = 0;
+    job.total = 0;
+    job.ok = false;
+    job.cancel = false;
+    fs_ensure_parent(job.dl.c_str());
+    if (!job.task.Start(&MainApplication::UmiThread, &job)) {
         this->ToastErr(tr(S_UPDATE_START_FAIL));
         return;
     }
     // Shows as an ordinary Queue-tab item (xkind 2 = install/update); jump there.
-    this->umi_xslot = this->BeginXfer(e.name, e.id, 2);
+    job.xslot = this->BeginXfer(e.name, e.id, 2);
 }
 
-// Finalize once the download reports done (main thread): validate the NRO, back
-// up the current build, and swap the new one in with the transient .bak safety.
-void MainApplication::UmiTick() {
-    if (!this->umi.done) {
+// Finalize once job `j`'s download reports done (main thread): validate the
+// NRO, back up the current build, and swap the new one in with the transient
+// .bak safety.
+void MainApplication::UmiTick(int j) {
+    UmiJob &job = this->umi_jobs[j];
+    if (!job.task.done) {
         return;
     }
-    this->umi.Join();
-    std::string part = this->umi_dl;
-    if (this->umi_cancel) {
+    job.task.Join();
+    std::string part = job.dl;
+    if (job.cancel) {
         remove(part.c_str());
-        queue_ext_finish(this->umi_xslot, false, "cxl");
-        this->umi_xslot = -1;
+        queue_ext_finish(job.xslot, false, "cxl");
+        job.xslot = -1;
         return;
     }
-    if (!this->umi_ok) {
+    if (!job.ok) {
         remove(part.c_str());
         xfer_log("FAILED     %s %s: download failed",
-                 this->umi_fresh ? "install" : "update", this->umi_name.c_str());
-        queue_ext_finish(this->umi_xslot, false, "err");
-        this->umi_xslot = -1;
+                 job.fresh ? "install" : "update", job.name.c_str());
+        queue_ext_finish(job.xslot, false, "err");
+        job.xslot = -1;
         return;
     }
-    std::string dest = this->umi_dest;
+    std::string dest = job.dest;
     // A .zip asset: unpack it, take the .nro inside, and (for a fresh install)
     // honour where the archive files it — a nested switch/<app>/ layout installs
     // to that same sdmc path, a flat .nro to sdmc:/switch/. exdir is cleaned up
     // on every exit path below.
     std::string exdir;
-    if (this->umi_zip) {
-        exdir = std::string(DL_TMP_DIR) + "/appupd_x";
+    if (job.zip) {
+        exdir = std::string(DL_TMP_DIR) + "/appupd_x" + std::to_string(j);
         fs_rm_rf(exdir.c_str()); // clear any stale extraction
         int nfiles = extract_archive(part.c_str(), exdir.c_str(), NULL, NULL,
                                      NULL);
@@ -5343,14 +6117,13 @@ void MainApplication::UmiTick() {
         if (nfiles <= 0 || !find_nro_in_dir(exdir, nro_path, rel)) {
             fs_rm_rf(exdir.c_str());
             xfer_log("FAILED     %s %s: no .nro inside the release archive",
-                     this->umi_fresh ? "install" : "update",
-                     this->umi_name.c_str());
-            queue_ext_finish(this->umi_xslot, false, "err");
-            this->umi_xslot = -1;
+                     job.fresh ? "install" : "update", job.name.c_str());
+            queue_ext_finish(job.xslot, false, "err");
+            job.xslot = -1;
             return;
         }
         part = nro_path; // install the extracted .nro
-        if (this->umi_fresh) {
+        if (job.fresh) {
             std::string low = rel;
             for (char &c : low) {
                 c = (char)tolower((unsigned char)c);
@@ -5374,15 +6147,15 @@ void MainApplication::UmiTick() {
             fs_rm_rf(exdir.c_str());
         }
         xfer_log("FAILED     %s %s: not a valid NRO",
-                 this->umi_fresh ? "install" : "update", this->umi_name.c_str());
-        queue_ext_finish(this->umi_xslot, false, "err");
-        this->umi_xslot = -1;
+                 job.fresh ? "install" : "update", job.name.c_str());
+        queue_ext_finish(job.xslot, false, "err");
+        job.xslot = -1;
         return;
     }
-    if (!this->umi_fresh && fs_exists(dest.c_str())) {
-        backup_keep2(this->umi_id, dest, this->umi_bakver);
+    if (!job.fresh && fs_exists(dest.c_str())) {
+        backup_keep2(job.id, dest, job.bakver);
     }
-    if (this->umi_fresh) {
+    if (job.fresh) {
         fs_ensure_parent(dest.c_str());
     }
     std::string bak = dest + ".bak";
@@ -5404,10 +6177,10 @@ void MainApplication::UmiTick() {
             fs_rm_rf(exdir.c_str());
         }
         xfer_log("FAILED     %s %s: could not write %s",
-                 this->umi_fresh ? "install" : "update", this->umi_name.c_str(),
+                 job.fresh ? "install" : "update", job.name.c_str(),
                  dest.c_str());
-        queue_ext_finish(this->umi_xslot, false, "err");
-        this->umi_xslot = -1;
+        queue_ext_finish(job.xslot, false, "err");
+        job.xslot = -1;
         return;
     }
     if (restore) {
@@ -5416,12 +6189,12 @@ void MainApplication::UmiTick() {
     if (!exdir.empty()) {
         fs_rm_rf(exdir.c_str()); // drop the rest of the unpacked archive
     }
-    xfer_log(this->umi_fresh ? "installed  %s -> %s (%s)"
-                             : "updated    %s -> %s (%s)",
-             this->umi_name.c_str(), this->umi_tag.c_str(), dest.c_str());
+    xfer_log(job.fresh ? "installed  %s -> %s (%s)"
+                       : "updated    %s -> %s (%s)",
+             job.name.c_str(), job.tag.c_str(), dest.c_str());
     this->inv_last_gen_ns = 0; // the installed set changed
-    queue_ext_finish(this->umi_xslot, true, NULL);
-    this->umi_xslot = -1;
+    queue_ext_finish(job.xslot, true, NULL);
+    job.xslot = -1;
 }
 
 // swkbd-edit one entry's GitHub repo (owner/name), persisted to the shared
@@ -5536,17 +6309,33 @@ bool MainApplication::AppEntryMenu(size_t idx) {
         return false;
     }
     const UpdSource e = this->appman_list[idx]; // copy: actions may reload it
-    std::string inst_path, inst_ver;
-    match_installed(e, scan_switch_nros(), inst_path, inst_ver);
+    // Reuse the install path/version the last list build (or recheck) already
+    // found instead of re-walking sdmc:/switch here -- that scan is what made
+    // opening this menu feel slow, since it ran synchronously on the UI thread
+    // on every single press of A.
+    std::string inst_path =
+        (idx < this->appman_ipath.size()) ? this->appman_ipath[idx] : "";
+    std::string inst_ver =
+        (idx < this->appman_ver.size()) ? this->appman_ver[idx] : "";
     bool installed = !inst_path.empty();
 
     if (e.repo[0] == '\0') {
         // No update source yet: offer to set one on-device (the desktop is the
-        // easier place, but the console can do it too).
+        // easier place, but the console can do it too). Still show the path
+        // when installed -- missing a source shouldn't also hide where the
+        // file actually lives.
         char msg[256];
         snprintf(msg, sizeof(msg), tr(S_APPMAN_NEEDS_SOURCE), e.name);
+        std::string full_msg = msg;
+        if (installed) {
+            char path_line[256];
+            snprintf(path_line, sizeof(path_line), tr(S_APPMAN_PATH_LINE),
+                     inst_path.c_str());
+            full_msg += "\n\n";
+            full_msg += path_line;
+        }
         int r = this->CreateShowDialog(
-            e.name, msg, {tr(S_APPMAN_SET_SOURCE), tr(S_CANCEL)}, false, {},
+            e.name, full_msg, {tr(S_APPMAN_SET_SOURCE), tr(S_CANCEL)}, false, {},
             style_dialog);
         if (r == 0) {
             this->AppSetSource(e);
@@ -5565,9 +6354,29 @@ bool MainApplication::AppEntryMenu(size_t idx) {
     std::vector<std::string> opts;
     std::vector<int> acts; // 0 update/reinstall, 1 install, 2 revert, 3 source, 4 check
 
-    // The update source, shown under the app name in the menu header.
-    char body[160];
-    snprintf(body, sizeof(body), tr(S_APPMAN_SOURCE_LINE), e.repo);
+    // The update source, shown under the app name in the menu header, plus
+    // the on-SD path and installed version when installed (the user has to
+    // open the file browser and hunt for the path otherwise, since the list
+    // screen only shows a name; the version answers "what am I on" without
+    // having to squint at the pill color, and pairs with the "Update to X" /
+    // "Reinstall X" button below for the full before/after picture).
+    char body_line[160];
+    snprintf(body_line, sizeof(body_line), tr(S_APPMAN_SOURCE_LINE), e.repo);
+    std::string body = body_line;
+    if (installed) {
+        char path_line[256];
+        snprintf(path_line, sizeof(path_line), tr(S_APPMAN_PATH_LINE),
+                 inst_path.c_str());
+        body += "\n";
+        body += path_line;
+        if (!inst_ver.empty()) {
+            char ver_line[64];
+            snprintf(ver_line, sizeof(ver_line), tr(S_APPMAN_INSTALLED_LINE),
+                     inst_ver.c_str());
+            body += "\n";
+            body += ver_line;
+        }
+    }
 
     char u[96];
     if (have_release) {
@@ -5834,8 +6643,16 @@ void MainApplication::AppChkThread(void *arg) {
     std::vector<std::string> ver(n), latest(n), ipath(n), rel_url(n), rel_asset(n);
 
     // First pass (local, fast): install state + version. Installed+sourced rows
-    // start "not checked" — the network compare only runs on an explicit check.
-    // When it does, tally how many so the progress bar has a real denominator.
+    // start "not checked" — unless a prior check (this session) already found a
+    // release for this id, in which case that cached result stands in until the
+    // user asks for a fresh one: this is what makes leaving the list (e.g. an
+    // update jumping to the Queue tab) and coming back keep showing the last
+    // scan's Update/Up-to-date badges instead of blanking every row. The install
+    // state/version above is still read fresh off the SD card every time, so an
+    // entry updated elsewhere correctly flips to Up-to-date against the cached
+    // tag without a new GitHub hit. When the network compare does run, tally how
+    // many rows it covers so the progress bar has a real denominator.
+    auto &net_cache = self->appman_net_cache[kind];
     int total = 0;
     for (size_t i = 0; i < n; i++) {
         match_installed(list[i], files, ipath[i], ver[i]);
@@ -5847,6 +6664,17 @@ void MainApplication::AppChkThread(void *arg) {
             state[i] = APST_UNCHECKED;
             if (net) {
                 total++;
+            } else {
+                auto ci = net_cache.find(list[i].id);
+                if (ci != net_cache.end()) {
+                    latest[i] = ci->second.latest;
+                    rel_url[i] = ci->second.url;
+                    rel_asset[i] = ci->second.asset;
+                    int cmp = ver[i].empty()
+                                  ? -1
+                                  : version_cmp(ver[i].c_str(), latest[i].c_str());
+                    state[i] = (cmp < 0) ? APST_UPDATE : APST_UPTODATE;
+                }
             }
         }
     }
@@ -5895,6 +6723,7 @@ void MainApplication::AppChkThread(void *arg) {
                 state[i] = (cmp < 0) ? APST_UPDATE : APST_UPTODATE;
                 self->appman_checked_at[list[i].id] = (uint64_t)time(NULL);
                 stamped = true;
+                net_cache[list[i].id] = {latest[i], rel_url[i], rel_asset[i]};
             }
             self->appchk_idx = self->appchk_idx + 1;
         }
@@ -5907,6 +6736,7 @@ void MainApplication::AppChkThread(void *arg) {
     self->appman_list = std::move(list);
     self->appman_state = std::move(state);
     self->appman_ver = std::move(ver);
+    self->appman_ipath = std::move(ipath);
     self->appman_latest = std::move(latest);
     self->appman_url = std::move(rel_url);
     self->appman_asset = std::move(rel_asset);
@@ -5989,8 +6819,17 @@ void MainApplication::AppUpdatesRender() {
         case APST_UPDATE: {
             std::string lt =
                 (i < this->appman_latest.size()) ? this->appman_latest[i] : "";
-            snprintf(buf, sizeof(buf), tr(S_APPMAN_UPDATE_TO),
-                     lt.empty() ? "?" : lt.c_str());
+            // Show the current -> new version when the installed version is
+            // known, so an update pill answers "what am I updating from"
+            // without having to open the entry menu; falls back to the plain
+            // "Update to X" wording when it isn't (nro_file_version failed).
+            if (v.empty()) {
+                snprintf(buf, sizeof(buf), tr(S_APPMAN_UPDATE_TO),
+                         lt.empty() ? "?" : lt.c_str());
+            } else {
+                snprintf(buf, sizeof(buf), tr(S_APPMAN_UPDATE_ROW), v.c_str(),
+                         lt.empty() ? "?" : lt.c_str());
+            }
             tag = buf;
             clr = attention_color();
             pill = true; // a filled chip so an available update jumps out
@@ -6099,6 +6938,8 @@ void MainApplication::AppRecheckOne(size_t idx) {
             int cmp = ver.empty() ? -1 : version_cmp(ver.c_str(), tag);
             st = (cmp < 0) ? APST_UPDATE : APST_UPTODATE;
             this->AppMarkChecked(e.id); // stamp "checked just now"
+            this->appman_net_cache[this->appman_kind][e.id] = {latest, rel_url,
+                                                                rel_asset};
         }
     }
     if (idx < this->appman_state.size()) {
@@ -6106,6 +6947,9 @@ void MainApplication::AppRecheckOne(size_t idx) {
     }
     if (idx < this->appman_ver.size()) {
         this->appman_ver[idx] = ver;
+    }
+    if (idx < this->appman_ipath.size()) {
+        this->appman_ipath[idx] = ipath;
     }
     if (idx < this->appman_latest.size()) {
         this->appman_latest[idx] = latest;
@@ -6197,15 +7041,21 @@ void MainApplication::PollXfers() {
             this->DatSyncTick(); // toasts + finishes the item
         }
     }
-    // Tools update-manager install: same shape as the self-update above.
-    if (this->umi.running) {
-        if (this->umi_xslot >= 0 && queue_ext_cancelled(this->umi_xslot)) {
-            this->umi_cancel = true;
+    // Tools update-manager installs: same shape as the self-update above, but
+    // a small pool (see UmiJob) so several run concurrently instead of one
+    // stomping another's in-flight state.
+    for (int j = 0; j < UMI_MAX; j++) {
+        UmiJob &job = this->umi_jobs[j];
+        if (!job.task.running) {
+            continue;
         }
-        if (!this->umi.done) {
-            queue_ext_progress(this->umi_xslot, this->umi_now, this->umi_total, 0);
+        if (job.xslot >= 0 && queue_ext_cancelled(job.xslot)) {
+            job.cancel = true;
+        }
+        if (!job.task.done) {
+            queue_ext_progress(job.xslot, job.now, job.total, 0);
         } else {
-            this->UmiTick(); // joins, validates, backs up, swaps, finishes
+            this->UmiTick(j); // joins, validates, backs up, swaps, finishes
         }
     }
     // Background unpack for a Wi-Fi push landed in a console folder (see
@@ -7904,6 +8754,28 @@ void MainApplication::GotoDataFiles() {
                           tr(conn ? S_APPMAN_PC_CONNECTED : S_APPMAN_PC_OFFLINE),
                           lbl, onoff_color(conn), -1.0f, nullptr, "", false,
                           conn);
+    // 3: the on-disk box-art cache (SteamGridDB downloads) — count + size, A
+    // opens ArtCacheMenu (browse via Manage Box Art, or wipe everything).
+    // Also "data about your library" the same way the DAT/metadata rows are,
+    // rather than a Storage/space concern.
+    {
+        auto art_files = list_dir(BOXART_DIR);
+        uint64_t total = 0;
+        int n = 0;
+        for (auto &e : art_files) {
+            if (e.is_dir) continue;
+            n++;
+            total += e.size;
+        }
+        char val[64];
+        if (n > 0) {
+            snprintf(val, sizeof(val), tr(S_ART_CACHE_N), n,
+                     human_size(total).c_str());
+        }
+        this->layout->AddRow2(tr(S_ART_CACHE), n > 0 ? val : tr(S_ART_CACHE_NONE),
+                              lbl, n > 0 ? value_color() : lbl, -1.0f, nullptr,
+                              "", false, false);
+    }
 }
 
 // Data Files sub-screen: the metadata cache's on/off switch, a browsable list
@@ -8114,7 +8986,7 @@ void MainApplication::DatSyncThread(void *arg) {
             std::string dest = std::string(DATS_DIR) + "/" + it.target + ".dat";
             long dc = 0;
             ok = http_download(url, dest.c_str(), NULL, NULL, NULL, NULL, NULL, 0,
-                               &dc) &&
+                               &dc, NULL) &&
                  dc >= 200 && dc < 300;
         }
         if (ok) self->dat_ok.fetch_add(1);
@@ -9688,7 +10560,7 @@ void MainApplication::GotoLanguage() {
         this->layout->AddRow2(
             g_langs[i].label, active ? "◀" : "",
             g_theme->row_text,
-            accent_green(),
+            accent_blue(),
             -1.0f, nullptr, "", false, false);
     }
 }
@@ -9749,10 +10621,14 @@ void MainApplication::GotoManage() {
         int st = console_vis_state(g_cfg.consoles[i]);
         char clabel[160];
         console_label(g_cfg.consoles[i].console, clabel, sizeof(clabel));
+        // Stock icons only here too, same reasoning as the queue card view:
+        // this is a uniform show/hide toggle list, not a library browse
+        // screen, so it stays on the built-in badge set regardless of any
+        // console's custom box art.
         this->layout->AddRow2(
             clabel, console_vis_label(st),
             g_theme->row_text, console_vis_color(st),
-            -1.0f, console_icon(g_cfg.consoles[i].console));
+            -1.0f, console_display_icon(g_cfg.consoles[i].console, nullptr, false));
     }
     if (g_cfg.console_count == 0) {
         this->layout->AddRow(tr(S_NO_CONSOLES));
@@ -9877,7 +10753,9 @@ void MainApplication::InstRenameSel() {
 }
 
 // Delete the marked set (Y), or the single file under the cursor when nothing is
-// marked. A confirm guards it either way. Shared by the ▶ button and the menu.
+// marked. A confirm guards it either way. Shared by the ▶ button (list view
+// only — the card grid needs Right for navigation) and the X options menu
+// (both views).
 void MainApplication::InstDeleteSel() {
     s32 i = this->layout->Sel();
     int mc = this->layout->MarkedCount();
@@ -10014,8 +10892,16 @@ void MainApplication::InstFileMenu() {
     int i_sort = (int)opts.size();   opts.push_back(tr(S_SORT_MENU));
     int i_delete = (int)opts.size(); opts.push_back(tr(S_DELETE));
     opts.push_back(tr(S_CANCEL));
+    // Hero backdrop from this game's cover. Unlike the list/grid builds,
+    // this is a one-off menu open (X press on a single row), not a per-frame
+    // rebuild, so a synchronous decode here is cheap enough to not stall --
+    // boxart_row_icon's "only if already warm" split (meant to avoid
+    // decoding 40+ rows at once) was the wrong tool here and left the panel
+    // showing no art almost every time, since a row is rarely already
+    // decoded unless it happened to scroll through BoxArtIconsPoll first.
+    pu::sdl2::Texture backdrop = boxart_icon_for(g_inst[i].name);
     int r = this->SideMenu(tr(S_OPTIONS), opts, 0, "", false, false,
-                           console_icon("default"));
+                           console_icon("default"), nullptr, 0, backdrop);
     if (r == i_move)        this->InstMoveDialog();
     else if (r == i_rename) this->InstRenameSel();
     else if (r == i_sort)   this->InstSortDialog();
@@ -10064,11 +10950,16 @@ bool MainApplication::ToolsMenu() {
     // the update-manager entry goes before it and live.row is set to match.
     // Emulator/app update management itself lives under Settings -> Updates now;
     // this row is just a shortcut into that screen.
+    // PC Sync and Scan Art were two rows apiece (USB / Wi-Fi, game art /
+    // console art) — collapsed into one row each that opens a small chooser
+    // dialog, so the panel doesn't keep growing as more transfer/scan
+    // methods land. live.row tracks the inventory toggle's new index.
     live.row = 9;
     int r = this->SideMenu(tr(S_TOOLS),
-                           {tr(S_SORT_INBOX), tr(S_USB_MENU), tr(S_RECV_SORT),
+                           {tr(S_SORT_INBOX), tr(S_PC_SYNC),
                             tr(S_TIDY_LIBRARY), tr(S_VERIFY_ALL), tr(S_SORT_MENU),
                             tr(S_STORAGE_OVERVIEW), tr(S_ONEGR_SCAN),
+                            tr(S_SCAN_ART),
                             tr(S_APPMAN_MENU),
                             tr(S_INV_SERVER)},
                            0, "", false, /*from_left=*/true,
@@ -10076,19 +10967,108 @@ bool MainApplication::ToolsMenu() {
                            HidNpadButton_X);               // X → per-console Options
     switch (r) {
     case 0: this->SortInboxStart(); return false; // View inbox
-    case 1: this->GotoUsbMtp(); return false;     // Connect to PC over USB
-    // Auto-sort receive is console-agnostic (the sorter picks the console from
-    // each file), so it lives here rather than on a single console's Options.
-    case 2: this->RomRecvStart(0, false, true); return false; // Wifi game transfer
-    case 3: this->TidyStart(); return false;      // Tidy library
-    case 4: this->VerifyAllStart(); return false; // Verify all consoles
-    case 5: this->InstSortDialog(); return false; // Sort the console list
-    case 6: this->StorageOverview(); return false; // Library storage summary
-    case 7: this->OneGRStart(); return false;     // Remove duplicate copies (1G1R)
+    case 1: { // PC Sync: USB (Connect to PC) or Wi-Fi (auto-sort receive) —
+             // Wi-Fi's sorter is console-agnostic (it picks the console from
+             // each file), so it belongs here rather than on a single
+             // console's Options.
+        int cr = this->CreateShowDialog(tr(S_PC_SYNC), tr(S_PC_SYNC_BODY),
+                                        {tr(S_USB_MENU), tr(S_RECV_SORT),
+                                         tr(S_CANCEL)},
+                                        true, {}, style_dialog);
+        if (cr == 0) this->GotoUsbMtp();
+        else if (cr == 1) this->RomRecvStart(0, false, true);
+        return false;
+    }
+    case 2: this->TidyStart(); return false;      // Tidy library
+    case 3: this->VerifyAllStart(); return false; // Verify all consoles
+    case 4: this->InstSortDialog(); return false; // Sort the console list
+    case 5: this->StorageOverview(); return false; // Library storage summary
+    case 6: this->OneGRStart(); return false;     // Remove duplicate copies (1G1R)
+    case 7: { // Scan Art: game box art or console icons, each with its own
+             // fill/rescan/reset flow below (needs an API key either way)
+        int cr = this->CreateShowDialog(tr(S_SCAN_ART), tr(S_SCAN_ART_BODY),
+                                        {tr(S_SCAN_BOX_ART),
+                                         tr(S_SCAN_CONSOLE_ART), tr(S_CANCEL)},
+                                        true, {}, style_dialog);
+        if (cr == 0) this->ToolsScanGameArt();
+        else if (cr == 1) this->ToolsScanConsoleArt();
+        return false;
+    }
     case 8: this->GotoUpdates(); return false;    // Emulator & app updates (Settings)
     // row 9 (inventory toggle) is handled in-place by SideMenu; never returns here
     case SIDEMENU_SWITCH: return true;            // flip to per-console Options
     default: return false;                        // dismissed (B)
+    }
+}
+
+// Fetch box art for every game in the library (needs an API key). Split out
+// of ToolsMenu's Scan Art chooser so each scan kind is a self-contained call.
+void MainApplication::ToolsScanGameArt() {
+    if (g_creds.steamgriddb_key[0]) {
+        // Same three-way choice as ToolsScanConsoleArt: "Fill Missing" is
+        // the safe, fast default; "Rescan All" force-requeries everything,
+        // including a bad automatic pick an earlier scan couldn't be
+        // revisited otherwise (see boxart_game_force); "Reset All to
+        // Default" wipes every cached game cover (disk + runtime texture)
+        // and starts over from scratch.
+        int cr = this->CreateShowDialog(
+            tr(S_SCAN_BOX_ART), tr(S_SCAN_BOX_ART_BODY),
+            {tr(S_SCAN_BOX_ART_FILL), tr(S_SCAN_BOX_ART_FORCE),
+             tr(S_SCAN_BOX_ART_RESET), tr(S_CANCEL)},
+            true, {}, style_dialog);
+        if (cr == 0) {
+            this->BoxArtScanStart("", "", false, false);
+        } else if (cr == 1) {
+            this->BoxArtScanStart("", "", false, true);
+        } else if (cr == 2) {
+            if (this->ConfirmDanger(tr(S_SCAN_BOX_ART_RESET),
+                                    tr(S_SCAN_BOX_ART_RESET_CONFIRM), true)) {
+                boxart_clear_games();
+                boxart_cache_forget_games();
+                this->Toast(tr(S_SCAN_BOX_ART_RESET_DONE));
+            }
+        }
+    } else {
+        this->ToastErr(tr(S_SCAN_BOX_ART_NEED_KEY));
+    }
+}
+
+// Bulk console-icon scan: fills in every console's SteamGridDB art in one
+// pass, instead of visiting each one's own Console Art > Find Box Art
+// individually (needs an API key). Split out of ToolsMenu's Scan Art chooser.
+void MainApplication::ToolsScanConsoleArt() {
+    if (g_creds.steamgriddb_key[0]) {
+        // "Fill Missing" is the safe, fast default (skips consoles already
+        // resolved); "Rescan All" force-requeries everything, including a
+        // bad automatic pick from an earlier scan that fill-missing alone
+        // could never revisit -- see boxart_console_force. "Reset All to
+        // Default" is the way out of a scan that made things worse: wipe
+        // every console's cached art (disk + runtime texture) and drop back
+        // to the built-in icons, rather than searching again.
+        int cr = this->CreateShowDialog(
+            tr(S_SCAN_CONSOLE_ART), tr(S_SCAN_CONSOLE_ART_BODY),
+            {tr(S_SCAN_CONSOLE_ART_FILL), tr(S_SCAN_CONSOLE_ART_FORCE),
+             tr(S_SCAN_CONSOLE_ART_RESET), tr(S_CANCEL)},
+            true, {}, style_dialog);
+        if (cr == 0) {
+            this->BoxArtScanStart("", "", true, false);
+        } else if (cr == 1) {
+            this->BoxArtScanStart("", "", true, true);
+        } else if (cr == 2) {
+            if (this->ConfirmDanger(tr(S_SCAN_CONSOLE_ART_RESET),
+                                    tr(S_SCAN_CONSOLE_ART_RESET_CONFIRM),
+                                    true)) {
+                for (int c = 0; c < g_cfg.console_count; c++) {
+                    g_cfg.consoles[c].use_boxart = false;
+                }
+                config_save(&g_cfg);
+                boxart_clear_consoles();
+                boxart_cache_forget_consoles();
+                this->Toast(tr(S_SCAN_CONSOLE_ART_RESET_DONE));
+            }
+        }
+    } else {
+        this->ToastErr(tr(S_SCAN_BOX_ART_NEED_KEY));
     }
 }
 
@@ -10108,9 +11088,10 @@ bool MainApplication::ConsoleOptionsMenu(s32 i) {
         title,
         {tr(S_INSTALL_FOLDER), tr(S_CONSOLE_INFO), tr(S_RECEIVE_FROM_PC),
          tr(S_TIDY_CONSOLE), pinned ? tr(S_UNPIN) : tr(S_PIN),
-         tr(S_VERIFY_DAT), tr(S_HAVE_MISSING)},
+         tr(S_VERIFY_DAT), tr(S_HAVE_MISSING), tr(S_SCAN_BOX_ART_CONSOLE),
+         tr(S_CONSOLE_ART)},
         0, "", false, /*from_left=*/false,
-        console_icon(g_inst[i].name.c_str()), nullptr,
+        console_display_icon(g_inst[i].name.c_str()), nullptr,
         HidNpadButton_Y); // Y → global Tools panel
     if (r == 0) { // Install folder (where this console lands)
         this->InstFolderDialog(i);
@@ -10145,6 +11126,15 @@ bool MainApplication::ConsoleOptionsMenu(s32 i) {
         this->VerifyStart(inst_entry_path(this->inst_path, g_inst[i]),
                           g ? g->target : g_inst[i].name, title, false,
                           /*goto_missing=*/true);
+    } else if (r == 7) { // Scan for Box Art, limited to this console
+        if (g_creds.steamgriddb_key[0]) {
+            this->BoxArtScanStart(g ? g->target : g_inst[i].name,
+                                  inst_entry_path(this->inst_path, g_inst[i]));
+        } else {
+            this->ToastErr(tr(S_SCAN_BOX_ART_NEED_KEY));
+        }
+    } else if (r == 8) { // Console Art: default icon vs. SteamGridDB cover
+        this->ConsoleArtMenu(i);
     } else if (r == SIDEMENU_SWITCH) {
         return true; // flip to the global Tools panel
     }
@@ -10310,6 +11300,73 @@ void MainApplication::InstFolderDialog(s32 i) {
                 break;
             }
         }
+    }
+}
+
+// "Console Art" dialog for the console at g_inst[i] (Options menu). Default
+// icon vs. SteamGridDB box art -- the same search+picker flow a game's cover
+// uses, just keyed under "console:<target>" (see boxart.h) instead of a game
+// title, and landing back on ConsoleGroup::use_boxart instead of a row's
+// resolved-cover state. Gated on a SteamGridDB key exactly like every other
+// box-art entry point.
+void MainApplication::ConsoleArtMenu(s32 i) {
+    if (i < 0 || i >= (s32)g_inst.size() || !g_inst[i].is_dir) return;
+    ConsoleGroup *g = config_find_console(&g_cfg, g_inst[i].name.c_str());
+    if (!g) return;
+    if (!g_creds.steamgriddb_key[0]) {
+        this->ToastErr(tr(S_SCAN_BOX_ART_NEED_KEY));
+        return;
+    }
+    const char *full = console_full_name(g->target);
+    std::string title = full ? full : g->console;
+    std::string key = std::string("console:") + g->target;
+    bool has_art = boxart_lookup(key.c_str(), nullptr, 0);
+
+    // Buttons are built in display order, tracking which slot (if any) each
+    // dynamic option landed in -- same pattern as InstFolderDialog just above.
+    std::vector<std::string> btns;
+    int default_idx = -1, boxart_idx = -1;
+    if (g->use_boxart) {
+        default_idx = (int)btns.size();
+        btns.push_back(tr(S_CONSOLE_ART_USE_DEFAULT));
+    } else if (has_art) {
+        boxart_idx = (int)btns.size();
+        btns.push_back(tr(S_CONSOLE_ART_USE_BOXART));
+    }
+    int find_idx = (int)btns.size();
+    btns.push_back(tr(has_art ? S_CONSOLE_ART_CHANGE : S_CONSOLE_ART_FIND));
+    btns.push_back(tr(S_CANCEL)); // last: B / cancel returns this, a no-op
+
+    int r = this->CreateShowDialog(title, tr(S_CONSOLE_ART_BODY), btns, true,
+                                   {}, style_dialog);
+    if (default_idx >= 0 && r == default_idx) {
+        g->use_boxart = false;
+        config_save(&g_cfg);
+        std::string nm = g_inst[i].name;
+        this->GotoInstalled(this->inst_path);
+        for (s32 k = 0; k < (s32)g_inst.size(); k++) {
+            if (g_inst[k].name == nm) {
+                this->layout->SetSel(k);
+                break;
+            }
+        }
+    } else if (boxart_idx >= 0 && r == boxart_idx) {
+        g->use_boxart = true;
+        config_save(&g_cfg);
+        std::string nm = g_inst[i].name;
+        this->GotoInstalled(this->inst_path);
+        for (s32 k = 0; k < (s32)g_inst.size(); k++) {
+            if (g_inst[k].name == nm) {
+                this->layout->SetSel(k);
+                break;
+            }
+        }
+    } else if (r == find_idx) {
+        char initial[256];
+        snprintf(initial, sizeof(initial), "%s", title.c_str());
+        char q[256] = {0};
+        if (!prompt(tr(S_BOXART_SEARCH_GUIDE), initial, q, sizeof(q))) return;
+        this->BoxArtPickStart(key, q, Screen::Installed, i, g->target);
     }
 }
 
@@ -10504,6 +11561,9 @@ static int inst_group_row_count(const std::string &path) {
 void MainApplication::GotoInstalled(const std::string &path) {
     this->screen = Screen::Installed;
     this->inst_path = path;
+    // Stale row indices from whatever folder was open before — BoxArtIconsPoll
+    // must not resolve against the list being rebuilt below.
+    this->boxart_pending.clear();
     inst_stat_load(); // warm the folder-size cache from disk (once per session)
     g_inst = list_dir(path);
     bool is_root = (path == roms_root(&g_tico));
@@ -10617,15 +11677,33 @@ void MainApplication::GotoInstalled(const std::string &path) {
         const char *cfull = console_full_name(cons.c_str());
         this->layout->SetTitle(std::string(cfull ? cfull : cons.c_str()) +
                                " > " + tr(S_TITLE_INSTALLED));
-        this->layout->SetTitleIcon(console_icon(cons.c_str()));
+        this->layout->SetTitleIcon(console_display_icon(cons.c_str()));
     }
-    // Card view applies to the roms root only (console folders); inside a
-    // folder the file table remains the right tool.
-    bool cards = g_prefs.card_view && is_root && !g_inst.empty();
-    this->layout->SetSubtitle(cards      ? tr(S_SUB_INSTALLED_CARDS)
-                              : is_root   ? tr(S_SUB_INSTALLED)
-                                          : tr(S_SUB_INSTALLED_FOLDER));
+    // Card view: the roms root keeps its existing folder cards; inside a
+    // console folder it switches to the narrower "poster" style instead of
+    // falling back to the plain file table (see CardGrid's SetPoster). Y
+    // still marks (blue border, same selection set as list view) — but ▶ is
+    // D-pad navigation in the card grid, not the delete shortcut, so the
+    // folder hint swaps that line for X > Options while cards are showing.
+    bool cards = g_prefs.card_view && !g_inst.empty();
+    this->layout->SetSubtitle(
+        cards && is_root ? tr(S_SUB_INSTALLED_CARDS)
+        : is_root         ? tr(S_SUB_INSTALLED)
+        : cards           ? tr(S_SUB_INSTALLED_FOLDER_CARDS)
+                          : tr(S_SUB_INSTALLED_FOLDER));
     this->layout->ClearMenu();
+    if (cards) {
+        // Root folder cards are plain console-logo icons (never real art),
+        // same as Home/Repos/Settings -- 6-wide/2-row poster geometry with
+        // poster's "no cover" fallback path, not the old narrower 4-wide
+        // plain layout.
+        this->layout->SetCardCols(6);
+        this->layout->SetCardPoster(true);
+        // Set now (rather than after the loop, the older pattern) so
+        // RowCount() below already reads the grid - poster cards need their
+        // future index for the same lazy box-art queue the list rows use.
+        this->layout->SetCardsMode(true);
+    }
     // A file's persisted verify result, if any (fresh by size+mtime), tints
     // its size text the same green/red VerifyResults uses — verified and bad
     // are the two states worth a glance in the dense list; unknown-to-the-DAT
@@ -10695,13 +11773,15 @@ void MainApplication::GotoInstalled(const std::string &path) {
             const char *full = (path == roms_root(&g_tico))
                                    ? console_full_name(e.name.c_str())
                                    : nullptr;
+            bool ic_is_art = false;
             pu::sdl2::Texture ic = (path == roms_root(&g_tico))
-                                       ? console_icon(e.name.c_str())
+                                       ? console_display_icon(e.name.c_str(),
+                                                              &ic_is_art)
                                        : nullptr;
             if (cards) {
                 // Card: full name title (wrappable) + size/app count beneath.
                 this->layout->AddCard(full ? full : e.name.c_str(), card_sub,
-                                      ic, pinned);
+                                      ic, pinned, false, ic_is_art);
                 continue;
             }
             if (full) {
@@ -10717,25 +11797,47 @@ void MainApplication::GotoInstalled(const std::string &path) {
                                       count_color(), -1.0f, ic, "", false,
                                       true, pinned);
             }
-        } else if (cards) {
+            continue;
+        }
+        if (cards && is_root) {
             // Stray file at the roms root: still a card so indices match.
             this->layout->AddCard(e.name, human_size(e.size),
                                   console_icon(e.name.c_str()));
-        } else if (!e.group_members.empty()) {
-            // A whole game in one row: its piece count carries the size, which
-            // is also what marks the row as a set rather than a single file.
-            char sub[64];
-            snprintf(sub, sizeof(sub), tr(S_GROUP_SUBTITLE),
+            continue;
+        }
+        // A whole game: either a multi-file set (one row/card standing for
+        // the group, piece count carrying the size) or a single file (plain
+        // size, tinted by magnitude or by a persisted verify result). Box
+        // art is looked up the same way whichever view is showing - a cover
+        // already decoded shows immediately, one not yet decoded falls back
+        // to the console icon here and is queued for BoxArtIconsPoll rather
+        // than decoded right in the middle of the list build.
+        std::string sub;
+        if (!e.group_members.empty()) {
+            char sbuf[64];
+            snprintf(sbuf, sizeof(sbuf), tr(S_GROUP_SUBTITLE),
                      (int)e.group_members.size(), human_size(e.size).c_str());
-            this->layout->AddRow2(e.name, sub, g_theme->row_text,
-                                  row_color(e));
+            sub = sbuf;
         } else {
-            // File: right column is the plain size, tinted by magnitude (or by
-            // a persisted verify result, when there is a fresh one). The
-            // "Size:" label lives on the open dialog, not in the dense list.
-            this->layout->AddRow2(e.name, human_size(e.size),
-                                  g_theme->row_text,
-                                  row_color(e));
+            sub = human_size(e.size);
+        }
+        std::string t = boxart_query_title(e.name);
+        pu::sdl2::Texture ic2 = nullptr;
+        bool has_cover = boxart_row_icon(t, &ic2);
+        if (cards) {
+            // Poster card: the real cover if it's already decoded, else the
+            // console icon centred as a placeholder (CardGrid's Card::art
+            // picks stretch-fill vs centred-natural-size between the two).
+            s32 idx = this->layout->RowCount();
+            this->layout->AddCard(e.name, sub,
+                                  ic2 ? ic2 : console_display_icon(cons.c_str()),
+                                  false, false, ic2 != nullptr);
+            if (has_cover && !ic2) this->boxart_pending.push_back({idx, t});
+        } else {
+            s32 row_idx = this->layout->RowCount();
+            this->layout->AddRow2(e.name, sub, g_theme->row_text, row_color(e),
+                                  -1.0f, ic2);
+            if (has_cover && !ic2) this->boxart_pending.push_back({row_idx, t});
         }
     }
     if (g_inst.empty()) {
@@ -10890,6 +11992,9 @@ void MainApplication::ISearchTick() {
 void MainApplication::FinishInstSearch() {
     this->layout->SetSubtitle(tr(S_SUB_INST_SEARCH));
     this->layout->ClearMenu();
+    // Stale row indices from whatever search result was showing before —
+    // BoxArtIconsPoll must not resolve against the list being rebuilt below.
+    this->boxart_pending.clear();
     std::sort(g_inst_hits.begin(), g_inst_hits.end(),
               [](const InstHit &a, const InstHit &b) {
                   return strcasecmp(a.name.c_str(), b.name.c_str()) < 0;
@@ -10898,9 +12003,17 @@ void MainApplication::FinishInstSearch() {
     for (const auto &h : g_inst_hits) {
         std::string label =
             h.console.empty() ? h.name : "[" + h.console + "] " + h.name;
+        // Same cheap cache-check / defer-to-BoxArtIconsPoll split as
+        // GotoInstalled's row build — a search hit is still a library game,
+        // just reached a different way.
+        std::string t = boxart_query_title(h.name);
+        pu::sdl2::Texture ic = nullptr;
+        bool has_cover = boxart_row_icon(t, &ic);
+        s32 row_idx = this->layout->RowCount();
         this->layout->AddRow2(label, human_size(h.size), g_theme->row_text,
                               size_color(h.size), -1.0f,
-                              console_icon(h.console.c_str()));
+                              ic ? ic : console_icon(h.console.c_str()));
+        if (has_cover && !ic) this->boxart_pending.push_back({row_idx, t});
     }
     if (g_inst_hits.empty()) {
         this->layout->SetEmptyState(console_icon("default"),
@@ -11175,6 +12288,7 @@ int onegr_score(const std::string &n) {
 void MainApplication::TidyThread(void *arg) {
     auto self = static_cast<MainApplication *>(arg);
     self->tidy_issues.clear();
+    self->tidy_pruned_cache = 0;
 
     // Walk each console folder directly under the ROM root — or, for a
     // per-console tidy, just that one console's install folder.
@@ -11198,6 +12312,13 @@ void MainApplication::TidyThread(void *arg) {
     HashCache cache;
     hashcache_load(&cache, HASH_CACHE_PATH);
     DatCache *dats = idgame_dat_cache_new(DATS_DIR);
+    // Path -> "sits in its correctly-identified console folder", recorded for
+    // every file phase 1 could confidently identify (whether misfiled or
+    // not). Phase 2's duplicate grouping reads this so it never recommends
+    // keeping a misfiled copy over a correctly-filed one just because the
+    // misfiled copy's full path happens to sort first alphabetically -- see
+    // the sort comparator below.
+    std::map<std::string, bool> filed_ok;
     for (size_t i = 0; i < files.size() && !self->tidy_cancel; i++) {
         const TidyFile &f = files[i];
         IdResult id = idgame_identify(f.path.c_str());
@@ -11210,6 +12331,9 @@ void MainApplication::TidyThread(void *arg) {
             IdResult deep = idgame_deep_identify(dats, f.path.c_str(), &cache,
                                                  &self->tidy_cancel);
             if (idgame_is_confident(&deep)) id = deep;
+        }
+        if (idgame_is_confident(&id)) {
+            filed_ok[f.path] = (f.console == id.target);
         }
         if (idgame_is_confident(&id) && f.console != id.target &&
             config_find_console(&g_cfg, id.target) != nullptr) {
@@ -11252,9 +12376,17 @@ void MainApplication::TidyThread(void *arg) {
                 }
                 hv.push_back({hs.sha1_hex, f.path, f.name, f.console});
             }
-            // Group equal SHA-1s; keep the first by path, flag the rest.
-            std::sort(hv.begin(), hv.end(), [](const HF &a, const HF &b) {
-                return a.sha1 != b.sha1 ? a.sha1 < b.sha1 : a.path < b.path;
+            // Group equal SHA-1s; keep whichever copy phase 1 confirmed is in
+            // its correct console folder over one it flagged as misfiled (or
+            // couldn't identify), falling back to alphabetical path only when
+            // that signal doesn't distinguish them -- see filed_ok above.
+            std::sort(hv.begin(), hv.end(), [&](const HF &a, const HF &b) {
+                if (a.sha1 != b.sha1) return a.sha1 < b.sha1;
+                auto ita = filed_ok.find(a.path), itb = filed_ok.find(b.path);
+                bool a_ok = ita != filed_ok.end() && ita->second;
+                bool b_ok = itb != filed_ok.end() && itb->second;
+                if (a_ok != b_ok) return a_ok; // correctly-filed copy kept first
+                return a.path < b.path;
             });
             size_t g = 0;
             while (g < hv.size()) {
@@ -11268,6 +12400,46 @@ void MainApplication::TidyThread(void *arg) {
         }
         i = j;
     }
+
+    // Phase 3 — orphans. A zero-byte file can never be a working game (it's
+    // definitionally broken), and a stray ".part" sitting inside a console
+    // folder -- as opposed to DL_TMP_DIR, which the Downloads screen already
+    // manages -- is the destination-side leftover of a Wi-Fi/MTP receive that
+    // never got renamed into place (httpsrv.c's upload path writes to
+    // "<dest>/<name>.part" and renames on success; an interrupted transfer
+    // that missed the normal abort cleanup leaves the .part behind). Both are
+    // unambiguous junk: unlike a file idgame just doesn't recognize (which may
+    // be legitimate homebrew content with no DAT entry), neither of these
+    // could ever be a real game, so it's safe to flag without risking
+    // something the user actually wants.
+    for (const TidyFile &f : files) {
+        if (self->tidy_cancel) break;
+        bool is_part = f.name.size() > 5 &&
+                       strcasecmp(f.name.c_str() + f.name.size() - 5,
+                                  ".part") == 0;
+        if (f.size == 0) {
+            self->tidy_issues.push_back({f.path, f.name, f.console, "empty", 3});
+        } else if (is_part) {
+            self->tidy_issues.push_back({f.path, f.name, f.console, "part", 3});
+        }
+    }
+
+    // Stale-cache maintenance: only on a whole-library pass (tidy_only empty),
+    // since it isn't console-scoped work and adds a stat() per cached entry.
+    // Neither cache ever drops a row on its own -- a file moved, renamed, or
+    // deleted just leaves its old path unlookupable, so the row sits in the
+    // TSV forever. This is pure bookkeeping cleanup (no game file touched),
+    // so unlike the issues above it's applied immediately rather than queued
+    // for per-item confirmation; TidyTick reports the combined count once.
+    if (self->tidy_only.empty() && !self->tidy_cancel) {
+        self->tidy_pruned_cache += hashcache_prune(&cache);
+        VfyStatusCache vfy;
+        vfystatus_load(&vfy, VFYSTATUS_PATH);
+        self->tidy_pruned_cache += vfystatus_prune(&vfy);
+        vfystatus_save(&vfy, VFYSTATUS_PATH);
+        vfystatus_free(&vfy);
+    }
+
     hashcache_save(&cache, HASH_CACHE_PATH);
     hashcache_free(&cache);
     self->tidy.done = true;
@@ -11282,6 +12454,8 @@ void MainApplication::TidyStart(const std::string &only,
     this->tidy_files_done = 0;
     this->tidy_files_total = 0;
     this->tidy_issues.clear();
+    this->tidy_pruned_cache = 0;
+    this->tidy_kind_filter = -1;
     fs_mkdir_p(CACHE_DIR);
     this->screen = Screen::Tidy;
     this->layout->SetTitle(tr(only.empty() ? S_TIDY_LIBRARY : S_TIDY_CONSOLE));
@@ -11291,6 +12465,7 @@ void MainApplication::TidyStart(const std::string &only,
     // No worker: scan inline so the feature still works.
     this->layout->HideSpinner();
     TidyThread(this);
+    this->TidyReportPruned();
     this->TidyResults();
 }
 
@@ -11379,6 +12554,8 @@ void MainApplication::OneGRStart() {
     this->tidy_files_done = 0;
     this->tidy_files_total = 0;
     this->tidy_issues.clear();
+    this->tidy_pruned_cache = 0; // 1G1R is name-based; never touches the caches
+    this->tidy_kind_filter = -1;
     this->screen = Screen::Tidy;
     this->layout->SetTitle(tr(S_ONEGR_SCAN));
     this->layout->ClearMenu();
@@ -11387,6 +12564,7 @@ void MainApplication::OneGRStart() {
     // No worker: scan inline so the feature still works.
     this->layout->HideSpinner();
     OneGRThread(this);
+    this->TidyReportPruned();
     this->TidyResults();
 }
 
@@ -11400,7 +12578,16 @@ void MainApplication::TidyTick() {
     }
     this->layout->HideSpinner();
     this->tidy.Join();
+    this->TidyReportPruned();
     this->TidyResults();
+}
+
+void MainApplication::TidyReportPruned() {
+    if (this->tidy_pruned_cache <= 0) return;
+    char t[64];
+    snprintf(t, sizeof(t), tr(S_TIDY_PRUNED_CACHE), this->tidy_pruned_cache);
+    this->Toast(t);
+    this->tidy_pruned_cache = 0;
 }
 
 void MainApplication::TidyResults() {
@@ -11409,16 +12596,21 @@ void MainApplication::TidyResults() {
              tr(this->tidy_onegr ? S_ONEGR_TITLE : S_TIDY_TITLE),
              (int)this->tidy_issues.size());
     this->layout->SetTitle(title);
-    // With no issues there is nothing to fix, so the footer offers Back only —
-    // the "Ⓐ Fix" hint would point at a no-op (see TidyActSel's empty guard).
-    this->layout->SetSubtitle(
-        tr(this->tidy_issues.empty() ? S_SUB_TIDY_EMPTY : S_SUB_TIDY));
     this->layout->ClearMenu();
     const pu::ui::Color amber = is_light_theme()
                                     ? pu::ui::Color(180, 110, 30, 255)
                                     : pu::ui::Color(245, 175, 95, 255);
     const pu::ui::Color lbl = g_theme->row_text;
-    for (const TidyIssue &is : this->tidy_issues) {
+    // tidy_kind_filter restricts which issues are shown (and what Ⓧ Fix all
+    // touches) to one TidyIssue::kind; -1 shows everything. tidy_results_order
+    // maps the row actually displayed back to tidy_issues, same convention as
+    // boxart_results_order/vfy_missing_order, since the filter can hide rows.
+    this->tidy_results_order.clear();
+    for (int i = 0; i < (int)this->tidy_issues.size(); i++) {
+        const TidyIssue &is = this->tidy_issues[i];
+        if (this->tidy_kind_filter >= 0 && is.kind != this->tidy_kind_filter)
+            continue;
+        this->tidy_results_order.push_back(i);
         char val[96];
         if (is.kind == 1) {
             const char *full = console_full_name(is.target.c_str());
@@ -11426,6 +12618,10 @@ void MainApplication::TidyResults() {
                      full ? full : is.target.c_str());
         } else if (is.kind == 2) {
             snprintf(val, sizeof(val), tr(S_TIDY_CLONE), is.target.c_str());
+        } else if (is.kind == 3) {
+            snprintf(val, sizeof(val), "%s",
+                     tr(is.target == "part" ? S_TIDY_ORPHAN_PART
+                                             : S_TIDY_ORPHAN_EMPTY));
         } else {
             snprintf(val, sizeof(val), "%s", tr(S_TIDY_DUP));
         }
@@ -11433,10 +12629,22 @@ void MainApplication::TidyResults() {
         this->layout->AddRow2(name, val, lbl, amber, -1.0f,
                               console_icon(is.console.c_str()));
     }
-    if (this->tidy_issues.empty())
+    // Three subtitle states: truly nothing found, a filter hiding everything
+    // that WAS found, or the normal "here's what you can do" hint. The Ⓐ Fix
+    // hint would point at a no-op in either empty case (see TidyActSel's
+    // empty guard).
+    if (this->tidy_issues.empty()) {
+        this->layout->SetSubtitle(tr(S_SUB_TIDY_EMPTY));
         this->layout->SetEmptyState(console_icon("default"),
                                     tr(this->tidy_onegr ? S_ONEGR_CLEAN
                                                         : S_TIDY_CLEAN));
+    } else if (this->tidy_results_order.empty()) {
+        this->layout->SetSubtitle(tr(S_SUB_TIDY_FILTER_EMPTY));
+        this->layout->SetEmptyState(console_icon("default"),
+                                    tr(S_TIDY_FILTER_EMPTY));
+    } else {
+        this->layout->SetSubtitle(tr(S_SUB_TIDY));
+    }
     this->screen = Screen::Tidy;
 }
 
@@ -11444,8 +12652,9 @@ void MainApplication::TidyResults() {
 // drop the row. Never clobbers an existing file on a move.
 void MainApplication::TidyActSel() {
     s32 row = this->layout->Sel();
-    if (row < 0 || row >= (s32)this->tidy_issues.size()) return;
-    const TidyIssue is = this->tidy_issues[row]; // copy; the vector is rebuilt
+    if (row < 0 || row >= (s32)this->tidy_results_order.size()) return;
+    s32 idx = this->tidy_results_order[row]; // tidy_issues index behind this row
+    const TidyIssue is = this->tidy_issues[idx]; // copy; the vector is rebuilt
 
     bool ok = false;
     if (is.kind == 1) { // misfiled -> move to the target console's folder
@@ -11481,6 +12690,17 @@ void MainApplication::TidyActSel() {
             return;
         ok = (remove(is.path.c_str()) == 0);
         this->Toast(ok ? tr(S_DELETED) : tr(S_RENAME_FAILED));
+    } else if (is.kind == 3) { // orphan -> delete (empty file or stray .part)
+        char body[700];
+        snprintf(body, sizeof(body), tr(S_TIDY_ORPHAN_BODY), is.name.c_str(),
+                 tr(is.target == "part" ? S_TIDY_ORPHAN_PART
+                                        : S_TIDY_ORPHAN_EMPTY));
+        if (this->CreateShowDialog(tr(S_TIDY_ORPHAN_TITLE), wrap_for_dialog(body),
+                                   {tr(S_DELETE), tr(S_CANCEL)}, true, {},
+                                   style_dialog) != 0)
+            return;
+        ok = (remove(is.path.c_str()) == 0);
+        this->Toast(ok ? tr(S_DELETED) : tr(S_RENAME_FAILED));
     } else { // duplicate -> delete the extra copy
         char body[700];
         snprintf(body, sizeof(body), tr(S_TIDY_DUP_BODY), is.path.c_str(),
@@ -11493,10 +12713,92 @@ void MainApplication::TidyActSel() {
         this->Toast(ok ? tr(S_DELETED) : tr(S_RENAME_FAILED));
     }
     if (ok) {
-        this->tidy_issues.erase(this->tidy_issues.begin() + row);
+        this->tidy_issues.erase(this->tidy_issues.begin() + idx);
         this->TidyResults();
-        if (row < (s32)this->tidy_issues.size()) this->layout->SetSel(row);
+        if (row < (s32)this->tidy_results_order.size()) this->layout->SetSel(row);
     }
+}
+
+// X: apply every currently-filtered/visible issue's native fix (move for
+// misfiled, delete for duplicate/clone/orphan) behind one confirm, instead of
+// requiring 30 individual Ⓐ presses on a big result set. Scoped to
+// tidy_results_order, so filtering first (Ⓨ -> just orphans) narrows what
+// this touches -- same semantics as TidyActSel, just batched.
+void MainApplication::TidyFixAll() {
+    if (this->tidy_results_order.empty()) return;
+    int n = (int)this->tidy_results_order.size();
+    char msg[160];
+    snprintf(msg, sizeof(msg), tr(S_TIDY_FIX_ALL_CONFIRM), n);
+    if (this->CreateShowDialog(tr(S_TIDY_FIX_ALL_TITLE), wrap_for_dialog(msg),
+                               {tr(S_TIDY_FIX_ALL_TITLE), tr(S_CANCEL)}, true,
+                               {}, style_dialog) != 0)
+        return;
+    // Snapshot the target indices before mutating tidy_issues, then apply
+    // highest index first: erasing index i only shifts entries AFTER i, so
+    // every not-yet-processed (smaller) snapshotted index stays valid.
+    std::vector<int> idxs = this->tidy_results_order;
+    std::sort(idxs.begin(), idxs.end(), [](int a, int b) { return a > b; });
+    int done = 0, failed = 0;
+    for (int idx : idxs) {
+        if (idx < 0 || idx >= (int)this->tidy_issues.size()) continue;
+        const TidyIssue is = this->tidy_issues[idx];
+        bool ok;
+        if (is.kind == 1) { // misfiled -> move to the target console's folder
+            const char *custom = install_folder_for(is.target.c_str());
+            std::string dir = (custom && custom[0])
+                                  ? std::string(custom)
+                                  : std::string(roms_root(&g_tico)) + "/" +
+                                        is.target;
+            fs_mkdir_p(dir.c_str());
+            std::string dest = dir + "/" + is.name;
+            ok = !fs_exists(dest.c_str()) &&
+                 fs_move(is.path.c_str(), dest.c_str());
+        } else { // duplicate / 1G1R clone / orphan -> delete
+            ok = (remove(is.path.c_str()) == 0);
+        }
+        if (ok) {
+            this->tidy_issues.erase(this->tidy_issues.begin() + idx);
+            done++;
+        } else {
+            failed++;
+        }
+    }
+    char t[64];
+    if (failed > 0) {
+        snprintf(t, sizeof(t), tr(S_TIDY_FIX_ALL_PARTIAL), done, failed);
+        this->ToastErr(t);
+    } else {
+        snprintf(t, sizeof(t), tr(S_TIDY_FIX_ALL_DONE), done);
+        this->Toast(t);
+    }
+    this->TidyResults();
+}
+
+// Y: pick which issue kind(s) to show. Options are built from whichever kinds
+// are actually present, so a plain Tidy scan (kinds 0/1/3) never offers the
+// 1G1R clone option and vice versa -- the two scans never mix in one pass.
+void MainApplication::TidyFilterDialog() {
+    static const int kOrder[4] = {0, 1, 3, 2}; // dup, misfiled, orphan, clone
+    static const int kLabel[4] = {S_TIDY_DUP, S_TIDY_FILTER_MISFILED,
+                                  S_TIDY_FILTER_ORPHAN, S_TIDY_FILTER_CLONE};
+    std::vector<std::string> opts = {tr(S_TIDY_FILTER_ALL)};
+    std::vector<int> kinds = {-1};
+    for (int k = 0; k < 4; k++) {
+        bool present = false;
+        for (const TidyIssue &is : this->tidy_issues)
+            if (is.kind == kOrder[k]) { present = true; break; }
+        if (!present) continue;
+        opts.push_back(tr(kLabel[k]));
+        kinds.push_back(kOrder[k]);
+    }
+    int sel = 0;
+    for (size_t i = 0; i < kinds.size(); i++)
+        if (kinds[i] == this->tidy_kind_filter) { sel = (int)i; break; }
+    int r = this->SideMenu(tr(S_FILTER), opts, sel);
+    if (r < 0 || r >= (int)kinds.size() || kinds[r] == this->tidy_kind_filter)
+        return;
+    this->tidy_kind_filter = kinds[r];
+    this->TidyResults();
 }
 
 // ---- largest files: what to delete to free space --------------------------
@@ -11593,6 +12895,884 @@ void MainApplication::LargeFileDeleteSel() {
         this->large_files.erase(this->large_files.begin() + row);
         this->GotoLargestFiles();
         if (row < (s32)this->large_files.size()) this->layout->SetSel(row);
+    }
+}
+
+// ---- box art scan: SteamGridDB cover fetch for the local library ----------
+// "Scan for Box Art" (Tools panel, gated on Settings -> Account holding a
+// SteamGridDB key): resolve + cache a cover for every distinct game title in
+// the library. See boxart.h for the fetch/cache contract.
+
+void MainApplication::BoxArtScanThread(void *arg) {
+    auto self = static_cast<MainApplication *>(arg);
+    if (self->boxart_console_mode) {
+        // Bulk console-icon scan: one row per configured console instead of
+        // per game title, resolved under its "console:<target>" cache key
+        // (see ConsoleGroup::use_boxart / console_display_icon). A hit flips
+        // that console over to showing it automatically -- same auto-enable
+        // rule BoxArtPickConsoleCommit applies to an interactive pick -- so a
+        // scan alone is enough to fix a console stuck on its 1x1 placeholder,
+        // with no extra "now use it" step per console afterwards.
+        self->boxart_total = g_cfg.console_count;
+        self->boxart_done = 0;
+        self->boxart_rows.clear();
+        self->boxart_rows.reserve((size_t)g_cfg.console_count);
+        bool cfg_dirty = false;
+        char path[768];
+        int done = 0;
+        for (int i = 0; i < g_cfg.console_count; i++) {
+            if (self->boxart_cancel) break;
+            ConsoleGroup *g = &g_cfg.consoles[i];
+            const char *full = console_full_name(g->target);
+            BoxArtRow row;
+            row.title = full ? full : g->console;
+            row.console = g->target;
+            row.key = std::string("console:") + g->target;
+            row.console_target = g->target;
+            // Force mode always re-queries, even a console already marked
+            // "found" -- otherwise a bad automatic pick from an earlier scan
+            // was a dead end, since boxart_fetch_titled's normal "already
+            // cached" short circuit means re-running the scan silently
+            // touched nothing. See BoxArtScanStart's Tools-panel dialog.
+            row.found = self->boxart_console_force
+                          ? boxart_fetch_query(g_creds.steamgriddb_key,
+                                              row.key.c_str(),
+                                              row.title.c_str(), path,
+                                              sizeof(path), &row.score)
+                          : boxart_fetch_titled(g_creds.steamgriddb_key,
+                                                row.key.c_str(),
+                                                row.title.c_str(), path,
+                                                sizeof(path), &row.score);
+            if (row.found && !g->use_boxart) {
+                g->use_boxart = true;
+                cfg_dirty = true;
+            }
+            self->boxart_rows.push_back(row);
+            self->boxart_done = ++done;
+        }
+        boxart_index_save();
+        if (cfg_dirty) {
+            config_save(&g_cfg);
+        }
+        self->boxart.done = true;
+        return;
+    }
+    std::vector<TidyFile> files;
+    // Whole-library scan (Tools panel) or just one console's folder (that
+    // console's Options panel) -- same scoping split as TidyThread.
+    if (self->boxart_only.empty())
+        tidy_gather(files, &self->boxart_cancel);
+    else
+        tidy_collect(self->boxart_only_path, self->boxart_only, files,
+                     &self->boxart_cancel);
+
+    // Dedupe by console + base title: a multi-disc/multi-track piece or a
+    // regional clone of the same game would otherwise burn a separate
+    // SteamGridDB query (and cache slot) per copy for art that's identical.
+    std::map<std::string, BoxArtRow> uniq;
+    for (const TidyFile &f : files) {
+        if (onegr_is_multipart(f.name)) continue; // one query per whole game
+        std::string title = boxart_query_title(f.name);
+        if (title.empty()) continue;
+        uniq.emplace(f.console + "\x1f" + title, BoxArtRow{title, f.console, false});
+    }
+
+    self->boxart_total = (int)uniq.size();
+    self->boxart_done = 0;
+    self->boxart_rows.clear();
+    self->boxart_rows.reserve(uniq.size());
+    char path[768];
+    int done = 0;
+    for (auto &kv : uniq) {
+        if (self->boxart_cancel) break;
+        BoxArtRow row = kv.second;
+        // Force mode mirrors the console branch above: re-query every game,
+        // even one already marked "found", via boxart_fetch_query's always-
+        // overwrite contract -- otherwise a bad pick from an earlier scan was
+        // a dead end (see boxart_game_force / the Tools-panel dialog).
+        row.found = self->boxart_game_force
+                      ? boxart_fetch_query(g_creds.steamgriddb_key,
+                                          row.title.c_str(), row.title.c_str(),
+                                          path, sizeof(path), &row.score)
+                      : boxart_fetch(g_creds.steamgriddb_key,
+                                     row.title.c_str(), path, sizeof(path),
+                                     &row.score);
+        self->boxart_rows.push_back(row);
+        self->boxart_done = ++done; // plain int++, then a single volatile store
+    }
+    // One write for the whole pass (not per-title) -- same reasoning as
+    // hashcache_save, and boxart_fetch already only marks the index dirty.
+    boxart_index_save();
+    self->boxart.done = true;
+}
+
+void MainApplication::BoxArtScanStart(const std::string &only,
+                                      const std::string &only_path,
+                                      bool console_mode, bool force_all) {
+    // The auto-fetch drain (BoxArtAutoPoll) and a manual scan both walk
+    // boxart.c's unsynchronized static index -- never let them run at once.
+    // A pending drain is at most a handful of single-title fetches, so this
+    // is a short, bounded wait, not an open-ended stall.
+    if (this->boxart_auto.running) {
+        this->boxart_auto_cancel = true;
+        this->boxart_auto.Join();
+    }
+    this->boxart_only = only;
+    this->boxart_only_path = only_path;
+    this->boxart_console_mode = console_mode;
+    this->boxart_console_force = console_mode && force_all;
+    this->boxart_game_force = !console_mode && force_all;
+    this->boxart_cancel = false;
+    this->boxart_done = 0;
+    this->boxart_total = 0;
+    this->boxart_rows.clear();
+    this->boxart_result_filter = 0; // fresh scan: never start on a stale filter
+    this->screen = Screen::BoxArtResults;
+    this->layout->SetTitle(tr(console_mode ? S_SCAN_CONSOLE_ART
+                              : (only.empty() ? S_SCAN_BOX_ART
+                                              : S_SCAN_BOX_ART_CONSOLE)));
+    this->layout->ClearMenu();
+    this->layout->ShowSpinner(tr(S_BOXART_SCANNING));
+    if (this->boxart.Start(&MainApplication::BoxArtScanThread, this)) return;
+    // No worker: scan inline so the feature still works.
+    this->layout->HideSpinner();
+    BoxArtScanThread(this);
+    this->GotoBoxArtResults();
+}
+
+void MainApplication::BoxArtScanTick() {
+    if (!this->boxart.done) {
+        char s[128];
+        snprintf(s, sizeof(s), "%s  %d/%d   Ⓑ %s", tr(S_BOXART_SCANNING),
+                 this->boxart_done, this->boxart_total, tr(S_CANCEL));
+        this->layout->SetSubtitle(s);
+        return;
+    }
+    this->layout->HideSpinner();
+    this->boxart.Join();
+    this->GotoBoxArtResults();
+}
+
+void MainApplication::GotoBoxArtResults() {
+    int found = 0;
+    for (const BoxArtRow &r : this->boxart_rows) found += r.found ? 1 : 0;
+    char title[64];
+    snprintf(title, sizeof(title), tr(S_BOXART_RESULTS_TITLE_N),
+             (int)this->boxart_rows.size());
+    this->layout->SetTitle(title);
+    char sub[128];
+    snprintf(sub, sizeof(sub), tr(S_BOXART_RESULTS_SUB_N), found,
+             (int)this->boxart_rows.size());
+    this->layout->SetSubtitle(sub);
+    this->layout->ClearMenu();
+    const pu::ui::Color lbl = g_theme->row_text;
+    const pu::ui::Color green = accent_green();
+    const pu::ui::Color amber(245, 175, 95, 255); // same warning tone used elsewhere in this file
+    const pu::ui::Color grey(150, 160, 185, 255);
+    // boxart_result_filter: 0 = all, 1 = found only, 2 = not found only, 3 =
+    // low-confidence hits only (see kLowConfidenceScore). boxart_results_order
+    // maps the row actually shown at a given index back to boxart_rows, since
+    // a filter can skip entries — same convention as vfy_missing_order.
+    this->boxart_results_order.clear();
+    // Stale entries from whatever screen was open before this (Installed,
+    // BoxArtManageList, ...) must not get resolved against these brand new
+    // row indices — same discipline GotoBoxArtManageList's own rebuild
+    // follows for the same shared queue.
+    this->boxart_pending.clear();
+    for (int i = 0; i < (int)this->boxart_rows.size(); i++) {
+        const BoxArtRow &r = this->boxart_rows[i];
+        bool low_conf = r.found && r.score >= 0 && r.score < kLowConfidenceScore;
+        if (this->boxart_result_filter == 1 && !r.found) continue;
+        if (this->boxart_result_filter == 2 && r.found) continue;
+        if (this->boxart_result_filter == 3 && !low_conf) continue;
+        this->boxart_results_order.push_back(i);
+        std::string name = "[" + r.console + "] " + r.title;
+        pu::ui::Color status_c = !r.found ? grey : (low_conf ? amber : green);
+        int status_s = !r.found ? S_BOXART_NOT_FOUND
+                                : (low_conf ? S_BOXART_FOUND_LOW : S_BOXART_FOUND);
+        if (r.found) {
+            // Real cover thumbnail instead of the generic console badge, so a
+            // bad auto-pick is visible right here instead of only after
+            // drilling into Data Files > Art Cache > Browse separately.
+            // boxart_row_icon's "decode only if already warm" split is the
+            // same async pattern GotoInstalled/GotoBoxArtManageList use.
+            const std::string &key = r.key.empty() ? r.title : r.key;
+            pu::sdl2::Texture ic = nullptr;
+            bool has_cover = boxart_row_icon(key, &ic);
+            s32 row_idx = this->layout->RowCount();
+            this->layout->AddRow2(name, tr(status_s), lbl, status_c, -1.0f,
+                                  ic ? ic : console_icon(r.console.c_str()));
+            if (has_cover && !ic) this->boxart_pending.push_back({row_idx, key});
+        } else {
+            this->layout->AddRow2(name, tr(status_s), lbl, status_c, -1.0f,
+                                  console_icon(r.console.c_str()));
+        }
+    }
+    if (this->boxart_results_order.empty())
+        this->layout->SetEmptyState(console_icon("default"), tr(S_EMPTY));
+    this->screen = Screen::BoxArtResults;
+}
+
+// X on the results list: which subset to show. Same "row index maps through
+// boxart_results_order" contract GotoBoxArtResults sets up, rebuilt on any
+// change; a straight -1 (B/cancel) or picking the already-active filter is a
+// no-op so this never causes a pointless rebuild.
+void MainApplication::BoxArtResultsFilterDialog() {
+    int r = this->SideMenu(tr(S_FILTER),
+                           {tr(S_BOXART_FILTER_ALL), tr(S_BOXART_FOUND),
+                            tr(S_BOXART_NOT_FOUND), tr(S_BOXART_FILTER_LOW)},
+                           this->boxart_result_filter);
+    if (r < 0 || r == this->boxart_result_filter) return;
+    this->boxart_result_filter = r;
+    this->GotoBoxArtResults();
+}
+
+// Shared by BoxArtResultsRowMenu and the Library "A on a game" File dialog
+// (Screen::Installed's A handler) — prompts for a search string seeded with
+// `title`, then hands off to the art picker (BoxArtPickStart) instead of
+// blindly saving SteamGridDB's top-ranked image the way this used to call
+// boxart_fetch_query directly. `return_screen`/`return_idx` are just carried
+// through to BoxArtPickStart — see BoxArtPickCtx.
+void MainApplication::BoxArtCustomSearch(const std::string &title,
+                                         Screen return_screen,
+                                         int return_idx,
+                                         const std::string &console_target,
+                                         const std::string &seed) {
+    if (title.empty()) return;
+    if (!g_creds.steamgriddb_key[0]) {
+        this->ToastErr(tr(S_SCAN_BOX_ART_NEED_KEY));
+        return;
+    }
+    char initial[256];
+    snprintf(initial, sizeof(initial), "%s",
+             (seed.empty() ? title : seed).c_str());
+    char q[256] = {0};
+    if (!prompt(tr(S_BOXART_SEARCH_GUIDE), initial, q, sizeof(q))) return;
+    this->BoxArtPickStart(title, q, return_screen, return_idx, console_target);
+}
+
+// ---- art picker: browse SteamGridDB's cover options for a matched game ----
+
+void MainApplication::BoxArtPickListThread(void *arg) {
+    auto self = static_cast<MainApplication *>(arg);
+    BoxArtCandidate cands[BOXART_MAX_CANDIDATES];
+    int n = boxart_list_candidates(g_creds.steamgriddb_key,
+                                   self->boxart_pick.query.c_str(), cands,
+                                   BOXART_MAX_CANDIDATES);
+    self->boxart_candidates.assign(cands, cands + n);
+    self->boxart_thumb_paths.assign((size_t)n, std::string());
+    // Best-effort per slot: a thumb that fails to download just falls back to
+    // a placeholder icon in GotoBoxArtPicker, same as a poster card with no
+    // cover anywhere else in the app — never worth failing the whole picker.
+    for (int i = 0; i < n; i++) {
+        char path[768];
+        if (boxart_fetch_thumb(&self->boxart_candidates[(size_t)i], i, path,
+                               sizeof(path))) {
+            self->boxart_thumb_paths[(size_t)i] = path;
+        }
+    }
+    self->boxpick.done = true;
+}
+
+void MainApplication::BoxArtPickConfirmThread(void *arg) {
+    auto self = static_cast<MainApplication *>(arg);
+    int idx = self->boxpick_confirm_idx;
+    bool ok = false;
+    if (idx >= 0 && idx < (int)self->boxart_candidates.size()) {
+        char path[768];
+        ok = boxart_fetch_candidate(g_creds.steamgriddb_key,
+                                    self->boxart_pick.title.c_str(),
+                                    &self->boxart_candidates[(size_t)idx],
+                                    path, sizeof(path));
+    }
+    self->boxpick_result = ok;
+    self->boxpick.done = true;
+}
+
+// Kicks off the listing step (search + thumbs) and switches to the picker
+// screen once results land — GotoBoxArtPicker's row/subtitle already fold in
+// "0 found" (nothing to browse), so callers never need to check the count.
+void MainApplication::BoxArtPickStart(const std::string &title,
+                                      const std::string &query,
+                                      Screen return_screen, int return_idx,
+                                      const std::string &console_target) {
+    this->BoxArtPickFreeTex();
+    this->boxart_candidates.clear();
+    this->boxart_thumb_paths.clear();
+    this->boxart_pick.title = title;
+    this->boxart_pick.query = query;
+    this->boxart_pick.return_screen = return_screen;
+    this->boxart_pick.return_idx = return_idx;
+    this->boxart_pick.console_target = console_target;
+    this->boxpick_confirm = false;
+    this->screen = Screen::BoxArtPicker;
+    this->layout->SetTitle(tr(S_BOXART_PICKER_TITLE));
+    this->layout->ClearMenu();
+    this->layout->ShowSpinner(tr(S_BOXART_PICKER_SEARCHING));
+    if (this->boxpick.Start(&MainApplication::BoxArtPickListThread, this)) return;
+    // No worker: run inline, same fallback every other scan here uses.
+    // Start() never having set .running means the HandleInput gate below
+    // never fires for this, so there's nothing to Join here.
+    this->layout->HideSpinner();
+    BoxArtPickListThread(this);
+    if (this->boxart_candidates.empty()) {
+        this->Toast(tr(S_BOXART_CUSTOM_NOT_FOUND));
+        this->BoxArtPickReturn();
+    } else {
+        this->GotoBoxArtPicker();
+    }
+}
+
+// Called every frame from HandleInput while boxpick.running (listing or
+// confirming — both share the one BgTask, never concurrently: the user can't
+// reach a confirm until a listing has already finished and put up the
+// picker screen). No per-item progress worth showing either way — one search
+// plus a handful of small thumb downloads, or one single-image download.
+void MainApplication::BoxArtPickTick() {
+    if (!this->boxpick.done) {
+        return;
+    }
+    this->layout->HideSpinner();
+    this->boxpick.Join();
+    if (this->boxpick_confirm) {
+        this->boxpick_confirm = false;
+        bool ok = this->boxpick_result;
+        boxart_cache_forget(this->boxart_pick.title); // drop any stale
+                                                       // texture — a hit
+                                                       // just replaced it
+        this->BoxArtPickConsoleCommit(ok);
+        this->Toast(tr(ok ? S_BOXART_CUSTOM_FOUND : S_BOXART_CUSTOM_NOT_FOUND));
+        this->BoxArtPickReturn();
+        return;
+    }
+    if (this->boxart_candidates.empty()) {
+        this->Toast(tr(S_BOXART_CUSTOM_NOT_FOUND));
+        this->BoxArtPickReturn();
+        return;
+    }
+    this->GotoBoxArtPicker();
+}
+
+void MainApplication::GotoBoxArtPicker() {
+    this->screen = Screen::BoxArtPicker;
+    this->layout->SetTitle(tr(S_BOXART_PICKER_TITLE));
+    char sub[128];
+    snprintf(sub, sizeof(sub), tr(S_BOXART_PICKER_SUB_N),
+             (int)this->boxart_candidates.size());
+    this->layout->SetSubtitle(sub);
+    this->layout->ClearMenu();
+    // 4-wide: these cards carry a short "Option N" label instead of a real
+    // game title, so they don't need the Installed poster view's narrower
+    // 6-wide layout to leave room for wrapped text.
+    this->layout->SetCardCols(4);
+    this->layout->SetCardPoster(true);
+    this->layout->SetCardsMode(true);
+    this->BoxArtPickFreeTex();
+    for (size_t i = 0; i < this->boxart_candidates.size(); i++) {
+        pu::sdl2::Texture tex = nullptr;
+        if (!this->boxart_thumb_paths[i].empty()) {
+            tex = pu::ui::render::LoadImageFromFile(this->boxart_thumb_paths[i]);
+        }
+        this->boxart_pick_tex.push_back(tex);
+        char label[32];
+        snprintf(label, sizeof(label), tr(S_BOXART_PICKER_OPTION_N), (int)(i + 1));
+        std::string dims;
+        const BoxArtCandidate &c = this->boxart_candidates[i];
+        if (c.width > 0 && c.height > 0) {
+            char d[32];
+            snprintf(d, sizeof(d), "%d\xc3\x97%d", c.width, c.height); // U+00D7 ×
+            dims = d;
+        }
+        this->layout->AddCard(label, dims,
+                              tex ? tex : console_icon("default"), false,
+                              false, tex != nullptr);
+    }
+}
+
+void MainApplication::BoxArtPickFreeTex() {
+    for (auto t : this->boxart_pick_tex) {
+        if (t) pu::ui::render::DeleteTexture(t);
+    }
+    this->boxart_pick_tex.clear();
+}
+
+void MainApplication::BoxArtPickConfirm(int idx) {
+    if (idx < 0 || idx >= (s32)this->boxart_candidates.size()) return;
+    this->boxpick_confirm_idx = idx;
+    this->boxpick_confirm = true;
+    this->layout->ShowSpinner(tr(S_BOXART_PICKER_DOWNLOADING));
+    if (this->boxpick.Start(&MainApplication::BoxArtPickConfirmThread, this)) return;
+    // No worker: run inline (Start() never set .running, so there's no
+    // thread for the HandleInput gate below to see or Join).
+    this->layout->HideSpinner();
+    BoxArtPickConfirmThread(this);
+    bool ok = this->boxpick_result;
+    this->boxpick_confirm = false;
+    boxart_cache_forget(this->boxart_pick.title);
+    this->BoxArtPickConsoleCommit(ok);
+    this->Toast(tr(ok ? S_BOXART_CUSTOM_FOUND : S_BOXART_CUSTOM_NOT_FOUND));
+    this->BoxArtPickReturn();
+}
+
+// Shared tail of a landed confirm (worker or inline path): when this pick was
+// a console-art search (boxart_pick.console_target set -- see ConsoleArtMenu),
+// flip ConsoleGroup::use_boxart on for a successful download and persist it,
+// so the console actually starts showing the cover it just fetched instead of
+// requiring a separate "now use it" step. A miss leaves the flag untouched --
+// nothing was saved to show. No-op for a game pick (console_target empty).
+void MainApplication::BoxArtPickConsoleCommit(bool ok) {
+    if (!ok || this->boxart_pick.console_target.empty()) return;
+    ConsoleGroup *g =
+        config_find_console(&g_cfg, this->boxart_pick.console_target.c_str());
+    if (g && !g->use_boxart) {
+        g->use_boxart = true;
+        config_save(&g_cfg);
+    }
+}
+
+// Leaves the picker: B with nothing picked, or after a confirm's outcome was
+// already toasted by BoxArtPickTick/BoxArtPickConfirm above. Re-derives
+// whatever the caller needs fresh from boxart_lookup rather than trusting a
+// passed-through "did it change" flag, so a plain cancel and a real pick both
+// land in a correct state through the same path.
+void MainApplication::BoxArtPickReturn() {
+    this->BoxArtPickFreeTex();
+    this->boxart_candidates.clear();
+    this->boxart_thumb_paths.clear();
+    if (this->boxart_pick.return_screen == Screen::BoxArtResults) {
+        int i = this->boxart_pick.return_idx;
+        if (i >= 0 && i < (s32)this->boxart_rows.size()) {
+            BoxArtRow &row = this->boxart_rows[(size_t)i];
+            // A console row's cache key differs from its display title (see
+            // BoxArtRow::key) -- same lookup-key rule BoxArtResultsRowMenu
+            // and GotoBoxArtResults already follow.
+            const std::string &key = row.key.empty() ? row.title : row.key;
+            row.found = boxart_lookup(key.c_str(), nullptr, 0);
+            // A deliberate manual pick is never "low confidence" -- that
+            // label only means "an automatic search guessed this," which no
+            // longer applies once the user picked it themselves.
+            row.score = -1;
+        }
+        this->GotoBoxArtResults();
+    } else {
+        // Every other caller (Installed's "A on a game" File dialog, and
+        // ConsoleArtMenu's console-art search) lands here — both pass a
+        // g_inst row to reselect, same refresh a custom search always did.
+        this->GotoInstalled(this->inst_path);
+        if (this->boxart_pick.return_idx >= 0) {
+            this->layout->SetSel(this->boxart_pick.return_idx);
+        }
+    }
+}
+
+// A on a results row: search with a custom term (any row — a wrong automatic
+// match is as worth fixing as a miss), or delete the cached cover outright
+// when this row already has one.
+void MainApplication::BoxArtResultsRowMenu(int idx) {
+    if (idx < 0 || idx >= (s32)this->boxart_rows.size()) return;
+    BoxArtRow &row = this->boxart_rows[idx];
+    // A console-art scan row's cache key differs from its display title (see
+    // BoxArtRow::key) -- every other row (a game) has an empty `key` and
+    // uses `title` as its own key, same as always.
+    const std::string &key = row.key.empty() ? row.title : row.key;
+    std::vector<std::string> opts = {tr(S_BOXART_SEARCH_CUSTOM)};
+    int del_idx = -1;
+    if (row.found) {
+        del_idx = (int)opts.size();
+        opts.push_back(tr(S_BOXART_DELETE_COVER));
+    }
+    opts.push_back(tr(S_CANCEL));
+    int r = this->SideMenu(row.title, opts);
+    if (r == 0) {
+        this->BoxArtCustomSearch(key, Screen::BoxArtResults, idx,
+                                 row.console_target, row.title);
+    } else if (del_idx >= 0 && r == del_idx) {
+        char body[300];
+        snprintf(body, sizeof(body), tr(S_BOXART_DELETE_BODY), row.title.c_str());
+        if (this->ConfirmDanger(tr(S_DELETE), body, true)) {
+            if (boxart_forget(key.c_str())) {
+                boxart_cache_forget(key);
+                row.found = false;
+                // A console row with nothing left cached has nothing to
+                // show -- fall back to its built-in icon, same invariant
+                // BoxArtPickConsoleCommit maintains for an interactive pick.
+                if (!row.console_target.empty()) {
+                    ConsoleGroup *g =
+                        config_find_console(&g_cfg, row.console_target.c_str());
+                    if (g && g->use_boxart) {
+                        g->use_boxart = false;
+                        config_save(&g_cfg);
+                    }
+                }
+                this->Toast(tr(S_DELETED));
+                this->GotoBoxArtResults();
+            }
+        }
+    }
+}
+
+// Called every frame from HandleInput. Decodes a small, bounded number of
+// still-pending row/card icons per frame -- only the ones currently scrolled
+// into view -- so a big scroll jump (or the initial list build) never spends
+// more than a couple of PNG decodes in one frame. Entries outside the
+// visible window stay pending; they get resolved once scrolling brings them
+// on screen, or dropped for good on the next GotoInstalled/GotoBoxArtManageList
+// rebuild (see there).
+// `this->boxart_pending`'s indices are row indices in list view, card
+// indices in poster view -- either way it's whatever RowCount() returned
+// when the entry was queued, which already tracks the active one (see
+// MainLayout::RowCount).
+void MainApplication::BoxArtIconsPoll() {
+    // Installed (list/card library view), BoxArtManageList, and InstSearch
+    // (row-only, "cards" is always false on either of the latter two — see
+    // GotoBoxArtManageList) plus BoxArtResults (also row-only) are the
+    // screens that queue into boxart_pending.
+    if (this->boxart_pending.empty() ||
+        (this->screen != Screen::Installed &&
+         this->screen != Screen::BoxArtManageList &&
+         this->screen != Screen::InstSearch &&
+         this->screen != Screen::BoxArtResults)) {
+        return;
+    }
+    static const int kMaxPerFrame = 2; // ~1 decode every other frame at worst
+    const bool cards = this->layout->InCards();
+    s32 top = cards ? this->layout->CardFirstVisible() : this->layout->ScrollTop();
+    s32 bottom = top + (cards ? this->layout->CardVisibleCount()
+                              : this->layout->RowsVisible());
+    int resolved = 0;
+    for (size_t i = 0; i < this->boxart_pending.size() && resolved < kMaxPerFrame;) {
+        s32 idx = this->boxart_pending[i].first;
+        if (idx < top || idx >= bottom) {
+            i++; // not on screen yet -- leave queued, check the next one
+            continue;
+        }
+        pu::sdl2::Texture tex = boxart_icon_for(this->boxart_pending[i].second);
+        if (tex) {
+            if (cards) {
+                this->layout->SetCardIcon(idx, tex);
+            } else {
+                this->layout->SetRowIcon(idx, tex);
+            }
+        }
+        this->boxart_pending.erase(this->boxart_pending.begin() + i);
+        resolved++;
+        // don't advance i -- the erase shifted the next element into place
+    }
+}
+
+// ---- auto-fetch box art for newly landed games -----------------------------
+// Appearance -> "Auto-Fetch New Art" (g_prefs.box_art_auto_fetch, default on).
+// Drains g_boxart_auto_pending (fed by boxart_auto_on_landed, a worker-thread
+// callback registered on queue_on_landed at OnLoad) one title at a time,
+// entirely off-thread and off-screen: nothing here ever touches this->screen
+// or shows progress, unlike a manual Scan. Reads g_creds.steamgriddb_key on
+// its own thread the same way BoxArtScanThread already does -- an existing,
+// accepted cross-thread read in this file, not a new one.
+void MainApplication::BoxArtAutoThread(void *arg) {
+    auto self = static_cast<MainApplication *>(arg);
+    for (;;) {
+        if (self->boxart_auto_cancel) {
+            break;
+        }
+        mutexLock(&g_boxart_auto_mtx);
+        if (g_boxart_auto_pending.empty()) {
+            mutexUnlock(&g_boxart_auto_mtx);
+            break;
+        }
+        std::string title = g_boxart_auto_pending.front();
+        g_boxart_auto_pending.erase(g_boxart_auto_pending.begin());
+        mutexUnlock(&g_boxart_auto_mtx);
+        boxart_fetch(g_creds.steamgriddb_key, title.c_str(), NULL, 0, NULL); // cache
+                                                                       // hit/miss is
+                                                                       // enough; no
+                                                                       // screen needs
+                                                                       // the path
+    }
+    // One save at the end of the drain rather than one per title -- same
+    // "batch, don't hammer the SD card" rule boxart_index_save documents for
+    // BoxArtScanThread's full scans, just for a much smaller batch.
+    boxart_index_save();
+    self->boxart_auto.done = true;
+}
+
+// Called every frame from HandleInput (see BoxArtIconsPoll just above for the
+// sibling "decode what's already found" half of this feature). Starting a
+// BgTask always happens here, on the UI thread, never from the worker thread
+// that queued the title -- queue_on_landed can fire concurrently from more
+// than one download slot (max_downloads > 1), and two threads racing to
+// start the same BgTask would be a real bug, not just a style choice.
+void MainApplication::BoxArtAutoPoll() {
+    if (this->boxart_auto.running) {
+        if (!this->boxart_auto.done) {
+            return; // still draining -- nothing to do this frame
+        }
+        this->boxart_auto.Join();
+        // Fall through: more titles may have queued while that pass ran: a
+        // manual scan below.
+    }
+    if (this->boxart.running) {
+        // A manual "Scan for Box Art" owns boxart.c's index right now (see
+        // BoxArtScanStart's own boxart_auto.Join() for the reverse order).
+        // Leave everything queued and try again once it's done -- no data
+        // loss, just deferred.
+        return;
+    }
+    if (!g_prefs.box_art_auto_fetch || !g_creds.steamgriddb_key[0]) {
+        // Feature off, or no key configured to fetch with: drop whatever
+        // queued rather than let it grow for an entire play session. Any
+        // title that lands while this is true just re-queues itself the next
+        // time it's imported, and a future manual scan covers it regardless.
+        mutexLock(&g_boxart_auto_mtx);
+        g_boxart_auto_pending.clear();
+        mutexUnlock(&g_boxart_auto_mtx);
+        return;
+    }
+    mutexLock(&g_boxart_auto_mtx);
+    bool has_work = !g_boxart_auto_pending.empty();
+    mutexUnlock(&g_boxart_auto_mtx);
+    if (!has_work) {
+        return;
+    }
+    this->boxart_auto_cancel = false;
+    this->boxart_auto.Start(&MainApplication::BoxArtAutoThread, this);
+    // If Start() failed (thread creation), the pending titles simply stay
+    // queued and this is retried next frame -- no inline fallback here,
+    // unlike BoxArtScanStart's, since there is no screen to fall back onto.
+}
+
+// ---- manage box art: browse/delete what's actually cached on disk ---------
+// Storage sub-screen. Distinct from the scan results above (a one-off report
+// of a single run): this reflects boxart.c's persistent index at any time,
+// whether or not a scan has run this session, grouped by console since that's
+// how a user thinks about their library even though the index itself is
+// title-only (see boxart.c's header comment). A console-list screen (counts),
+// A drills into that console's titles, X deletes a cover.
+
+void MainApplication::BoxArtManageThread(void *arg) {
+    auto self = static_cast<MainApplication *>(arg);
+    std::vector<TidyFile> files;
+    tidy_gather(files, &self->boxman_cancel); // always whole-library: this is a browser, not a scan
+
+    // Same console+title dedupe key as the scan, so one row per game — then
+    // keep only the ones that actually have a cached cover; nothing to manage
+    // for a miss or an unresolved title.
+    std::map<std::string, BoxArtManageRow> uniq;
+    char path[768];
+    for (const TidyFile &f : files) {
+        if (self->boxman_cancel) break;
+        if (onegr_is_multipart(f.name)) continue;
+        std::string title = boxart_query_title(f.name);
+        if (title.empty()) continue;
+        std::string key = f.console + "\x1f" + title;
+        if (uniq.count(key)) continue;
+        if (!boxart_lookup(title.c_str(), path, sizeof(path))) continue;
+        uniq.emplace(key, BoxArtManageRow{f.console, title});
+    }
+    self->boxart_manage_rows.clear();
+    self->boxart_manage_rows.reserve(uniq.size());
+    for (auto &kv : uniq) self->boxart_manage_rows.push_back(kv.second);
+    std::sort(self->boxart_manage_rows.begin(), self->boxart_manage_rows.end(),
+              [](const BoxArtManageRow &a, const BoxArtManageRow &b) {
+                  return a.console != b.console ? a.console < b.console
+                                                : a.title < b.title;
+              });
+    self->boxman.done = true;
+}
+
+void MainApplication::BoxArtManageStart() {
+    this->boxman_cancel = false;
+    this->boxart_manage_rows.clear();
+    this->boxart_manage_console.clear();
+    this->screen = Screen::BoxArtManageConsoles;
+    this->layout->SetTitle(tr(S_MANAGE_BOX_ART));
+    this->layout->ClearMenu();
+    this->layout->ShowSpinner(tr(S_BOXART_MANAGE_SCANNING));
+    if (this->boxman.Start(&MainApplication::BoxArtManageThread, this)) return;
+    this->layout->HideSpinner();
+    BoxArtManageThread(this);
+    this->GotoBoxArtManageConsoles();
+}
+
+void MainApplication::BoxArtManageTick() {
+    if (!this->boxman.done) return; // no meaningful per-file progress to show
+    this->layout->HideSpinner();
+    this->boxman.Join();
+    this->GotoBoxArtManageConsoles();
+}
+
+// Console list: one row per console that has at least one cached cover, with
+// a count. Built fresh from boxart_manage_rows every time so a delete on the
+// per-console screen is reflected the moment you back out.
+void MainApplication::GotoBoxArtManageConsoles() {
+    this->layout->SetTitle(tr(S_MANAGE_BOX_ART));
+    this->layout->ClearMenu();
+    const pu::ui::Color lbl = g_theme->row_text;
+    std::string cur;
+    int count = 0;
+    auto flush = [&]() {
+        if (!cur.empty()) {
+            char v[32];
+            snprintf(v, sizeof(v), "%d", count);
+            this->layout->AddRow2(console_full_name(cur.c_str()) ? console_full_name(cur.c_str())
+                                                                  : cur,
+                                  v, lbl, value_color(), -1.0f,
+                                  console_icon(cur.c_str()));
+        }
+    };
+    for (const BoxArtManageRow &r : this->boxart_manage_rows) {
+        if (r.console != cur) {
+            flush();
+            cur = r.console;
+            count = 0;
+        }
+        count++;
+    }
+    flush();
+    if (this->boxart_manage_rows.empty())
+        this->layout->SetEmptyState(console_icon("default"), tr(S_BOXART_MANAGE_EMPTY));
+    this->screen = Screen::BoxArtManageConsoles;
+}
+
+// One console's cached covers. X deletes the highlighted one (disk + index +
+// the runtime texture cache, so the Library list stops showing it too) and
+// drops the row in place, same immediate-feedback pattern as LargeFileDeleteSel.
+void MainApplication::GotoBoxArtManageList(const std::string &console) {
+    this->boxart_manage_console = console;
+    const char *full = console_full_name(console.c_str());
+    this->layout->SetTitle(full ? full : console);
+    this->layout->SetSubtitle(tr(S_BOXART_MANAGE_LIST_SUB));
+    this->layout->ClearMenu();
+    // Stale row indices from whatever console's list was open before --
+    // BoxArtIconsPoll must not resolve against the list being rebuilt below.
+    // Every row here is a confirmed hit (BoxArtManageThread only includes
+    // titles boxart_lookup already found), but the texture itself may not be
+    // decoded yet -- same "cache hit is free, miss is deferred" split as
+    // GotoInstalled's boxart_row_icon/boxart_pending, so opening a console
+    // with a few hundred cached covers doesn't decode all of them in one
+    // frame.
+    this->boxart_pending.clear();
+    const pu::ui::Color lbl = g_theme->row_text;
+    for (const BoxArtManageRow &r : this->boxart_manage_rows) {
+        if (r.console != console) continue;
+        pu::sdl2::Texture ic = nullptr;
+        bool has_cover = boxart_row_icon(r.title, &ic);
+        s32 row_idx = this->layout->RowCount();
+        this->layout->AddRow2(r.title, tr(S_BOXART_FOUND), lbl, accent_green(),
+                              -1.0f, ic);
+        if (has_cover && !ic) this->boxart_pending.push_back({row_idx, r.title});
+    }
+    this->screen = Screen::BoxArtManageList;
+}
+
+void MainApplication::BoxArtManageDeleteSel() {
+    // Row index -> title by walking the same console-filtered order the list
+    // was built in (indices into boxart_manage_rows aren't the same as the
+    // filtered rows shown on screen).
+    auto title_at = [&](s32 row) -> std::string {
+        int i = -1;
+        for (const BoxArtManageRow &r : this->boxart_manage_rows) {
+            if (r.console != this->boxart_manage_console) continue;
+            i++;
+            if (i == row) return r.title;
+        }
+        return std::string();
+    };
+
+    // Marked set (Y), or just the row under the cursor when nothing is
+    // marked — same split as InstDeleteSel.
+    std::vector<std::string> titles;
+    auto marks = this->layout->Marked();
+    if (!marks.empty()) {
+        for (s32 idx : marks) {
+            std::string t = title_at(idx);
+            if (!t.empty()) titles.push_back(t);
+        }
+    } else {
+        std::string t = title_at(this->layout->Sel());
+        if (!t.empty()) titles.push_back(t);
+    }
+    if (titles.empty()) return;
+
+    if (titles.size() == 1) {
+        char body[300];
+        snprintf(body, sizeof(body), tr(S_BOXART_DELETE_BODY), titles[0].c_str());
+        if (!this->Confirm(tr(S_DELETE), body, true)) return;
+    } else {
+        char body[64];
+        snprintf(body, sizeof(body), tr(S_DELETE_SELECTED), (int)titles.size());
+        if (!this->Confirm(tr(S_DELETE), body, true)) return;
+    }
+
+    s32 row = this->layout->Sel();
+    int removed = 0;
+    for (const std::string &title : titles) {
+        if (!boxart_forget(title.c_str())) continue;
+        boxart_cache_forget(title); // drop the runtime texture too, or the
+                                    // Library list keeps showing it
+        for (size_t k = 0; k < this->boxart_manage_rows.size(); k++) {
+            if (this->boxart_manage_rows[k].console == this->boxart_manage_console &&
+                this->boxart_manage_rows[k].title == title) {
+                this->boxart_manage_rows.erase(this->boxart_manage_rows.begin() + k);
+                break;
+            }
+        }
+        removed++;
+    }
+    if (removed == 0) return;
+    char t[32];
+    snprintf(t, sizeof(t), tr(S_DELETED_N), removed);
+    this->Toast(t);
+    // Still any covers left for this console? Stay here (marks cleared by the
+    // rebuild below); otherwise the console itself just dropped out of the
+    // list, so back out to it.
+    bool any = false;
+    for (const BoxArtManageRow &r : this->boxart_manage_rows)
+        if (r.console == this->boxart_manage_console) { any = true; break; }
+    if (any) {
+        this->GotoBoxArtManageList(this->boxart_manage_console);
+        this->layout->SetSel(row < (s32)this->layout->RowCount() ? row : row - 1);
+    } else {
+        this->GotoBoxArtManageConsoles();
+    }
+}
+
+// Data Files > Art Cache: report the on-disk cache's size, then either drill
+// into the per-title browser above (same screen Storage's Manage Box Art
+// uses) or wipe everything in one confirmed pass via boxart_clear_all.
+void MainApplication::ArtCacheMenu() {
+    auto art_files = list_dir(BOXART_DIR);
+    uint64_t total = 0;
+    int n = 0;
+    for (auto &e : art_files) {
+        if (e.is_dir) continue;
+        n++;
+        total += e.size;
+    }
+    std::vector<std::string> opts = {tr(S_ART_CACHE_BROWSE)};
+    int clear_idx = -1;
+    if (n > 0) {
+        clear_idx = (int)opts.size();
+        opts.push_back(tr(S_ART_CACHE_CLEAR));
+    }
+    opts.push_back(tr(S_CANCEL));
+    char body[96];
+    if (n > 0) {
+        snprintf(body, sizeof(body), tr(S_ART_CACHE_N), n,
+                 human_size(total).c_str());
+    } else {
+        snprintf(body, sizeof(body), "%s", tr(S_ART_CACHE_NONE));
+    }
+    int r = this->SideMenu(tr(S_ART_CACHE), opts, 0, body);
+    if (r == 0) {
+        this->BoxArtManageStart();
+    } else if (clear_idx >= 0 && r == clear_idx) {
+        char msg[128];
+        snprintf(msg, sizeof(msg), tr(S_ART_CACHE_CLEAR_CONFIRM), n);
+        if (this->ConfirmDanger(tr(S_ART_CACHE_CLEAR), msg, true)) {
+            boxart_clear_all();
+            boxart_cache_forget_all();
+            this->Toast(tr(S_ART_CACHE_CLEARED));
+        }
     }
 }
 
@@ -11864,6 +14044,12 @@ void MainApplication::HandleInput(u64 down, u64 held,
     // Drive the app-initiated transfers (self-update, DAT sync) that now live as
     // Queue-tab items instead of owning their own screen.
     this->PollXfers();
+    // Lazily decode box art for rows that just scrolled into view — see
+    // BoxArtIconsPoll for why this isn't done at list-build time.
+    this->BoxArtIconsPoll();
+    // Silently fetch art for anything that landed since the last frame — see
+    // BoxArtAutoPoll.
+    this->BoxArtAutoPoll();
 
     // One-shot startup dialogs, deferred from OnLoad so they render over a
     // live frame instead of a black screen.
@@ -11992,6 +14178,33 @@ void MainApplication::HandleInput(u64 down, u64 held,
         return;
     }
 
+    // A box art scan is running: same spinner+cancel model as tidy/verify (one
+    // SteamGridDB round trip per distinct title, so per-item progress is worth
+    // showing). B stops the scan; BoxArtScanTick then shows whatever was
+    // resolved so far.
+    if (this->boxart.running) {
+        if (down & HidNpadButton_B) this->boxart_cancel = true;
+        this->BoxArtScanTick();
+        return;
+    }
+
+    // "Manage Box Art" is walking the library to find what's actually cached
+    // on disk: a stat walk + index lookups, same no-per-item-progress model as
+    // the largest-files scan above. B stops the walk.
+    if (this->boxman.running) {
+        if (down & HidNpadButton_B) this->boxman_cancel = true;
+        this->BoxArtManageTick();
+        return;
+    }
+
+    // The art picker is listing candidates + thumbs, or downloading a picked
+    // cover for real: both are one search plus a handful of small transfers,
+    // over well before a cancel would be worth offering.
+    if (this->boxpick.running) {
+        this->BoxArtPickTick();
+        return;
+    }
+
     // The emulator/app update list is checking each installed entry against its
     // GitHub release: hold the spinner with (n/total) progress; B stops the
     // remaining checks (rows checked so far still show). AppChkTick builds the
@@ -12002,12 +14215,17 @@ void MainApplication::HandleInput(u64 down, u64 held,
         return;
     }
 
-    // A background diagnostic is running: the network self-test holds a spinner
-    // (quick, single request), while the speed test shows live meters and lets
-    // B cancel the transfer mid-flight.
+    // A background diagnostic is running: the speed test shows live meters,
+    // the self-test just holds a spinner, but both let B cancel mid-flight —
+    // B sets the relevant curl handle's cancel flag and DiagTick reaps the
+    // (cancelled) result once the worker lands.
     if (this->diag.running) {
-        if (this->diag_speed && (down & HidNpadButton_B)) {
-            this->sp_prog.cancel = 1; // curl aborts; DiagTick reaps when it lands
+        if (down & HidNpadButton_B) {
+            if (this->diag_speed) {
+                this->sp_prog.cancel = 1;
+            } else {
+                this->diag_cancel = 1;
+            }
         }
         this->DiagTick();
         return;
@@ -12273,6 +14491,21 @@ void MainApplication::HandleInput(u64 down, u64 held,
     // Pulse the Queue tab when downloads are active and you're looking elsewhere.
     this->layout->SetQueueActivity(qac > 0 &&
                                    this->CurrentTab() != Tab::Queue);
+    // Ambient sliver under the tab bar: the active item's byte progress,
+    // visible from any tab so a running transfer never needs a Queue check
+    // just to see it's alive. Hidden when nothing's actually moving bytes
+    // (queued/paused-only doesn't count) or total is unknown yet.
+    if (qac > 0) {
+        uint64_t now = 0, total = 0;
+        if (queue_active_info(NULL, 0, NULL, &now, &total, NULL, NULL, NULL) &&
+            total > 0) {
+            this->layout->SetQueueProgress((float)((double)now / (double)total));
+        } else {
+            this->layout->SetQueueProgress(-1.0f);
+        }
+    } else {
+        this->layout->SetQueueProgress(-1.0f);
+    }
 
     // Remember the current selection per browseable list so backing out and
     // returning keeps your place.
@@ -12447,7 +14680,13 @@ void MainApplication::HandleInput(u64 down, u64 held,
             } else if (it->status == Q_DOWNLOADING && it->total) {
                 prog = (float)it->now / (float)it->total;
                 snprintf(c0, sizeof(c0), "%s", human_size(it->total).c_str());
-                if (it->speed) {
+                if (it->stalled) {
+                    // A failed attempt is being retried (backoff or an
+                    // immediate credentialed re-attempt) -- no bytes are
+                    // moving yet, but this isn't dead either, so say so
+                    // instead of leaving the field blank like a hung download.
+                    snprintf(c1, sizeof(c1), "%s", tr(S_RECONNECTING));
+                } else if (it->speed) {
                     uint64_t eta = (it->total > it->now)
                                        ? (it->total - it->now) / it->speed
                                        : 0;
@@ -12517,14 +14756,27 @@ void MainApplication::HandleInput(u64 down, u64 held,
             snprintf(st, sizeof(st), "%s", xfer_verb(it));
             // Hero (tint + ring shimmer) covers the actively-worked item:
             // downloading or unzipping.
-            this->layout->SetQueueCard(i, it->target,
-                                       console_icon(it->target),
-                                       st, sc, c0, c1, c2,
-                                       it->name, prog,
+            // Stock icons only on queue cards -- a queue card is a small,
+            // uniform-grid status tile, not a library browse card, so custom
+            // box art (portrait covers, inconsistent shapes/crops) is left
+            // out here even for a console that opted into it elsewhere;
+            // allow_boxart=false forces the built-in square badge every time
+            // except the one non-console entry, HaulNX self-update, which
+            // console_display_icon already special-cases regardless of this
+            // flag. is_art comes back false unconditionally as a result, so
+            // the queue card grid's aspect-fit path (Card::art) simply never
+            // triggers here -- kept rather than removed since a future case
+            // may still want it.
+            bool is_art = false;
+            pu::sdl2::Texture qicon =
+                console_display_icon(it->target, &is_art, false);
+            this->layout->SetQueueCard(i, it->target, qicon, st, sc, c0, c1,
+                                       c2, it->name, prog,
                                        it->status == Q_DOWNLOADING ||
                                            it->status == Q_VERIFYING ||
                                            it->status == Q_EXTRACTING,
-                                       ring, qpos, qrefresh);
+                                       ring, qpos, qrefresh,
+                                       !strcmp(it->target, "HaulNX"), is_art);
         }
         // Offline with work pending: cards persist between frames, so also
         // clear the note once the network is back. Online, the slot shows
@@ -12572,7 +14824,12 @@ void MainApplication::HandleInput(u64 down, u64 held,
                 prog = (float)it->now / (float)it->total;
                 // The bottom bar shows progress; the text shows size (+ speed
                 // and ETA), no percent — matching the card view.
-                if (it->speed) {
+                if (it->stalled) {
+                    // See the card view's identical check: a failed attempt
+                    // is being retried, not a dead download.
+                    snprintf(info, sizeof(info), "%s  ·  %s",
+                             human_size(it->total).c_str(), tr(S_RECONNECTING));
+                } else if (it->speed) {
                     uint64_t eta = (it->total > it->now)
                                        ? (it->total - it->now) / it->speed
                                        : 0;
@@ -12661,8 +14918,20 @@ void MainApplication::HandleInput(u64 down, u64 held,
             bool accent = (it->status == Q_DOWNLOADING ||
                            it->status == Q_VERIFYING ||
                            it->status == Q_EXTRACTING);
+            // The hero row shows that game's box art instead of the console
+            // icon when one's already warm in the cache (never decodes on
+            // demand here -- see boxart_row_icon -- so a cold cache just
+            // falls back to the console icon rather than stalling this
+            // every-frame rebuild on a PNG decode).
+            pu::sdl2::Texture row_icon = console_display_icon(it->target);
+            if (accent) {
+                pu::sdl2::Texture art = nullptr;
+                if (boxart_row_icon(it->name, &art) && art) {
+                    row_icon = art;
+                }
+            }
             this->layout->AddRow2(left, info, c, rc, prog,
-                                  console_icon(it->target), pfx, accent,
+                                  row_icon, pfx, accent,
                                   true, false, bar);
         }
         if (n == 0) {
@@ -12703,9 +14972,11 @@ void MainApplication::HandleInput(u64 down, u64 held,
     }
 
     // Keep the console awake while downloads are active (main-thread only).
+    // Reuses qac (one active-count scan per frame, computed above) instead of
+    // taking the queue mutex and rescanning QUEUE_MAX a second time.
     {
         static bool cur = false;
-        bool want = g_prefs.prevent_sleep && (queue_active_count() > 0);
+        bool want = g_prefs.prevent_sleep && (qac > 0);
         if (want != cur) {
             appletSetMediaPlaybackState(want);
             cur = want;
@@ -13432,18 +15703,35 @@ void MainApplication::HandleInput(u64 down, u64 held,
                 this->SyncTab();
                 break;
             case 2:
-                this->GotoLanguage();
+                this->GotoAccent();
                 return;
             case 3:
+                this->GotoLanguage();
+                return;
+            case 4:
                 g_prefs.group_consoles = !g_prefs.group_consoles;
                 prefs_save(&g_prefs);
                 break;
-            case 4: this->GotoExtFilter(); return; // file-type filter editor
-            case 5: // collapse a disc set into one Library row
+            case 5: this->GotoExtFilter(); return; // file-type filter editor
+            case 6: // collapse a disc set into one Library row
                 g_prefs.group_sets = !g_prefs.group_sets;
                 prefs_save(&g_prefs);
                 break;
-            case 6: this->GotoManage();    return; // consoles: show/hide
+            case 7: // show/fetch box art in the list
+                g_prefs.box_art_enabled = !g_prefs.box_art_enabled;
+                prefs_save(&g_prefs);
+                if (g_prefs.box_art_enabled && !g_creds.steamgriddb_key[0]) {
+                    this->ToastErr(tr(S_SCAN_BOX_ART_NEED_KEY));
+                }
+                break;
+            case 8: // auto-fetch art for newly landed games
+                g_prefs.box_art_auto_fetch = !g_prefs.box_art_auto_fetch;
+                prefs_save(&g_prefs);
+                if (g_prefs.box_art_auto_fetch && !g_creds.steamgriddb_key[0]) {
+                    this->ToastErr(tr(S_SCAN_BOX_ART_NEED_KEY));
+                }
+                break;
+            case 9: this->GotoManage();    return; // consoles: show/hide
             default:
                 break;
             }
@@ -13532,6 +15820,26 @@ void MainApplication::HandleInput(u64 down, u64 held,
                 this->layout->RefreshTabs();
                 this->SyncTab();
                 this->GotoLanguage();
+                this->layout->SetSel(i);
+            }
+        }
+        break;
+    }
+
+    case Screen::Accent: {
+        if (down & HidNpadButton_B) {
+            this->GotoAppearance();
+        } else if (down & HidNpadButton_A) {
+            s32 i = this->layout->Sel();
+            if (i >= 0 && i < g_accent_count) {
+                snprintf(g_prefs.accent, sizeof(g_prefs.accent), "%s",
+                         g_accents[i].key);
+                prefs_save(&g_prefs);
+                // Same refresh path as the Theme toggle: recolors every
+                // ring/glow/progress bar/pulse dot already on screen.
+                this->layout->ApplyTheme();
+                this->SyncTab();
+                this->GotoAccent();
                 this->layout->SetSel(i);
             }
         }
@@ -13629,6 +15937,7 @@ void MainApplication::HandleInput(u64 down, u64 held,
             case 5: this->GotoInboxFiles(); return; // view/select/delete Inbox files
             case 6: this->GotoBackups(); return;   // emulator/app rollback backups
             case 7: this->LargeFilesStart(); return; // whole-library biggest files
+            case 8: this->BoxArtManageStart(); return; // view/delete cached covers
             default: break;
             }
             if (this->screen == Screen::Storage) {
@@ -13682,6 +15991,17 @@ void MainApplication::HandleInput(u64 down, u64 held,
             case 0: this->GotoDats();      return; // DAT files manager
             case 1: this->GotoMetaCache(); return; // metadata cache manager
             case 2: this->PushListToPc();  return; // push emulator/app list to PC
+            case 3: // box-art cache: browse or clear
+                this->ArtCacheMenu();
+                // "Browse" navigates to Manage Box Art itself (screen already
+                // changed, leave it be); "Clear"/cancel stay right here, so
+                // refresh in place — otherwise the row's count/size goes
+                // stale until the screen is re-entered.
+                if (this->screen == Screen::DataFiles) {
+                    this->GotoDataFiles();
+                    this->layout->SetSel(3);
+                }
+                return;
             default: break;
             }
         }
@@ -13837,6 +16157,21 @@ void MainApplication::HandleInput(u64 down, u64 held,
                     snprintf(g_creds.github_token, sizeof(g_creds.github_token),
                              "%s", v);
                     net_set_github_token(g_creds.github_token);
+                    if (creds_save(&g_creds)) {
+                        this->Toast(tr(S_SAVED));
+                    } else {
+                        this->ToastErr(tr(S_SAVE_FAILED));
+                    }
+                }
+                break;
+            }
+            case 2: {                          // SteamGridDB API key (box art)
+                char v[1024] = {0};
+                if (prompt(tr(S_STEAMGRIDDB_KEY), g_creds.steamgriddb_key, v,
+                           sizeof(v))) {
+                    snprintf(g_creds.steamgriddb_key,
+                             sizeof(g_creds.steamgriddb_key), "%s", v);
+                    net_set_steamgriddb_key(g_creds.steamgriddb_key);
                     if (creds_save(&g_creds)) {
                         this->Toast(tr(S_SAVED));
                     } else {
@@ -14152,7 +16487,11 @@ void MainApplication::HandleInput(u64 down, u64 held,
                 this->Toast(tr(S_DL_CLEARED));
                 this->GotoDownloads();
             }
-        } else if (down & HidNpadButton_Minus) {
+        } else if (down & HidNpadButton_Right) {
+            // ▶ deletes -- same direct-button shortcut as the Library's file
+            // list (InstDeleteSel), so a marked set or the single row under
+            // the cursor deletes the same way in every "view/manage files"
+            // screen under Storage, not just Installed.
             int mc = this->layout->MarkedCount();
             if (mc > 0) {
                 // Multi-select delete
@@ -14243,7 +16582,8 @@ void MainApplication::HandleInput(u64 down, u64 held,
                 this->Toast(tr(S_INBOX_CLEARED));
                 this->GotoInboxFiles();
             }
-        } else if (down & HidNpadButton_Minus) {
+        } else if (down & HidNpadButton_Right) {
+            // ▶ deletes -- see the matching comment in Screen::Downloads.
             int mc = this->layout->MarkedCount();
             if (mc > 0) {
                 // Multi-select delete
@@ -14317,7 +16657,8 @@ void MainApplication::HandleInput(u64 down, u64 held,
                 this->Toast(tr(S_CACHE_CLEARED));
                 this->GotoCache();
             }
-        } else if (down & HidNpadButton_Minus) {
+        } else if (down & HidNpadButton_Right) {
+            // ▶ deletes -- see the matching comment in Screen::Downloads.
             s32 i = this->layout->Sel();
             if (i >= 0 && i < (s32)g_cache_files.size()) {
                 if (this->ConfirmDanger(tr(S_DELETE),
@@ -14376,6 +16717,13 @@ void MainApplication::HandleInput(u64 down, u64 held,
                 // the whole selection and moves it as a batch; otherwise it acts
                 // on the single file under the cursor.
                 bool multi = can_move && this->layout->MarkedCount() > 0;
+                // Box art is a per-title thing, so it only makes sense for
+                // the single game under the cursor — never the batch/marked
+                // selection above, which can span several different games.
+                std::string art_title =
+                    multi ? std::string() : boxart_query_title(g_inst[i].name);
+                bool has_art = !art_title.empty() &&
+                              boxart_lookup(art_title.c_str(), nullptr, 0);
 
                 std::string content;
                 std::vector<std::string> targets;
@@ -14450,12 +16798,36 @@ void MainApplication::HandleInput(u64 down, u64 held,
                     mv_idx = (int)opts.size();
                     opts.push_back(tr(S_MOVE_UP));
                 }
+                int art_idx = -1, del_art_idx = -1;
+                if (!art_title.empty()) {
+                    art_idx = (int)opts.size();
+                    opts.push_back(tr(S_BOXART_SEARCH_CUSTOM));
+                    if (has_art) {
+                        del_art_idx = (int)opts.size();
+                        opts.push_back(tr(S_BOXART_DELETE_COVER));
+                    }
+                }
                 int set_idx = (int)opts.size();
                 opts.push_back(tr(S_OPEN_SETTINGS));
                 int r = this->CreateShowDialog(tr(S_FILE), content, opts, false,
                                                {}, style_dialog);
                 if (mv_idx >= 0 && r == mv_idx && !targets.empty()) {
                     this->MvStart(targets);
+                } else if (art_idx >= 0 && r == art_idx) {
+                    // The picker (and the Installed refresh + reselect once
+                    // it's done) takes over from here — see BoxArtPickReturn.
+                    this->BoxArtCustomSearch(art_title, Screen::Installed, i);
+                } else if (del_art_idx >= 0 && r == del_art_idx) {
+                    char body[300];
+                    snprintf(body, sizeof(body), tr(S_BOXART_DELETE_BODY),
+                             art_title.c_str());
+                    if (this->ConfirmDanger(tr(S_DELETE), body, true) &&
+                        boxart_forget(art_title.c_str())) {
+                        boxart_cache_forget(art_title);
+                        this->Toast(tr(S_DELETED));
+                        this->GotoInstalled(this->inst_path);
+                        this->layout->SetSel(i);
+                    }
                 } else if (r == set_idx) {
                     this->GotoStorage(); // ROM folders live under Storage
                 }
@@ -14483,20 +16855,23 @@ void MainApplication::HandleInput(u64 down, u64 held,
                 if (!flip) break;
                 show_tools = !show_tools;
             }
-        } else if ((down & HidNpadButton_Y) && !in_cards &&
+        } else if ((down & HidNpadButton_Y) &&
                    this->inst_path != roms_root(&g_tico)) {
             // Y marks roms for deletion — only inside a console folder, never
             // on the console list where selecting/deleting makes no sense.
+            // Works the same in the poster card grid (blue border) as the
+            // list (green tag bar); the card grid can't be at the console
+            // root when this fires, so no in_cards gate is needed here.
             s32 i = this->layout->Sel();
             if (i >= 0 && i < (s32)g_inst.size()) {
                 this->layout->ToggleMark(i);
             }
-        } else if ((down & HidNpadButton_Right) &&
+        } else if (!in_cards && (down & HidNpadButton_Right) &&
                    this->inst_path != roms_root(&g_tico)) {
-            // Inside a console folder: ▶ deletes roms (kept as a direct button).
-            // With items marked (Y) it deletes the whole selection; with nothing
-            // marked it deletes the one under the cursor. A confirm guards it
-            // either way. Delete also lives in the X options menu.
+            // Inside a console folder: ▶ deletes roms (kept as a direct
+            // button) — list view only. The card grid needs D-pad Right for
+            // navigation (multiple columns per row), so there delete is
+            // reachable only through the X options menu.
             this->InstDeleteSel();
         } else if ((down & HidNpadButton_Left) && !in_cards &&
                    this->inst_path != roms_root(&g_tico)) {
@@ -14932,10 +17307,24 @@ void MainApplication::HandleInput(u64 down, u64 held,
 
     case Screen::Tidy: {
         if (down & HidNpadButton_B) {
-            this->tidy_issues.clear();
-            this->GotoInstalled(roms_root(&g_tico));
+            // First B clears an active filter and stays here -- matches how a
+            // filtered list elsewhere in the app (Box Art results, Verify's
+            // Missing Games) un-narrows before it backs out. Only a second B
+            // (nothing left to clear) actually leaves the screen.
+            if (this->tidy_kind_filter != -1) {
+                this->tidy_kind_filter = -1;
+                this->TidyResults();
+            } else {
+                this->tidy_issues.clear();
+                this->tidy_results_order.clear();
+                this->GotoInstalled(roms_root(&g_tico));
+            }
         } else if (down & HidNpadButton_A) {
             this->TidyActSel();
+        } else if (down & HidNpadButton_X) {
+            this->TidyFixAll();
+        } else if (down & HidNpadButton_Y) {
+            this->TidyFilterDialog();
         }
         break;
     }
@@ -14949,6 +17338,82 @@ void MainApplication::HandleInput(u64 down, u64 held,
             this->LargeFileOpenSel();
         } else if (down & HidNpadButton_X) {
             this->LargeFileDeleteSel();
+        }
+        break;
+    }
+
+    case Screen::BoxArtManageConsoles: {
+        if (down & HidNpadButton_B) {
+            this->boxart_manage_rows.clear();
+            this->GotoStorage();
+            this->layout->SetSel(8);
+        } else if (down & HidNpadButton_A) {
+            // Rebuild the same "one row per console, in appearance order"
+            // grouping GotoBoxArtManageConsoles used, so Sel() maps to the
+            // right console key.
+            s32 sel = this->layout->Sel();
+            std::string cur;
+            s32 idx = -1;
+            for (const BoxArtManageRow &r : this->boxart_manage_rows) {
+                if (r.console != cur) {
+                    cur = r.console;
+                    idx++;
+                    if (idx == sel) {
+                        this->GotoBoxArtManageList(cur);
+                        break;
+                    }
+                }
+            }
+        }
+        break;
+    }
+
+    case Screen::BoxArtManageList: {
+        if (down & HidNpadButton_B) {
+            this->GotoBoxArtManageConsoles();
+        } else if (down & HidNpadButton_Y) {
+            // Mark for a batch delete — same mechanism/blue-tag as everywhere
+            // else in the app that marks rows.
+            s32 i = this->layout->Sel();
+            if (i >= 0 && i < (s32)this->layout->RowCount()) {
+                this->layout->ToggleMark(i);
+            }
+        } else if (down & HidNpadButton_X) {
+            this->BoxArtManageDeleteSel();
+        }
+        break;
+    }
+
+    case Screen::BoxArtResults: {
+        if (down & HidNpadButton_B) {
+            // First B clears an active filter and stays here — matches how a
+            // filtered list elsewhere in the app (Verify's Missing Games)
+            // un-narrows before it backs out. Only a second B (nothing left
+            // to clear) actually leaves the screen.
+            if (this->boxart_result_filter != 0) {
+                this->boxart_result_filter = 0;
+                this->GotoBoxArtResults();
+            } else {
+                this->boxart_rows.clear();
+                this->boxart_results_order.clear();
+                this->GotoInstalled(roms_root(&g_tico));
+            }
+        } else if (down & HidNpadButton_A) {
+            s32 row = this->layout->Sel();
+            if (row >= 0 && row < (s32)this->boxart_results_order.size()) {
+                this->BoxArtResultsRowMenu(this->boxart_results_order[row]);
+            }
+        } else if (down & HidNpadButton_X) {
+            this->BoxArtResultsFilterDialog();
+        }
+        break;
+    }
+
+    case Screen::BoxArtPicker: {
+        if (down & HidNpadButton_B) {
+            this->BoxArtPickReturn();
+        } else if (down & HidNpadButton_A) {
+            this->BoxArtPickConfirm(this->layout->Sel());
         }
         break;
     }
@@ -15073,6 +17538,11 @@ void MainApplication::HandleInput(u64 down, u64 held,
 }
 
 void MainApplication::OnLoad() {
+    // Splash first: the renderer is already initialized at this point (see
+    // draw_splash), so this appears at once instead of after the several
+    // seconds of init below.
+    draw_splash(this->renderer);
+
     romfsInit();
     psmInitialize();
     nifmInitialize(NifmServiceType_User);
@@ -15082,6 +17552,7 @@ void MainApplication::OnLoad() {
     config_sort(&g_cfg);
     creds_load(&g_creds);
     net_set_github_token(g_creds.github_token); // authenticate update checks if set
+    net_set_steamgriddb_key(g_creds.steamgriddb_key); // box art scans, if set
     prefs_load(&g_prefs);
     /* A user-set ROM folder overrides the default ROM root. */
     tico_set_roms_override(&g_tico, g_prefs.roms_override);
@@ -15102,6 +17573,8 @@ void MainApplication::OnLoad() {
     apply_extract_tunables(); /* seed the extraction knobs from saved prefs */
     queue_set_keep_archives(g_prefs.keep_archives); /* keep archives compressed */
     queue_set_post_import_enabled(g_prefs.convert_import); /* post-import converter */
+    mutexInit(&g_boxart_auto_mtx);
+    queue_on_landed = boxart_auto_on_landed; /* box art auto-fetch, gated at drain time on box_art_auto_fetch */
     cleanup_stale_parts(); // drop unresumable old-format .part leftovers
     load_console_icons();  // romfs:/icons/<key>.png, shared into list rows
 
@@ -15149,12 +17622,15 @@ void MainApplication::Shutdown() {
     this->vfy_job.cancel = true;
     this->vfy_all_cancel = true;
     this->upd_cancel = true;
-    this->umi_cancel = true;
+    for (auto &job : this->umi_jobs) job.cancel = true;
     this->appchk_cancel = true;
     this->dat_cancel = true;
     this->sp_prog.cancel = true;
     this->tidy_cancel = true;
     this->lgf_cancel = true;
+    this->boxart_cancel = true;
+    this->boxart_auto_cancel = true;
+    this->boxman_cancel = true;
     this->meta_discard = true;
     this->search_discard = true;
     this->isearch_discard = true;
@@ -15166,13 +17642,15 @@ void MainApplication::Shutdown() {
     // update screens leave `appchk`/`umi`/`dat` fetching in the background). This
     // is the full BgTask set from the header; Join() is a no-op on one that never
     // ran, so listing them all is safe and keeps this honest as tasks are added.
-    for (BgTask *t : {&this->upd, &this->umi, &this->chk, &this->bgchk,
+    for (BgTask *t : {&this->upd, &this->chk, &this->bgchk,
                       &this->appchk, &this->diag, &this->ra, &this->dat,
                       &this->meta, &this->search, &this->isearch, &this->arch,
                       &this->mv, &this->notes, &this->vfy, &this->tidy,
-                      &this->lgf, &this->pxt}) {
+                      &this->lgf, &this->pxt, &this->boxart, &this->boxart_auto,
+                      &this->boxman}) {
         t->Join();
     }
+    for (auto &job : this->umi_jobs) job.task.Join();
     verify_free(&this->vfy_job);
     dat_free(&this->vfy_dat);
     queue_exit();
@@ -15548,7 +18026,7 @@ void MainApplication::UpdThread(void *arg) {
     long code = 0;
     bool ok = http_download(self->upd_url.c_str(), self->upd_dl.c_str(), NULL,
                             &MainApplication::UpdProgress, self, NULL, NULL, 0,
-                            &code);
+                            &code, NULL);
     self->upd_ok = ok;
     self->upd.done = true;
 }
