@@ -97,9 +97,11 @@ acquire, organize, verify, and maintain.
   **[Custom Folders](https://github.com/digdat0/HaulNX/wiki/Reference-Custom-Folders)**
   wiki page.
 
-**Also** — an optional card view, full touch control, 25 languages, light and dark
-themes, and a live network/space/battery header. **Settings → Manage data** refreshes
-or clears cached metadata and cleans up the temporary downloads folder.
+**Also** — an optional card view with fetched **box art** (SteamGridDB, optional API
+key), full touch control, 25 languages, light and dark themes with a **customizable
+accent color** (Settings → Appearance), and a live network/space/battery header.
+**Settings → Manage data** refreshes or clears cached metadata and cleans up the
+temporary downloads folder.
 
 ---
 

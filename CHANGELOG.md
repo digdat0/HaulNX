@@ -7,6 +7,36 @@ Notes for each release. `release.sh` pulls the section matching the version in
 `VERSION` and attaches it to the GitHub release. Add a `## <version>` section
 here before running a release.
 
+## 2.1.0
+
+**Box art, a customizable accent color, and a lot more solid downloads.**
+
+**Box art**
+- Card view can now show real cover art instead of a plain tile — fetched and
+  cached automatically, with an optional SteamGridDB API key (Settings) for
+  better hit rates.
+
+**Accent color**
+- Settings → Appearance → Accent Color: pick from 6 presets and the whole app
+  follows — tabs, dialogs, the side menu, progress bars, and every other fill
+  and outline that used to be a fixed blue.
+
+**Downloads — reliability**
+- Fixed a real bug where two queued items with the same name could corrupt
+  each other's download by writing to the same temporary file; the queue also
+  no longer lets you double-enqueue the same item.
+- A stalled connection (weak signal, an archive.org node hiccup) is now
+  correctly retried with backoff and resume instead of sometimes failing
+  outright with a confusing error.
+- The Queue tab shows **"Reconnecting…"** during that kind of retry instead of
+  a blank speed field that looked like a dead download.
+- Failed downloads now log the server's actual error response, so a repeated
+  failure is diagnosable instead of just "http=500".
+
+**Library maintenance**
+- The DAT/hash/verify caches now clean out entries for files you've since
+  deleted, moved, or renamed, instead of holding onto them indefinitely.
+
 ## 1.1.2
 
 **Install a game straight from your PC, plus a live verify progress bar.**
