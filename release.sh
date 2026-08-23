@@ -22,23 +22,17 @@ cd "$(dirname "$0")"
 nro="HaulNX.nro"
 [ -f "$nro" ] || { echo "No $nro found - run 'make' first."; exit 1; }
 
-# The app utility ships with every release: a single self-contained HTML file
-# users open in a browser to build/edit dl_sources.json and push files to the
-# console. Newest version wins if several are lying around.
-editor="$(ls -1 tools/app-utility/appUtility-*.html 2>/dev/null | sort -V | tail -n 1)"
-[ -n "$editor" ] || { echo "No tools/app-utility/appUtility-*.html found."; exit 1; }
-
 # The desktop companion exe ships alongside the NRO whenever a build-public.ps1
 # build is on disk. desktop/ is untracked (git has no way to know if it's
 # stale), so this is a soft check: include it if present, just warn if not -
 # don't block an NRO-only release over a desktop exe nobody rebuilt.
 exe="desktop/HaulNX-AppUtility.exe"
 if [ -f "$exe" ]; then
-  assets="$nro $editor $exe"
+  assets="$nro $exe"
 else
   echo "WARN: $exe not found - releasing without the desktop companion exe."
   echo "      (build it with desktop/build-public.ps1 first if this release should include it)"
-  assets="$nro $editor"
+  assets="$nro"
 fi
 
 v="$(cat VERSION)"

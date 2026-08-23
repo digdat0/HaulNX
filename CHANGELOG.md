@@ -7,6 +7,21 @@ Notes for each release. `release.sh` pulls the section matching the version in
 `VERSION` and attaches it to the GitHub release. Add a `## <version>` section
 here before running a release.
 
+## 2.1.10
+
+**Desktop companion hardening + standalone App Utility HTML retired.**
+
+- Desktop: `open_url` and the self-update installer launch now use `explorer.exe`
+  instead of `cmd /C start`, closing a shell-metacharacter injection path in any
+  clicked link or URL.
+- Desktop: `esc()` now does a full HTML-entity encode (`&`, `<`, `>`, `"`, `'`)
+  instead of just `"`/`<`, in both `index.html` and `local-ext.js`.
+- Desktop: fixed a version-comparison bug, SD Card tab mtime/exact-size display,
+  `.repo-name` wrapping, and moved the emulator-card version onto the header.
+- The old standalone `tools/app-utility/appUtility-<version>.html` browser
+  companion is retired — no longer built, released, or committed. The native
+  desktop app (`HaulNX-AppUtility.exe`) is the only PC companion going forward.
+
 ## 2.1.6
 
 **SD Card tab (desktop companion) — browse, add, rename and delete anywhere on the card.**

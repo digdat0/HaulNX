@@ -108,20 +108,13 @@ temporary downloads folder.
 ## The desktop companion
 
 Building collections and shuffling files with the Switch's on-screen keyboard gets old
-fast, so HaulNX pairs with a **companion you run on your PC**. It comes in two forms:
-
-- **App Utility** — a single self-contained HTML file, **attached to every release**,
-  that you open in any browser. Build whole collections with a real keyboard, preview
-  an item's file list before you commit to it, push the result to the console over
-  Wi-Fi, and inventory what the device already has.
-- **Native desktop app (Windows)** — the fuller companion, in [`desktop/`](desktop/),
-  built with Rust + Tauri. On top of everything the HTML utility does it adds native
-  powers a browser can't have: it **auto-discovers your Switch on the network** (no
-  typing an IP), talks to it over a **USB cable**, downloads from archive.org **free of
-  browser CORS limits** (including restricted items with your S3 keys), **extracts
-  zip/7z/rar**, **sends games to the console** over
-  USB or Wi-Fi, and **manages and updates your installed emulators and apps** from
-  GitHub. It self-updates, too.
+fast, so HaulNX pairs with a **native desktop app (Windows)**, attached to every
+release as `HaulNX-AppUtility.exe`, built with Rust + Tauri. It **auto-discovers your
+Switch on the network** (no typing an IP), talks to it over a **USB cable**, downloads
+from archive.org **free of browser CORS limits** (including restricted items with your
+S3 keys), **extracts zip/7z/rar**, **sends games to the console** over USB or Wi-Fi,
+and **manages and updates your installed emulators and apps** from GitHub. It
+self-updates, too.
 
 The wiki has the details:
 
@@ -213,8 +206,8 @@ and an emulator or two — see
    ```
 3. Launch it from the homebrew menu.
 
-Each release also attaches **`appUtility-<version>.html`** — the
-[App Utility](#the-desktop-companion) you open in a browser on your computer to build
+Each release also attaches **`HaulNX-AppUtility.exe`** — the
+[desktop companion](#the-desktop-companion) you run on your PC to build
 collections and push files to the console.
 
 On first run it seeds an **empty** `dl_sources.json` containing only the list of
