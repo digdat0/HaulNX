@@ -7,6 +7,19 @@ Notes for each release. `release.sh` pulls the section matching the version in
 `VERSION` and attaches it to the GitHub release. Add a `## <version>` section
 here before running a release.
 
+## 2.1.12
+
+**Desktop companion: manual update check + startup toggle.**
+
+- New **Settings → General → App Utility updates** panel: a **Check for
+  updates now** button (with status text) and a **Check for updates on
+  startup** toggle, on by default. Turning the toggle off stops the silent
+  on-launch check; the ⬆ Update pill only appears after you check manually.
+- Note for anyone testing self-update from 2.1.10: that build's update check
+  can never find a release — the bug fixed in 2.1.11 is baked into the 2.1.10
+  binary itself and can't be patched after the fact. 2.1.11 onward checks
+  correctly.
+
 ## 2.1.11
 
 **Desktop companion: real self-update.**
