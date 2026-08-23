@@ -7,6 +7,22 @@ Notes for each release. `release.sh` pulls the section matching the version in
 `VERSION` and attaches it to the GitHub release. Add a `## <version>` section
 here before running a release.
 
+## 2.1.11
+
+**Desktop companion: real self-update.**
+
+- `self_update_check` was matching release tags against an `"app-utility-v"`
+  prefix that `release.sh` never actually uses (it tags the bare version, e.g.
+  `2.1.10`) — the update check could never find a release. Fixed.
+- `self_update_run` used to download the update and hand it to `explorer.exe`
+  as if it were an installer; for our actual asset (a portable `.exe`, no
+  installer) that just opened a second copy and replaced nothing. It now
+  replaces the running exe in place — rename aside, copy the new build over,
+  relaunch, exit — with rollback on any failure.
+- Applying an update now warns first if you have unsaved Archive Collection
+  edits (same Export / Discard / Cancel prompt as closing the app), since
+  updating relaunches it the same way.
+
 ## 2.1.10
 
 **Desktop companion hardening + standalone App Utility HTML retired.**
