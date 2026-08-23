@@ -495,6 +495,8 @@
   "unknown": "Necunoscut",
   "inv_server": "Server de inventar al dispozitivului",
   "inv_address": "Adresă companion",
+  "sd_full_access": "Acces complet la cardul SD",
+  "sd_full_access_confirm": "Acest lucru permite aplicației companion de pe PC să răsfoiască, adauge, redenumească și șteargă ORICE fișier de pe cardul SD prin Wi-Fi și USB — nu doar folderele gestionate de HaulNX. Activezi?",
   "storage_title": "Card SD",
   "storage_detail": "%s liber din %s\nFolder descărcări: %s\nCache metadate: %s",
   "getting_started": "Primii pași",

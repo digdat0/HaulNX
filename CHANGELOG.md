@@ -7,6 +7,30 @@ Notes for each release. `release.sh` pulls the section matching the version in
 `VERSION` and attaches it to the GitHub release. Add a `## <version>` section
 here before running a release.
 
+## 2.1.6
+
+**SD Card tab (desktop companion) — browse, add, rename and delete anywhere on the card.**
+
+- New **Settings → PC Sync → Full SD card access** toggle (off by default,
+  confirmed on enable): once on, the desktop app's new SD Card tab can browse,
+  upload, download, rename, move and delete any file or folder on the SD
+  card — not just HaulNX's own managed folders — over both Wi-Fi and USB,
+  the same reach as mounting the card in Windows Explorer over MTP.
+- Backed by a new `fs_*` route family on the Wi-Fi inventory server and a
+  matching top-level "SD Card" object on the embedded MTP responder; large
+  folder deletes run in the background so they can't freeze the connection
+  for anyone else.
+- The Downloads tab on the desktop companion now also mirrors the console's
+  own Queue (live progress, history) via a new queue-status endpoint.
+- Desktop companion stability: fixed a race where navigating the SD Card tab
+  right after an upload could show a stale folder instead of the one you'd
+  clicked into; fixed failed transfers sometimes logging twice in Download
+  History; fixed a stuck "downloading…" row with no error if a download task
+  died outright; fixed a small memory leak from dismissing finished/failed
+  transfers; and fixed the same stale-overwrite race in the background
+  device-inventory poll (could otherwise flip "Connected" back to
+  "Disconnected" on its own, or show an outdated file listing).
+
 ## 2.1.0
 
 **Box art, a customizable accent color, and a lot more solid downloads.**

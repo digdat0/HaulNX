@@ -495,6 +495,8 @@
   "unknown": "未知",
   "inv_server": "设备库存服务器",
   "inv_address": "配套应用地址",
+  "sd_full_access": "完整 SD 卡访问权限",
+  "sd_full_access_confirm": "开启后，电脑配套应用可通过 Wi-Fi 和 USB 浏览、添加、重命名和删除 SD 卡上的任意文件——不仅限于 HaulNX 管理的文件夹。是否开启？",
   "storage_title": "SD 卡",
   "storage_detail": "剩余 %s / 共 %s\n下载文件夹：%s\n元数据缓存：%s",
   "getting_started": "快速上手",

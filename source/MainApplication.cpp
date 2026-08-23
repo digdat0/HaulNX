@@ -4125,6 +4125,18 @@ void MainApplication::GotoTransfers() {
         this->layout->AddRow2(tr(S_INV_ADDRESS), addr, lbl,
                               g_theme->rom_info_clr);  // 6 read-only address
     }
+    // Full SD card access: unscoped read/write/delete over the whole card
+    // (like mounting it in Windows Explorer over MTP), for the desktop
+    // companion's SD Card tab — over Wi-Fi (this inventory server) and over
+    // USB (the embedded MTP responder, next USB connection). Off by default;
+    // its own toggle, independent of the inventory server above, since it
+    // also applies to a USB-only connection with the server off.
+    {
+        bool sd = g_prefs.sd_full_access;
+        this->layout->AddRow2(settings_label(tr(S_SD_FULL_ACCESS)),
+                              sd ? tr(S_ON) : tr(S_OFF), lbl,
+                              onoff_color(sd));          // 7 toggle
+    }
     // The emulator/app-list push moved to Settings > Data Files — it's a
     // catalog push, not a transfer-session concern.
 }
@@ -4823,6 +4835,8 @@ void MainApplication::InvJsonBegin() {
             (unsigned long long)(totalb == UINT64_MAX ? 0 : totalb));
     fputs("  \"usb3\": ", f);
     json_write_escaped(f, usb3);
+    fprintf(f, ",\n  \"sd_access\": %s",
+            g_prefs.sd_full_access ? "true" : "false");
     fputs(",\n  \"consoles\": [", f);
 
     // Rebuilt in lockstep with the JSON, one console at a time in
@@ -5073,6 +5087,7 @@ void MainApplication::InvServerStart() {
         return;
     }
     this->inv_srv.mode = HTTPSRV_MODE_INVENTORY;
+    this->inv_srv.sd_access = g_prefs.sd_full_access;
     // A game pushed from the app utility while connected streams into the inbox,
     // where the sorter files it — the same landing spot USB/MTP drops use. Set
     // once: client_reset keeps dest_dir across uploads.
@@ -5415,14 +5430,33 @@ void MainApplication::InvApplyFile() {
     std::string apath = this->inv_srv.recv_app_path;
     bool new_app = this->inv_srv.recv_app_new;
     std::string folder = this->inv_srv.recv_folder;
+    std::string fsdest = this->inv_srv.recv_fs_dest;
     this->inv_srv.recv_name[0] = '\0';
     this->inv_srv.part_path[0] = '\0';
     this->inv_srv.recv_app[0] = '\0';
     this->inv_srv.recv_app_path[0] = '\0';
     this->inv_srv.recv_app_new = false;
     this->inv_srv.recv_folder[0] = '\0';
+    this->inv_srv.recv_fs_dest[0] = '\0';
     if (name.empty() || part.empty() || !fs_exists(part.c_str())) {
         return; // never completed, or already consumed
+    }
+    // SD Card tab direct write (X-Fs-Path): move the finished temp straight to
+    // its exact requested destination, already validated server-side. This is
+    // a plain file write, not a ROM import -- no app/library/inbox routing,
+    // no archive extraction, no toast (the desktop's own file browser already
+    // reflects the write; a device-side toast for every drag-drop would be
+    // noise). Checked first so it can never fall through into the game-push
+    // logic below.
+    if (!fsdest.empty()) {
+        if (!fs_move(part.c_str(), fsdest.c_str())) {
+            remove(part.c_str());
+            xfer_log("FAILED     PC SD-card write of %s to %s", name.c_str(),
+                     fsdest.c_str());
+        } else {
+            xfer_log("push       PC wrote %s (SD Card tab)", fsdest.c_str());
+        }
+        return;
     }
     // A fresh install from the companion's Emulators tab: X-App-Path names a new
     // .nro under sdmc:/switch (validated server-side) that isn't there yet, flagged
@@ -7413,8 +7447,11 @@ bool MainApplication::UsbResponderStart() {
         else                     snprintf(f.path, sizeof(f.path), "%s/%s", root, name);
         folders.push_back(f);
     }
+    // Full SD card access (Prefs.sd_full_access): one extra top-level "SD
+    // Card" object over the whole card, generic browse/write/delete parity
+    // with mounting it in Windows Explorer over MTP -- see mtp::Start.
     return mtp::Start(root, folders.data(), static_cast<int>(folders.size()),
-                      INBOX_DIR);
+                      INBOX_DIR, g_prefs.sd_full_access ? "sdmc:/" : nullptr);
 }
 
 void MainApplication::GotoUsbMtp(bool fromSettings) {
@@ -15041,6 +15078,30 @@ void MainApplication::HandleInput(u64 down, u64 held,
     if ((down & HidNpadButton_ZR) && this->screen != Screen::Queue) {
         this->layout->PageDown();
     }
+    {
+        // Hold-to-autopage: same shape as the D-pad hold-repeat above, but with
+        // a longer initial delay and slower repeat -- a page jump moves a whole
+        // screen at once, so firing at the D-pad's ~20/frame-3 rate would blow
+        // past the target list in a fraction of a second. ~0.5s to first repeat,
+        // then one page every ~8 frames (~7.5/sec at 60fps) until released.
+        static int hold = 0;
+        const bool pageable = this->screen != Screen::Queue;
+        int dir = (pageable && (held & HidNpadButton_ZL))   ? -1
+                  : (pageable && (held & HidNpadButton_ZR)) ? 1
+                                                              : 0;
+        if (dir == 0) {
+            hold = 0;
+        } else {
+            hold++;
+            if (hold > 30 && ((hold - 30) % 8) == 0) {
+                if (dir < 0) {
+                    this->layout->PageUp();
+                } else {
+                    this->layout->PageDown();
+                }
+            }
+        }
+    }
     if (down & HidNpadButton_Plus) {
         int active = queue_active_count();
         if (active > 0) {
@@ -15867,6 +15928,28 @@ void MainApplication::HandleInput(u64 down, u64 held,
                 this->GotoTransfers(); // re-render toggle + address
                 return;
             case 6: return; // read-only address line
+            case 7: { // toggle full SD card access
+                if (!g_prefs.sd_full_access) {
+                    // Only confirm on the way IN: this is real, unscoped
+                    // filesystem access (read/write/delete anywhere on the
+                    // card, over Wi-Fi and USB), not a routine preference.
+                    int cr = this->CreateShowDialog(
+                        tr(S_SD_FULL_ACCESS), tr(S_SD_FULL_ACCESS_CONFIRM),
+                        {tr(S_YES), tr(S_CANCEL)}, true, {}, style_dialog);
+                    if (cr != 0) return;
+                }
+                g_prefs.sd_full_access = !g_prefs.sd_full_access;
+                prefs_save(&g_prefs);
+                // Live for the Wi-Fi inventory server (its client struct just
+                // reads this flag per-request); a USB session already in
+                // progress keeps the folder set it started with and picks
+                // this up on the next connect, same as mtp_enabled.
+                if (this->inv_open) {
+                    this->inv_srv.sd_access = g_prefs.sd_full_access;
+                }
+                this->GotoTransfers(); // re-render toggle
+                return;
+            }
             default: break;
             }
         }

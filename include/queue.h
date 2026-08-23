@@ -273,6 +273,19 @@ bool queue_active_info(char *name, size_t name_sz, QStatus *status,
 /* Remove all finished/failed/cancelled items. */
 void queue_clear_finished(void);
 
+/* Remove one finished/failed/cancelled item by slot (the Downloads tab's
+ * per-item "clear from history"). No-op (returns false) for anything still
+ * queued/active, or an already-free slot. */
+bool queue_remove(int slot);
+
+/* Write every item (active items AND finished/failed/cancelled history, plus
+ * external transfers) to `path` as JSON, for a remote monitor -- the desktop
+ * companion's Downloads tab -- to poll over the read-only inventory server.
+ * Unlike the QUEUE_STATE_PATH resume file this is regenerated on demand and
+ * carries live progress fields (now/total/speed/status), not just what's
+ * needed to resume after a relaunch. */
+void queue_write_status_json(const char *path);
+
 /* Number of items still pending or in progress (for sleep-prevention). */
 int queue_active_count(void);
 

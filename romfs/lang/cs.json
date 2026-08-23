@@ -495,6 +495,8 @@
   "unknown": "Neznámé",
   "inv_server": "Server inventáře zařízení",
   "inv_address": "Adresa companion aplikace",
+  "sd_full_access": "Plný přístup k SD kartě",
+  "sd_full_access_confirm": "Toto umožní počítačové companion aplikaci procházet, přidávat, přejmenovávat a mazat JAKÝKOLI soubor na SD kartě přes Wi-Fi i USB — nejen složky spravované HaulNX. Zapnout?",
   "storage_title": "SD karta",
   "storage_detail": "%s volných z %s\nSložka stahování: %s\nMezipaměť metadat: %s",
   "getting_started": "Začínáme",

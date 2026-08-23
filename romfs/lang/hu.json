@@ -495,6 +495,8 @@
   "unknown": "Ismeretlen",
   "inv_server": "Eszközleltár szerver",
   "inv_address": "Companion cím",
+  "sd_full_access": "Teljes SD-kártya hozzáférés",
+  "sd_full_access_confirm": "Ez lehetővé teszi a PC companion alkalmazás számára, hogy Wi-Fi-n és USB-n keresztül BÁRMELY fájlt tallózzon, hozzáadjon, átnevezzen és töröljön az SD-kártyádon — nem csak a HaulNX által kezelt mappákat. Bekapcsolod?",
   "storage_title": "SD-kártya",
   "storage_detail": "%s szabad, összesen %s\nLetöltési mappa: %s\nMetaadat-gyorsítótár: %s",
   "getting_started": "Első lépések",

@@ -33,6 +33,39 @@ bool fs_rm_rf(const char *path) {
     return remove(path) == 0;
 }
 
+bool fs_rm_rf_cancelable(const char *path, const volatile bool *cancel) {
+    if (cancel && *cancel) {
+        return false;
+    }
+    struct stat st;
+    if (lstat(path, &st) != 0) {
+        return !fs_exists(path); /* already gone */
+    }
+    if (S_ISDIR(st.st_mode)) {
+        DIR *d = opendir(path);
+        if (d) {
+            struct dirent *e;
+            while ((e = readdir(d)) != NULL) {
+                if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..")) {
+                    continue;
+                }
+                if (cancel && *cancel) {
+                    break;
+                }
+                char child[1024];
+                snprintf(child, sizeof(child), "%s/%s", path, e->d_name);
+                fs_rm_rf_cancelable(child, cancel);
+            }
+            closedir(d);
+        }
+        if (cancel && *cancel) {
+            return false; /* stopped partway; the caller isn't gone yet */
+        }
+        return rmdir(path) == 0;
+    }
+    return remove(path) == 0;
+}
+
 bool fs_log_rotate(const char *path, uint64_t max_bytes) {
     struct stat st;
     if (stat(path, &st) != 0 || st.st_size < 0 ||

@@ -495,6 +495,8 @@
   "unknown": "Tuntematon",
   "inv_server": "Laiteinventaariopalvelin",
   "inv_address": "Companion-osoite",
+  "sd_full_access": "Täysi SD-kortin käyttöoikeus",
+  "sd_full_access_confirm": "Tämä sallii PC-companion-sovelluksen selata, lisätä, nimetä uudelleen ja poistaa MINKÄ TAHANSA tiedoston SD-kortiltasi Wi-Fin ja USB:n kautta — ei vain HaulNX:n hallitsemia kansioita. Otetaanko käyttöön?",
   "storage_title": "SD-kortti",
   "storage_detail": "%s vapaana / %s\nLatauskansio: %s\nMetatietovälimuisti: %s",
   "getting_started": "Aloittaminen",

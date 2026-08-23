@@ -495,6 +495,8 @@
   "unknown": "Ukjent",
   "inv_server": "Enhetsoversikt-server",
   "inv_address": "Følgeappadresse",
+  "sd_full_access": "Full SD-kort-tilgang",
+  "sd_full_access_confirm": "Dette lar PC-følgeappen bla gjennom, legge til, gi nytt navn til og slette HVILKEN SOM HELST fil på SD-kortet ditt via Wi-Fi og USB — ikke bare mappene HaulNX administrerer. Vil du slå det på?",
   "storage_title": "SD-kort",
   "storage_detail": "%s ledig av %s\nNedlastingsmappe: %s\nMetadatabuffer: %s",
   "getting_started": "Kom i gang",

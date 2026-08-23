@@ -495,6 +495,8 @@
   "unknown": "Desconhecido",
   "inv_server": "Servidor de inventário do dispositivo",
   "inv_address": "Endereço do companion",
+  "sd_full_access": "Acesso total ao cartão SD",
+  "sd_full_access_confirm": "Isso permite que o app companion do PC navegue, adicione, renomeie e exclua QUALQUER arquivo no seu cartão SD via Wi-Fi e USB — não apenas as pastas gerenciadas pelo HaulNX. Ativar?",
   "storage_title": "Cartão SD",
   "storage_detail": "%s livres de %s\nPasta de downloads: %s\nCache de metadados: %s",
   "getting_started": "Primeiros passos",

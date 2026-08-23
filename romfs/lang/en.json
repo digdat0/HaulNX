@@ -586,6 +586,8 @@
   "unknown": "Unknown",
   "inv_server": "Device inventory server",
   "inv_address": "Companion address",
+  "sd_full_access": "Full SD card access",
+  "sd_full_access_confirm": "This lets the PC companion browse, add, rename and delete ANY file on your SD card over Wi-Fi and USB — not just the folders HaulNX manages. Turn it on?",
 
   "storage_title": "SD card",
   "storage_detail": "%s free of %s\nDownloads folder: %s\nMetadata cache: %s",

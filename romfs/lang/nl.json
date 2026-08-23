@@ -495,6 +495,8 @@
   "unknown": "Onbekend",
   "inv_server": "Apparaatinventarisserver",
   "inv_address": "Companion-adres",
+  "sd_full_access": "Volledige sd-kaarttoegang",
+  "sd_full_access_confirm": "Hiermee kan de pc-companion-app via wifi en usb ELK bestand op je sd-kaart doorbladeren, toevoegen, hernoemen en verwijderen — niet alleen de mappen die HaulNX beheert. Inschakelen?",
   "storage_title": "SD-kaart",
   "storage_detail": "%s vrij van %s\nDownloadmap: %s\nMetadatacache: %s",
   "getting_started": "Aan de slag",

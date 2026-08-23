@@ -662,6 +662,8 @@ enum {
     S_UNKNOWN,
     S_INV_SERVER,         /* Transfers: companion inventory server toggle label */
     S_INV_ADDRESS,        /* Transfers: read-only address the companion connects to */
+    S_SD_FULL_ACCESS,         /* Transfers: full SD card access toggle label */
+    S_SD_FULL_ACCESS_CONFIRM, /* confirm dialog body shown when turning it on */
 
     /* Storage detail dialog (A on the SD-card row). */
     S_STORAGE_TITLE,

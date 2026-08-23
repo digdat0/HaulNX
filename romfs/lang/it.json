@@ -495,6 +495,8 @@
   "unknown": "Sconosciuto",
   "inv_server": "Server inventario del dispositivo",
   "inv_address": "Indirizzo companion",
+  "sd_full_access": "Accesso completo alla scheda SD",
+  "sd_full_access_confirm": "Questo consente all'app companion del PC di sfogliare, aggiungere, rinominare ed eliminare QUALSIASI file sulla tua scheda SD via Wi-Fi e USB — non solo le cartelle gestite da HaulNX. Attivarlo?",
   "storage_title": "Scheda SD",
   "storage_detail": "%s liberi di %s\nCartella download: %s\nCache metadati: %s",
   "getting_started": "Per iniziare",

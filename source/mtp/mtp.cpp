@@ -25,11 +25,13 @@
 #include <mtp/responder.hpp>
 #include <mtp/ptp.hpp>
 #include <extract.h>
+#include <fsutil.h> /* fs_rm_rf_cancelable: the background delete worker */
 #include <rar3.h>
 
 #include <cstdio>
 #include <cstring>
 #include <strings.h> /* strcasecmp */
+#include <string>
 #include <vector>
 
 namespace mtp {
@@ -43,6 +45,7 @@ namespace mtp {
         bool       g_stopping = false;
         char       g_root[512];
         char       g_inbox[512];
+        char       g_sdroot[16]; /* "sdmc:/" when full SD access is on, else "" */
         std::vector<Folder> g_folders; /* set in Start, read by the worker */
 
         /* Per-file transfer progress, published by the worker and read by the
@@ -84,7 +87,8 @@ namespace mtp {
             while (!g_stopping) {
                 if (g_session.GetConfigured()) {
                     RunResponder(std::addressof(g_session), std::addressof(g_stop), g_root,
-                                 g_folders.data(), static_cast<int>(g_folders.size()), g_inbox);
+                                 g_folders.data(), static_cast<int>(g_folders.size()), g_inbox,
+                                 g_sdroot);
                 }
                 if (g_stopping) break;
                 svcSleepThread(100000000ull); /* 100ms */
@@ -177,15 +181,62 @@ namespace mtp {
             }
         }
 
+        /* --- background delete worker --------------------------------------
+         * DeleteObject can target a huge folder (a whole console's ROMs, or
+         * anywhere on the SD Card tree) -- see responder.cpp's DeleteObject,
+         * which orphans the object and acks the command immediately, then
+         * hands the path here via EnqueueDelete rather than recursing inline
+         * and freezing the command loop for the whole delete, the same shape
+         * the extract worker above exists to avoid. Simpler than that worker:
+         * no per-file progress to publish (the object is already gone from
+         * the host's point of view once acked), just the removal itself,
+         * checked against g_stopping between entries (fs_rm_rf_cancelable) so
+         * Stop() doesn't have to ride out a huge tree to join this thread. */
+        Thread g_delthread;
+        UEvent g_delwake;
+        Mutex  g_dellock;              /* guards g_delq */
+        std::vector<std::string> g_delq;
+        bool   g_delup = false;        /* worker thread created */
+
+        void DeleteWorker(void *) {
+            while (!g_stopping) {
+                int idx = 0;
+                waitMulti(std::addressof(idx), UINT64_MAX,
+                          waiterForUEvent(std::addressof(g_delwake)),
+                          waiterForUEvent(std::addressof(g_stop)));
+                if (g_stopping) break;
+                for (;;) {
+                    std::string path;
+                    mutexLock(std::addressof(g_dellock));
+                    if (g_delq.empty()) { mutexUnlock(std::addressof(g_dellock)); break; }
+                    path = g_delq.front();
+                    g_delq.erase(g_delq.begin());
+                    mutexUnlock(std::addressof(g_dellock));
+                    fs_rm_rf_cancelable(path.c_str(), std::addressof(g_stopping));
+                    if (g_stopping) break;
+                }
+            }
+        }
+
     }
 
-    bool Start(const char *root, const Folder *folders, int nfolders, const char *inbox) {
+    void EnqueueDelete(const char *path) {
+        if (!path || !path[0]) return;
+        mutexLock(std::addressof(g_dellock));
+        g_delq.push_back(path);
+        mutexUnlock(std::addressof(g_dellock));
+        ueventSignal(std::addressof(g_delwake));
+    }
+
+    bool Start(const char *root, const Folder *folders, int nfolders,
+              const char *inbox, const char *sd_root) {
         if (g_up) {
             return true;
         }
 
         snprintf(g_root, sizeof(g_root), "%s", root ? root : "");
         snprintf(g_inbox, sizeof(g_inbox), "%s", inbox ? inbox : "");
+        snprintf(g_sdroot, sizeof(g_sdroot), "%s", (sd_root && sd_root[0]) ? sd_root : "");
         g_folders.assign(folders, folders + (nfolders > 0 ? nfolders : 0));
 
         /* Fresh progress list for this connection. */
@@ -231,6 +282,29 @@ namespace mtp {
         }
         g_exup = true;
 
+        /* Delete worker: unpacks DeleteObject targets off the responder thread
+         * so a big folder doesn't freeze the command loop -- see EnqueueDelete.
+         * Its own fresh queue for this session; if it can't start, tear the
+         * extract worker and responder back down too rather than run with
+         * inline-blocking deletes. */
+        mutexLock(std::addressof(g_dellock));
+        g_delq.clear();
+        mutexUnlock(std::addressof(g_dellock));
+        ueventCreate(std::addressof(g_delwake), true /* autoclear */);
+
+        if (R_FAILED(threadCreate(std::addressof(g_delthread), DeleteWorker, nullptr, nullptr, 0x10000, 0x2C, -2)) ||
+            R_FAILED(threadStart(std::addressof(g_delthread)))) {
+            g_stopping = true;
+            ueventSignal(std::addressof(g_stop));
+            threadWaitForExit(std::addressof(g_exthread));
+            threadClose(std::addressof(g_exthread));
+            threadWaitForExit(std::addressof(g_thread));
+            threadClose(std::addressof(g_thread));
+            g_session.Finalize();
+            return false;
+        }
+        g_delup = true;
+
         g_up = true;
         return true;
     }
@@ -261,6 +335,14 @@ namespace mtp {
             threadWaitForExit(std::addressof(g_exthread));
             threadClose(std::addressof(g_exthread));
             g_exup = false;
+        }
+        if (g_delup) {
+            /* g_stopping is already set, and fs_rm_rf_cancelable checks it
+             * between entries, so an in-flight delete unwinds promptly here
+             * rather than riding out a huge tree. */
+            threadWaitForExit(std::addressof(g_delthread));
+            threadClose(std::addressof(g_delthread));
+            g_delup = false;
         }
 
         g_session.Finalize();

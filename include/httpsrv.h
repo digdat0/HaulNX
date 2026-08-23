@@ -118,6 +118,14 @@ typedef struct {
      * — the desktop's USB push already had this via WPD's own folder walk;
      * this is the Wi-Fi equivalent. Sanitized like recv_app. */
     char recv_folder[64];
+    /* Inventory mode only, and only when sd_access is on: an X-Fs-Path header
+     * on a streamed push names the SD Card tab's exact destination file
+     * (percent-encoded, validated to be a plain sdmc: path with no ".."
+     * escape — see sd_path_allowed in httpsrv.c). When set, the caller moves
+     * the finished part_path straight there instead of routing it through the
+     * app/library/inbox logic a normal game push gets: this is a plain file
+     * write, not a ROM import. Empty for every other kind of push. */
+    char recv_fs_dest[768];
     /* Inventory mode only: an X-Dat header marked this buffered POST as a
      * verification DAT (the companion's DAT Files tab › push). It forces the body
      * to buffer in RAM (a DAT is small XML) rather than stream to the inbox, so
@@ -136,6 +144,14 @@ typedef struct {
      * requested path outside every root is refused. NULL leaves those endpoints
      * off. Not owned — points into an app-side string that outlives the server. */
     const char *roots;
+    /* Inventory mode only: mirrors Prefs.sd_full_access. When true the fs_*
+     * routes (list/get/put/mkdir/rm/mv) additionally accept ANY path under
+     * sdmc:/, not just the managed folders `roots` confines rm/mv/file to —
+     * this is the desktop companion's SD Card tab. False (the default) turns
+     * every fs_* route away with 403, same as if they didn't exist. The app
+     * sets this from the live pref at InvServerStart and again whenever the
+     * pref is toggled while the server is already running. */
+    bool sd_access;
     /* A file being streamed OUT to the PC (a game pull, GET /file). Its header is
      * sent up front, then the body goes a bounded slice per poll — like the ROM
      * upload in reverse — so a multi-GB game never buffers in RAM or freezes the
@@ -153,6 +169,20 @@ typedef struct {
     volatile bool rx_done;    /* threads finished; UI thread joins + finalizes */
     volatile bool rx_cancel;  /* UI (or the writer) asks the pump to stop early */
     volatile int rx_status;   /* RX_* outcome, valid once rx_done is set */
+    /* fs_rm (SD Card tab, recursive folder delete) runs on its own one-shot
+     * thread instead of inline: a folder can hold thousands of files, and
+     * walking it synchronously here would freeze httpsrv_poll's accept() for
+     * everyone else — the same shape a synchronous extract_archive() call
+     * once froze this same poll loop for (see the InvServerPoll note this
+     * fixed). The connection is held open (no client_reset) while it runs;
+     * rm_thread is a heap-allocated RmCtx (void* to keep <switch.h> out of
+     * this header). rm_cancel lets a shutdown/rebind unwind it promptly
+     * instead of riding out the whole tree — see fs_rm_rf_cancelable. */
+    void *rm_thread;          /* NULL when no delete is running */
+    volatile bool rm_running; /* thread started, not yet joined */
+    volatile bool rm_done;    /* thread finished; UI thread joins + responds */
+    volatile bool rm_ok;      /* fs_rm_rf_cancelable's result, valid once rm_done */
+    volatile bool rm_cancel;  /* shutdown/rebind asks the delete to unwind early */
 } HttpSrv;
 
 /* The console's LAN address as a dotted quad, e.g. "192.168.1.42".

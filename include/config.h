@@ -44,6 +44,11 @@ extern "C" {
  * so they live with the other state in config/, not with the logs. */
 #define QUEUE_STATE_PATH DATA_DIR "/queue.json"
 #define INST_SIZES_PATH  DATA_DIR "/inst_sizes.json"
+/* Live queue snapshot (active downloads + history) served to the desktop
+ * companion's Downloads tab, regenerated fresh on every GET like
+ * INVENTORY_PATH's diag_bundle sibling. Distinct from QUEUE_STATE_PATH above,
+ * which only persists resumable in-flight work across a relaunch. */
+#define QUEUE_STATUS_PATH DATA_DIR "/queue_status.json"
 /* Device inventory served to the desktop companion over the LAN. Regenerated
  * app-side while the inventory server pref is on; the server just serves this
  * file (see httpsrv.c HTTPSRV_MODE_INVENTORY). A staging file keeps a reader
@@ -295,6 +300,17 @@ typedef struct {
      * handler) -- turning this off just means new games wait for the next
      * manual Scan. */
     bool box_art_auto_fetch;
+    /* false (default): the SD card is only ever reached through the app's own
+     * managed folders (console install dirs + inbox), same as every other
+     * transfer in the app. true: the inventory server's fs_* routes and the
+     * embedded MTP responder both additionally expose the WHOLE SD card
+     * (sdmc:/) as a plain browsable/writable/deletable tree — full parity
+     * with mounting the card in Windows Explorer over MTP (add/copy/rename/
+     * delete anywhere), for the desktop companion's SD Card tab. Off by
+     * default because it is real, unscoped filesystem access rather than the
+     * app's normal confined-to-its-own-folders reach; the toggle lives in
+     * Settings > PC Sync so turning it on is a deliberate choice. */
+    bool sd_full_access;
 } Prefs;
 
 /* Relocate app files left in the old flat layout (everything directly under

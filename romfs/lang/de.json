@@ -495,6 +495,8 @@
   "unknown": "Unbekannt",
   "inv_server": "Gerätebestand-Server",
   "inv_address": "Companion-Adresse",
+  "sd_full_access": "Voller SD-Karten-Zugriff",
+  "sd_full_access_confirm": "Dies erlaubt der PC-Companion-App, JEDE Datei auf deiner SD-Karte über WLAN und USB zu durchsuchen, hinzuzufügen, umzubenennen und zu löschen — nicht nur die von HaulNX verwalteten Ordner. Aktivieren?",
   "storage_title": "SD-Karte",
   "storage_detail": "%s frei von %s\nDownload-Ordner: %s\nMetadaten-Cache: %s",
   "getting_started": "Erste Schritte",

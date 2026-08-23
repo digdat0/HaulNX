@@ -1986,3 +1986,69 @@ int queue_cancel_by_part(const char *partname, bool do_cancel) {
     mutexUnlock(&g_mtx);
     return hits;
 }
+
+bool queue_remove(int slot) {
+    if (slot < 0 || slot >= QUEUE_MAX) {
+        return false;
+    }
+    bool ok = false;
+    mutexLock(&g_mtx);
+    QStatus s = g_items[slot].status;
+    if (s == Q_DONE || s == Q_SAVED || s == Q_FAILED || s == Q_CANCELLED) {
+        g_items[slot].status = Q_FREE;
+        ok = true;
+    }
+    mutexUnlock(&g_mtx);
+    return ok;
+}
+
+/* Lowercase status names for queue_write_status_json -- kept as short, stable
+ * strings rather than the raw QStatus int so a client (JS, no shared enum)
+ * doesn't have to hardcode the numeric order. */
+static const char *qstatus_str(QStatus s) {
+    switch (s) {
+    case Q_QUEUED:        return "queued";
+    case Q_PAUSED:        return "paused";
+    case Q_DOWNLOADING:   return "downloading";
+    case Q_VERIFYING:     return "verifying";
+    case Q_AWAIT_EXTRACT: return "await_extract";
+    case Q_EXTRACTING:    return "extracting";
+    case Q_DONE:          return "done";
+    case Q_SAVED:         return "saved";
+    case Q_FAILED:        return "failed";
+    case Q_CANCELLED:     return "cancelled";
+    default:              return "free";
+    }
+}
+
+void queue_write_status_json(const char *path) {
+    static QueueView qv[QUEUE_MAX]; /* too big for the stack, see MainApplication.cpp's own qv */
+    int n = queue_snapshot(qv, QUEUE_MAX);
+    FILE *f = fopen(path, "wb");
+    if (!f) {
+        return;
+    }
+    fputs("{\"items\":[", f);
+    for (int i = 0; i < n; i++) {
+        const QueueItem *it = &qv[i].item;
+        if (i > 0) {
+            fputc(',', f);
+        }
+        fprintf(f, "{\"slot\":%d,\"name\":", qv[i].slot);
+        json_write_escaped(f, it->name);
+        fputs(",\"target\":", f);
+        json_write_escaped(f, it->target);
+        fputs(",\"status\":", f);
+        json_write_escaped(f, qstatus_str(it->status));
+        fprintf(f, ",\"now\":%llu,\"total\":%llu,\"speed\":%llu,"
+                   "\"stalled\":%s,\"external\":%s,\"xkind\":%u",
+                (unsigned long long)it->now, (unsigned long long)it->total,
+                (unsigned long long)it->speed, it->stalled ? "true" : "false",
+                it->external ? "true" : "false", (unsigned)it->xkind);
+        fputs(",\"fail_reason\":", f);
+        json_write_escaped(f, it->fail_reason);
+        fputc('}', f);
+    }
+    fputs("]}", f);
+    fclose(f);
+}

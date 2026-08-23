@@ -495,6 +495,8 @@
   "unknown": "Không rõ",
   "inv_server": "Máy chủ danh mục thiết bị",
   "inv_address": "Địa chỉ ứng dụng đồng hành",
+  "sd_full_access": "Toàn quyền truy cập thẻ SD",
+  "sd_full_access_confirm": "Điều này cho phép ứng dụng đồng hành trên PC duyệt, thêm, đổi tên và xóa BẤT KỲ tệp nào trên thẻ SD của bạn qua Wi-Fi và USB — không chỉ các thư mục do HaulNX quản lý. Bật tính năng này?",
   "storage_title": "Thẻ SD",
   "storage_detail": "%s trống trong %s\nThư mục tải xuống: %s\nBộ nhớ đệm siêu dữ liệu: %s",
   "getting_started": "Bắt đầu",

@@ -107,6 +107,17 @@ namespace mtp {
             const Folder *folders;
             int           nfolders;
             const char   *inbox;
+            /* Optional extra top-level folder over the WHOLE card (see
+             * mtp::Start's sd_root). NULL/"" when the feature is off — the
+             * ordinary console-folders-only tree, unchanged. Deliberately
+             * kept OUT of `folders`/`nfolders`: UnderKnownFolder below (the
+             * archive-auto-extract gate) walks only the real console paths,
+             * so browsing the same physical console folder through this
+             * generic SD tree instead of its own named folder can never
+             * trigger an unpack somewhere that isn't actually a managed
+             * install folder (e.g. dropping a random .zip at sdmc:/ or into
+             * an unrelated sdmc:/ subfolder must never auto-extract). */
+            const char   *sd_root;
             bool        stopping;
             bool        session_open;
             u32         session_id;
@@ -413,6 +424,36 @@ namespace mtp {
             return "";
         }
 
+        /* True if `full` is (a descendant of) one of the real console
+         * folders in c->folders — never the synthetic Inbox or the SD Card
+         * root, even though both can reach the same physical file. Used to
+         * gate archive auto-extraction on SendObject: extraction should only
+         * ever fire for an actual managed install folder, regardless of
+         * which top-level object the host walked through to get there. */
+        bool UnderKnownFolder(Ctx *c, const char *full) {
+            for (int i = 0; i < c->nfolders; i++) {
+                const char *fp = c->folders[i].path;
+                size_t l = strlen(fp);
+                if (l == 0) continue;
+                if (strncmp(full, fp, l) == 0 && (full[l] == '/' || full[l] == '\0'))
+                    return true;
+            }
+            return false;
+        }
+
+        /* True if `path` names the SD Card object's own root (c->sd_root,
+         * e.g. "sdmc:/") rather than something under it. DeleteObject,
+         * SetObjectPropValue (rename) and MoveObject must all refuse this:
+         * unlike a console folder or Inbox, this object stands for the
+         * ENTIRE physical card -- deleting or renaming it would touch every
+         * other homebrew's data and saves, not one managed folder. Nothing
+         * about "browse/add/rename/delete anywhere on the card" was ever
+         * meant to include the card itself. Mirrors sd_path_is_root on the
+         * Wi-Fi side (httpsrv.c) for the same guard over fs_rm/fs_mv. */
+        bool IsSdRoot(Ctx *c, const char *path) {
+            return c->sd_root && c->sd_root[0] && strcmp(path, c->sd_root) == 0;
+        }
+
         /* Enumerate the children of `parent` into the DB and return their
          * handles. */
         u16 CollectChildren(Ctx *c, u32 parent, std::vector<u32> &out) {
@@ -432,6 +473,20 @@ namespace mtp {
                 struct stat st;
                 time_t mt = (stat(c->inbox, &st) == 0) ? st.st_mtime : 0;
                 out.push_back(AddOrFind(c, PtpRootParentObject, c->inbox, "Inbox", true, 0, mt));
+
+                /* Full SD card access (Prefs.sd_full_access): one more
+                 * top-level folder over the whole card, generic like any
+                 * other -- CollectChildren's recursive branch below already
+                 * just opendir()s whatever real path it's handed, so nothing
+                 * else here needs to change for browsing, writing, renaming
+                 * or (recursive) deleting anywhere under it. Only the
+                 * archive-auto-extract gate above treats it differently. */
+                if (c->sd_root && c->sd_root[0]) {
+                    struct stat sdst;
+                    time_t sdmt = (stat(c->sd_root, &sdst) == 0) ? sdst.st_mtime : 0;
+                    out.push_back(AddOrFind(c, PtpRootParentObject, c->sd_root,
+                                            "SD Card", true, 0, sdmt));
+                }
 
                 /* A read-only snapshot of what's installed, so a USB-connected PC
                  * companion can pull the same inventory the Wi-Fi server serves.
@@ -807,7 +862,16 @@ namespace mtp {
                     const u8 *sp = d + 52;         /* Filename offset in the dataset */
                     char fname[256];               /* Obj.name caps at this anyway */
                     ParseStr(&sp, end, fname, sizeof(fname));
-                    if (!fname[0]) { RC(c, PtpResponseCode_NoValidObjectInfo, trans); return; }
+                    /* One path segment only -- fname is concatenated straight into
+                     * the destination path below ("%s/%s", pdir, fname). Without
+                     * this, a host sending "../../../whatever" walks straight out
+                     * of pdir (a console folder, Inbox, or root) to write or mkdir
+                     * anywhere reachable by traversal, regardless of the SD Card
+                     * toggle. Mirrors the same guard SetObjectPropValue's rename
+                     * already applies to newname. */
+                    if (!fname[0] || strchr(fname, '/') || strchr(fname, '\\')) {
+                        RC(c, PtpResponseCode_NoValidObjectInfo, trans); return;
+                    }
 
                     /* Resolve the parent directory. */
                     u32 parentReq = p[1];
@@ -850,10 +914,17 @@ namespace mtp {
                     /* Unpack archives dropped straight into a console folder,
                      * mirroring the download install step. Inbox drops are left
                      * whole so the sorter can identify them first; root drops
-                     * have no console context. */
+                     * have no console context. UnderKnownFolder additionally
+                     * requires the destination to actually be inside one of
+                     * the real console folders (not just "some folder that
+                     * isn't Inbox or root") -- otherwise a drop anywhere else
+                     * reachable generically (the SD Card tab's whole-card
+                     * tree, or a nested Inbox subfolder) would wrongly
+                     * auto-extract too. */
                     c->pending.extract = is_archive_name(fname) &&
                                          pnorm != PtpRootParentObject &&
-                                         strcmp(pdir, c->inbox) != 0;
+                                         strcmp(pdir, c->inbox) != 0 &&
+                                         UnderKnownFolder(c, full);
                     c->pending.handle = h;
                     c->pending.size   = csize;
                     snprintf(c->pending.path, sizeof(c->pending.path), "%s", full);
@@ -1058,9 +1129,18 @@ namespace mtp {
                     if (np < 1) { RC(c, PtpResponseCode_InvalidParameter, trans); return; }
                     Obj *o = FindHandle(c, p[0]);
                     if (!o) { RC(c, PtpResponseCode_InvalidObjectHandle, trans); return; }
-                    if (!fs_rm_rf(o->path)) { RC(c, PtpResponseCode_GeneralError, trans); return; }
+                    if (IsSdRoot(c, o->path)) { RC(c, PtpResponseCode_AccessDenied, trans); return; }
+                    /* A folder can be huge (a whole console's ROMs, or
+                     * anywhere on the SD Card tree) -- recursing fs_rm_rf
+                     * inline here would freeze this command loop for the
+                     * whole delete, the same shape EnqueueExtract exists to
+                     * avoid for a received archive's unpack. Orphan and ack
+                     * now; a background worker does the actual removal (see
+                     * EnqueueDelete), so a big delete never blocks the next
+                     * command or the USB link. */
                     o->parent = 0xFFFFFFFEu; /* orphan it; re-enumeration rebuilds from disk */
                     RC(c, PtpResponseCode_Ok, trans);
+                    EnqueueDelete(o->path);
                     return;
                 }
                 case PtpOperationCode_SetObjectPropValue: {
@@ -1069,6 +1149,7 @@ namespace mtp {
                     if (np < 2) { RC(c, PtpResponseCode_InvalidParameter, trans); return; }
                     Obj *o = FindHandle(c, p[0]);
                     if (!o) { RC(c, PtpResponseCode_InvalidObjectHandle, trans); return; }
+                    if (IsSdRoot(c, o->path)) { RC(c, PtpResponseCode_AccessDenied, trans); return; }
                     u16 pc = static_cast<u16>(p[1]);
                     if (pc != PtpObjectPropertyCode_ObjectFileName &&
                         pc != PtpObjectPropertyCode_Name) {
@@ -1113,6 +1194,7 @@ namespace mtp {
                     if (np < 3) { RC(c, PtpResponseCode_InvalidParameter, trans); return; }
                     Obj *o = FindHandle(c, p[0]);
                     if (!o) { RC(c, PtpResponseCode_InvalidObjectHandle, trans); return; }
+                    if (IsSdRoot(c, o->path)) { RC(c, PtpResponseCode_AccessDenied, trans); return; }
                     u32 destParent = p[2];
                     const char *ddir;
                     u32 dnorm;
@@ -1142,7 +1224,8 @@ namespace mtp {
     } // namespace
 
     void RunResponder(UsbSession *session, UEvent *stop, const char *root,
-                      const Folder *folders, int nfolders, const char *inbox) {
+                      const Folder *folders, int nfolders, const char *inbox,
+                      const char *sd_root) {
         Ctx c{};
         c.session  = session;
         c.stop     = stop;
@@ -1150,6 +1233,7 @@ namespace mtp {
         c.folders  = folders;
         c.nfolders = nfolders;
         c.inbox    = inbox;
+        c.sd_root  = (sd_root && sd_root[0]) ? sd_root : nullptr;
 
         c.io  = static_cast<u8 *>(memalign(0x1000, IoCap));
         c.io2 = static_cast<u8 *>(memalign(0x1000, IoCap));

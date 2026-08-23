@@ -495,6 +495,8 @@
   "unknown": "Okänd",
   "inv_server": "Server för enhetsinventering",
   "inv_address": "Companion-adress",
+  "sd_full_access": "Full åtkomst till SD-kortet",
+  "sd_full_access_confirm": "Detta låter PC-companion-appen bläddra, lägga till, byta namn på och ta bort VILKEN SOM HELST fil på ditt SD-kort via Wi-Fi och USB — inte bara mapparna som HaulNX hanterar. Vill du aktivera det?",
   "storage_title": "SD-kort",
   "storage_detail": "%s ledigt av %s\nNedladdningsmapp: %s\nMetadatacache: %s",
   "getting_started": "Kom igång",

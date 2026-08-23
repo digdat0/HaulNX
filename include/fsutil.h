@@ -37,6 +37,16 @@ bool fs_exists(const char *path);
  * gone afterwards. */
 bool fs_rm_rf(const char *path);
 
+/* fs_rm_rf, but checking *cancel before descending into each entry so a long
+ * delete can be unwound early. Used by the SD Card tab's background delete
+ * workers (Wi-Fi's fs_rm and the MTP responder's DeleteObject), which run a
+ * potentially huge tree off the render/command thread and need to be able to
+ * stop promptly on shutdown/reconnect rather than riding out the whole tree
+ * to completion. Whatever has already been removed by the time *cancel trips
+ * stays removed — this is "stop", not "undo". `cancel` may be NULL, in which
+ * case this behaves exactly like fs_rm_rf. */
+bool fs_rm_rf_cancelable(const char *path, const volatile bool *cancel);
+
 /* Keep an append-only log from growing without bound. Once `path` is larger
  * than max_bytes it is moved aside as "<path>.1" (replacing any previous one)
  * and the live file starts empty, so at most two generations are ever on the

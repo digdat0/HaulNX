@@ -495,6 +495,8 @@
   "unknown": "알 수 없음",
   "inv_server": "기기 목록 서버",
   "inv_address": "컴패니언 주소",
+  "sd_full_access": "SD 카드 전체 접근",
+  "sd_full_access_confirm": "이 기능을 켜면 PC 컴패니언 앱이 Wi-Fi와 USB를 통해 SD 카드의 모든 파일을 찾아보고, 추가하고, 이름을 바꾸고, 삭제할 수 있게 됩니다 — HaulNX가 관리하는 폴더뿐만 아니라요. 켜시겠습니까?",
   "storage_title": "SD 카드",
   "storage_detail": "%s / %s 사용 가능\n다운로드 폴더: %s\n메타데이터 캐시: %s",
   "getting_started": "시작하기",

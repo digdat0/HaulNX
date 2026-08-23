@@ -50,9 +50,15 @@ namespace mtp {
     // root    = resolved ROM library root (used for the storage's free/total).
     // folders = the console folders to surface at the storage root (copied).
     // inbox   = staging folder shown as a top-level "Inbox" object.
+    // sd_root = when non-NULL/non-empty (Prefs.sd_full_access on), an extra
+    //           top-level "SD Card" object browsable/writable/deletable over
+    //           the WHOLE card (normally "sdmc:/") -- the USB counterpart of
+    //           the inventory server's fs_* routes. NULL/"" (the default)
+    //           omits it entirely, same as if the feature didn't exist.
     // Returns false if usb:ds could not be acquired (e.g. docked, or the host
     // owns USB). Safe to call twice.
-    bool Start(const char *root, const Folder *folders, int nfolders, const char *inbox);
+    bool Start(const char *root, const Folder *folders, int nfolders,
+              const char *inbox, const char *sd_root = nullptr);
 
     // Current link state; call once per frame while the screen is open.
     Status Poll();
@@ -108,6 +114,18 @@ namespace mtp {
     // for why inline extraction stalled the PC. The archive is removed on a
     // successful unpack, same as the download-install path.
     void EnqueueExtract(const char *path, u64 size);
+
+    // Hand a DeleteObject target at `path` to the background delete worker and
+    // return at once. A folder can be huge (a whole console's ROMs, or
+    // anywhere on the SD Card tree) -- recursing rm -rf inline on the
+    // responder thread would freeze the command loop and the USB link for the
+    // whole delete, the same shape EnqueueExtract exists to avoid for a
+    // received archive's unpack. The caller (responder.cpp) has already
+    // orphaned the object and acked the command by the time this is called,
+    // so the deletion itself is fire-and-forget from the protocol's point of
+    // view; Stop() unwinds an in-flight one promptly rather than riding out
+    // the whole tree (see fs_rm_rf_cancelable).
+    void EnqueueDelete(const char *path);
 
 }
 #endif

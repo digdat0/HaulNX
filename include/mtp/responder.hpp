@@ -40,8 +40,11 @@ namespace mtp {
     /* Run the command loop until *stop* is signalled or the USB link drops.
      * root    = resolved ROM library root (used for storage free/total).
      * folders = console folders surfaced at the storage root (name shown, path
-     *           backing). inbox = staging folder surfaced as "Inbox". */
+     *           backing). inbox = staging folder surfaced as "Inbox".
+     * sd_root = optional extra top-level "SD Card" folder over the whole
+     *           card (see mtp::Start); NULL/"" omits it. */
     void RunResponder(UsbSession *session, UEvent *stop, const char *root,
-                      const Folder *folders, int nfolders, const char *inbox);
+                      const Folder *folders, int nfolders, const char *inbox,
+                      const char *sd_root = nullptr);
 
 }

@@ -495,6 +495,8 @@
   "unknown": "Desconocido",
   "inv_server": "Servidor de inventario del dispositivo",
   "inv_address": "Dirección de la app complementaria",
+  "sd_full_access": "Acceso completo a la tarjeta SD",
+  "sd_full_access_confirm": "Esto permite que la app complementaria de PC explore, añada, renombre y elimine CUALQUIER archivo de tu tarjeta SD por Wi-Fi y USB — no solo las carpetas que gestiona HaulNX. ¿Activarlo?",
   "storage_title": "Tarjeta SD",
   "storage_detail": "%s libres de %s\nCarpeta de descargas: %s\nCaché de metadatos: %s",
   "getting_started": "Primeros pasos",

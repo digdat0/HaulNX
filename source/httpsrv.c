@@ -2,9 +2,12 @@
 
 #include "config.h" /* SOURCES_PATH: the file this page uploads and exports */
 #include "fsutil.h" /* fs_log_rotate / fs_mkdir_p for the lifecycle trace */
+#include "jsonutil.h" /* json_write_escaped: GET fs_list's directory listing */
+#include "queue.h"  /* the desktop companion's Downloads tab: queue control */
 
 #include <arpa/inet.h>
 #include <ctype.h>
+#include <dirent.h>   /* opendir/readdir: GET fs_list (the SD Card tab) */
 #include <errno.h>
 #include <fcntl.h>
 #include <stdarg.h>
@@ -15,6 +18,7 @@
 #include <string.h>
 #include <strings.h>
 #include <sys/socket.h>
+#include <sys/stat.h> /* stat/S_ISDIR: fs_list entries, sd_path_allowed callers */
 #include <sys/time.h>
 #include <switch.h>
 #include <unistd.h>
@@ -816,6 +820,82 @@ static bool path_allowed(const HttpSrv *s, const char *path) {
     return false;
 }
 
+/* Gate for the fs_* routes (the desktop companion's SD Card tab): the
+ * decoded path just needs to be a real sdmc: path free of ".." segments —
+ * unlike path_allowed there is no roots confinement, because unscoped access
+ * to the whole card is the entire point of this feature. Only ever reachable
+ * when s->sd_access is on (mirrors Prefs.sd_full_access); every call site
+ * checks that first. */
+static bool sd_path_allowed(const HttpSrv *s, const char *path) {
+    (void)s;
+    return path[0] && strncmp(path, "sdmc:/", 6) == 0 && !has_dotdot(path);
+}
+
+/* True if `path` (already cleared by sd_path_allowed) names the SD card root
+ * itself -- "sdmc:/", or the same with extra trailing slashes -- rather than
+ * a real entry under it. fs_rm/fs_mv must refuse this: deleting or renaming
+ * it would touch the ENTIRE card (every other homebrew's data, saves,
+ * system files), not one file or folder, and nothing about "browse/add/
+ * rename/delete anywhere on the card" was ever meant to include the card
+ * itself. Mirrors the same guard on the MTP side (responder.cpp's IsSdRoot)
+ * for the synthetic "SD Card" object's own handle. */
+static bool sd_path_is_root(const char *path) {
+    size_t n = strlen(path);
+    while (n > 0 && path[n - 1] == '/') {
+        n--;
+    }
+    return n == 5 && strncmp(path, "sdmc:", 5) == 0;
+}
+
+/* Scratch file for GET fs_list — same "build to a temp file, then send_file
+ * it" shape as inventory.json (see WriteInventoryJson): a directory listing
+ * is regenerated fresh on every request, so there's nothing gained by holding
+ * it in memory, and writing through json_write_escaped (fprintf-based, like
+ * every other JSON writer in this app) avoids a second, buffer-based escaper
+ * that would have to be kept in sync with it. */
+#define FS_LIST_TMP_PATH DATA_DIR "/fs_list.tmp.json"
+
+/* Write a JSON directory listing of `path` to FS_LIST_TMP_PATH for GET
+ * fs_list: an object per entry with its name, whether it's a folder, size and
+ * mtime (both 0 for a folder). False if `path` isn't a readable directory or
+ * the file couldn't be written. */
+static bool build_fs_list_json(const char *path) {
+    DIR *d = opendir(path);
+    if (!d) {
+        return false;
+    }
+    fs_mkdir_p(DATA_DIR);
+    FILE *f = fopen(FS_LIST_TMP_PATH, "wb");
+    if (!f) {
+        closedir(d);
+        return false;
+    }
+    fputs("{\"entries\":[", f);
+    struct dirent *e;
+    bool first = true;
+    while ((e = readdir(d)) != NULL) {
+        if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..")) {
+            continue;
+        }
+        char full[1280];
+        int fn = snprintf(full, sizeof(full), "%s/%s", path, e->d_name);
+        struct stat st;
+        if (fn <= 0 || (size_t)fn >= sizeof(full) || stat(full, &st) != 0) {
+            continue;
+        }
+        fputs(first ? "{\"name\":" : ",{\"name\":", f);
+        json_write_escaped(f, e->d_name);
+        fprintf(f, ",\"dir\":%s,\"size\":%llu,\"mtime\":%lld}",
+                S_ISDIR(st.st_mode) ? "true" : "false",
+                S_ISDIR(st.st_mode) ? 0ULL : (unsigned long long)st.st_size,
+                (long long)st.st_mtime);
+        first = false;
+    }
+    closedir(d);
+    fputs("]}", f);
+    return fclose(f) == 0;
+}
+
 /* Match "/<token>/<leaf>?p=<value>" and return the still-encoded <value> (with
  * its length in *vlen), or NULL. The token is part of the match, so a request
  * that reaches a real value has already cleared the code gate. */
@@ -836,6 +916,18 @@ static const char *route_pval(const HttpSrv *s, const char *p, size_t pl,
     }
     *vlen = rem - ll - 3;
     return q + ll + 3;
+}
+
+/* Match "/<token>/<leaf>" exactly, no query string -- for a POST action that
+ * takes no parameters (e.g. the Downloads tab's pause/resume/clear-all). */
+static bool route_leaf(const HttpSrv *s, const char *p, size_t pl,
+                       const char *leaf) {
+    size_t tl = strlen(s->token);
+    size_t pre = 1 + tl + 1; /* "/<token>/" */
+    size_t ll = strlen(leaf);
+    return pl == pre + ll && p[0] == '/' &&
+           strncmp(p + 1, s->token, tl) == 0 && p[1 + tl] == '/' &&
+           strncmp(p + pre, leaf, ll) == 0;
 }
 
 /* Reject a request whose Host header names anyone but this console. A browser
@@ -970,6 +1062,17 @@ static int respond_simple(HttpSrv *s, int fd, const char *head) {
         if (!send_file(fd, DIAG_BUNDLE_PATH, "text/plain", NULL)) {
             send_resp(fd, "404 Not Found", "text/plain", "no logs yet");
         }
+    } else if (s->mode == HTTPSRV_MODE_INVENTORY &&
+               pl == tl + sizeof("/queue_status.json") - 1 &&
+               p[0] == '/' && strncmp(p + 1, s->token, tl - 1) == 0 &&
+               strncmp(p + tl, "/queue_status.json",
+                       sizeof("/queue_status.json") - 1) == 0) {
+        /* The desktop companion's Downloads tab: active downloads + history.
+         * Regenerated fresh on every request, like debug_bundle.txt above. */
+        queue_write_status_json(QUEUE_STATUS_PATH);
+        if (!send_file(fd, QUEUE_STATUS_PATH, "application/json", NULL)) {
+            send_resp(fd, "404 Not Found", "text/plain", "no queue status");
+        }
     } else if (s->mode == HTTPSRV_MODE_INVENTORY && pl == tl + 20 &&
                p[0] == '/' && strncmp(p + 1, s->token, tl - 1) == 0 &&
                strncmp(p + tl, "/update_sources.json", 20) == 0) {
@@ -1016,6 +1119,71 @@ static int respond_simple(HttpSrv *s, int fd, const char *head) {
         } else {
             /* Send the header now, then hand the body to stream_out over the
              * following polls — the file never buffers in RAM. */
+            char head[384];
+            int hn = snprintf(head, sizeof(head),
+                              "HTTP/1.1 200 OK\r\n"
+                              "Content-Type: application/octet-stream\r\n"
+                              "Content-Length: %ld\r\n"
+                              "Content-Disposition: attachment; filename=\"%s\"\r\n"
+                              "Access-Control-Allow-Origin: *\r\n"
+                              "Connection: close\r\n\r\n",
+                              sz, dl);
+            if (!head_ok(hn, sizeof(head)) || !send_all(fd, head, (size_t)hn)) {
+                fclose(src);
+                client_reset(s);
+                return 0;
+            }
+            s->src = src;
+            s->src_left = (unsigned long long)sz;
+            return 0; /* body streams next poll; keep the connection (no reset) */
+        }
+    } else if (s->mode == HTTPSRV_MODE_INVENTORY && s->sd_access &&
+               (fval = route_pval(s, p, pl, "fs_list", &fvlen)) != NULL) {
+        /* The SD Card tab's directory listing: "/<token>/fs_list?p=<abs dir>",
+         * any real sdmc: path (see sd_path_allowed — no roots confinement,
+         * that's the whole point of this feature). Regenerated fresh on every
+         * request, like inventory.json. */
+        char path[1024];
+        pct_decode(fval, fvlen, path, sizeof(path));
+        if (!sd_path_allowed(s, path) || !build_fs_list_json(path)) {
+            send_resp(fd, "404 Not Found", "text/plain", "no such folder");
+        } else if (!send_file(fd, FS_LIST_TMP_PATH, "application/json", NULL)) {
+            send_resp(fd, "500 Internal Server Error", "text/plain", "listing failed");
+        }
+    } else if (s->mode == HTTPSRV_MODE_INVENTORY && s->sd_access &&
+               (fval = route_pval(s, p, pl, "fs_get", &fvlen)) != NULL) {
+        /* Pull one file from anywhere on the card to the PC: the SD Card tab's
+         * counterpart to the "file" route above, gated by sd_path_allowed
+         * instead of the managed-folders path_allowed. Same streamed-out shape:
+         * the header goes now, the body over the following polls. */
+        char path[1024];
+        pct_decode(fval, fvlen, path, sizeof(path));
+        const char *base = path;
+        for (const char *q = path; *q; q++) {
+            if (*q == '/') {
+                base = q + 1;
+            }
+        }
+        char dl[256];
+        size_t j = 0;
+        for (const char *q = base; *q && j + 1 < sizeof(dl); q++) {
+            unsigned char c = (unsigned char)*q;
+            dl[j++] = (c < 0x20 || c == '"') ? '_' : (char)c;
+        }
+        dl[j] = '\0';
+        FILE *src = sd_path_allowed(s, path) ? fopen(path, "rb") : NULL;
+        long sz = -1;
+        if (src) {
+            fseek(src, 0, SEEK_END);
+            sz = ftell(src);
+            fseek(src, 0, SEEK_SET);
+        }
+        if (!src || sz < 0) {
+            if (src) {
+                fclose(src);
+            }
+            send_resp(fd, "404 Not Found", "text/plain", "no file");
+        } else {
             char head[384];
             int hn = snprintf(head, sizeof(head),
                               "HTTP/1.1 200 OK\r\n"
@@ -1379,6 +1547,69 @@ static int rx_finalize(HttpSrv *s) {
     return 4;
 }
 
+/* Context for one background fs_rm delete (see rm_thread_fn / rm_finalize).
+ * Heap-allocated and hung off HttpSrv.rm_thread (a void* so <switch.h> stays
+ * out of the header), freed by rm_finalize. */
+typedef struct {
+    HttpSrv *s;
+    Thread   thr;
+    char     path[1024];
+} RmCtx;
+
+/* Runs fs_rm_rf_cancelable off the UI thread: a folder can hold thousands of
+ * files, and doing this inline in client_step would freeze httpsrv_poll's
+ * accept() for the whole delete -- see the fs_rm route's comment. Checks
+ * s->rm_cancel (set by httpsrv_abort/close/rebind) so a shutdown or Wi-Fi
+ * rebind mid-delete unwinds promptly instead of riding out the whole tree. */
+static void rm_thread_fn(void *arg) {
+    RmCtx *rc = (RmCtx *)arg;
+    HttpSrv *s = rc->s;
+    bool ok = fs_rm_rf_cancelable(rc->path, &s->rm_cancel);
+    s->rm_ok = ok;
+    __sync_synchronize(); /* result must be visible before rm_done */
+    s->rm_done = true;
+}
+
+/* Join a running (or just-finished) fs_rm worker and free it. Called both by
+ * rm_finalize (the ordinary "it's done, answer the client" path) and by
+ * httpsrv_abort/close/rebind (the "tear the server down regardless" path) --
+ * the latter sets rm_cancel first so the join doesn't ride out a huge tree. */
+static void rm_join(HttpSrv *s) {
+    if (!s->rm_running) {
+        return;
+    }
+    RmCtx *rc = (RmCtx *)s->rm_thread;
+    s->rm_cancel = true;
+    threadWaitForExit(&rc->thr);
+    threadClose(&rc->thr);
+    free(rc);
+    s->rm_thread = NULL;
+    s->rm_running = false;
+    s->rm_done = false;
+    s->rm_cancel = false;
+}
+
+/* UI-thread side of a background fs_rm: returns 0 while the worker is still
+ * deleting, and on completion joins it and sends the response client_step
+ * used to send inline. */
+static int rm_finalize(HttpSrv *s) {
+    if (!s->rm_done) {
+        return 0; /* still deleting */
+    }
+    __sync_synchronize(); /* pair with the barrier before rm_done */
+    bool ok = s->rm_ok;
+    int fd = s->client_fd;
+    rm_join(s);
+    make_blocking(fd);
+    if (ok) {
+        send_resp(fd, "200 OK", "text/plain", "deleted");
+    } else {
+        send_resp(fd, "500 Internal Server Error", "text/plain", "failed");
+    }
+    client_reset(s);
+    return 0;
+}
+
 static int client_step(HttpSrv *s) {
     int fd = s->client_fd;
     bool got_data = false;
@@ -1393,6 +1624,12 @@ static int client_step(HttpSrv *s) {
      * then join and finalize here on the UI thread. */
     if (s->rx_running) {
         return rx_finalize(s);
+    }
+
+    /* An fs_rm delete is running on its own thread (see rm_thread_fn); same
+     * shape as rx_running above. */
+    if (s->rm_running) {
+        return rm_finalize(s);
     }
 
     /* Phase 1: the request head. The body (if any) starts in whatever the
@@ -1521,6 +1758,183 @@ static int client_step(HttpSrv *s) {
                 client_reset(s);
                 return 0;
             }
+            /* The SD Card tab's three bodyless write actions — delete
+             * (recursive: files and whole folders alike, matching what
+             * Explorer-over-MTP already does), new folder, and move/rename —
+             * gated by s->sd_access and sd_path_allowed instead of the
+             * managed-folders path_allowed the rm/mv routes above use. Kept
+             * as distinct leaves (fs_rm/fs_mkdir/fs_mv) rather than widening
+             * rm/mv's own gate, so the two access levels can never be
+             * confused by a routing mistake. */
+            if (s->sd_access) {
+                size_t frlen = 0;
+                const char *frval = route_pval(s, p, pl, "fs_rm", &frlen);
+                if (frval) {
+                    make_blocking(fd);
+                    char path[1024];
+                    pct_decode(frval, frlen, path, sizeof(path));
+                    if (!host_ok(s, s->head)) {
+                        send_resp(fd, "403 Forbidden", "text/plain", "wrong host");
+                        client_reset(s);
+                        return 0;
+                    }
+                    if (!sd_path_allowed(s, path) || sd_path_is_root(path)) {
+                        send_resp(fd, "403 Forbidden", "text/plain", "denied");
+                        client_reset(s);
+                        return 0;
+                    }
+                    /* fs_rm_rf can walk a huge tree; run it off this thread
+                     * (see rm_thread_fn) instead of inline, so a big delete
+                     * never freezes httpsrv_poll's accept() for everyone
+                     * else -- this project already paid for that exact
+                     * mistake once with inline extraction (see the
+                     * InvServerPoll note it fixed). The connection is kept
+                     * open (no client_reset) until the worker finishes;
+                     * client_step's rm_running check takes it from here. */
+                    RmCtx *rc = calloc(1, sizeof(RmCtx));
+                    if (!rc) {
+                        send_resp(fd, "500 Internal Server Error", "text/plain", "oom");
+                        client_reset(s);
+                        return 0;
+                    }
+                    rc->s = s;
+                    snprintf(rc->path, sizeof(rc->path), "%s", path);
+                    s->rm_ok = false;
+                    s->rm_done = false;
+                    s->rm_cancel = false;
+                    if (R_FAILED(threadCreate(&rc->thr, rm_thread_fn, rc, NULL,
+                                              RX_STACK, RX_PRIO, -2)) ||
+                        R_FAILED(threadStart(&rc->thr))) {
+                        free(rc);
+                        send_resp(fd, "500 Internal Server Error", "text/plain",
+                                  "delete thread failed");
+                        client_reset(s);
+                        return 0;
+                    }
+                    s->rm_thread = rc;
+                    s->rm_running = true;
+                    return 0; /* pending; rm_finalize answers once it's done */
+                }
+                size_t fdlen = 0;
+                const char *fdval = route_pval(s, p, pl, "fs_mkdir", &fdlen);
+                if (fdval) {
+                    make_blocking(fd);
+                    if (!host_ok(s, s->head)) {
+                        send_resp(fd, "403 Forbidden", "text/plain", "wrong host");
+                    } else {
+                        char path[1024];
+                        pct_decode(fdval, fdlen, path, sizeof(path));
+                        if (sd_path_allowed(s, path) && fs_mkdir_p(path)) {
+                            send_resp(fd, "200 OK", "text/plain", "created");
+                        } else {
+                            send_resp(fd, "403 Forbidden", "text/plain", "denied");
+                        }
+                    }
+                    client_reset(s);
+                    return 0;
+                }
+                size_t fmvlen = 0;
+                const char *fmvval = route_pval(s, p, pl, "fs_mv", &fmvlen);
+                if (fmvval) {
+                    make_blocking(fd);
+                    const char *sep = NULL;
+                    for (size_t i = 0; i + 3 <= fmvlen; i++) {
+                        if (fmvval[i] == '&' && fmvval[i + 1] == 'd' &&
+                            fmvval[i + 2] == '=') {
+                            sep = fmvval + i;
+                            break;
+                        }
+                    }
+                    if (!host_ok(s, s->head)) {
+                        send_resp(fd, "403 Forbidden", "text/plain", "wrong host");
+                    } else if (!sep) {
+                        send_resp(fd, "400 Bad Request", "text/plain", "need dest");
+                    } else {
+                        char src[1024], dst[1024];
+                        pct_decode(fmvval, (size_t)(sep - fmvval), src, sizeof(src));
+                        pct_decode(sep + 3,
+                                  (size_t)((fmvval + fmvlen) - (sep + 3)), dst,
+                                  sizeof(dst));
+                        bool occupied = false;
+                        if (strcasecmp(src, dst) != 0) {
+                            FILE *ex = fopen(dst, "rb");
+                            if (ex) {
+                                fclose(ex);
+                                occupied = true;
+                            }
+                        }
+                        if (!sd_path_allowed(s, src) || !sd_path_allowed(s, dst) ||
+                            sd_path_is_root(src) || sd_path_is_root(dst)) {
+                            send_resp(fd, "403 Forbidden", "text/plain", "denied");
+                        } else if (occupied) {
+                            send_resp(fd, "409 Conflict", "text/plain", "exists");
+                        } else if (rename(src, dst) == 0) {
+                            send_resp(fd, "200 OK", "text/plain", "moved");
+                        } else {
+                            send_resp(fd, "500 Internal Server Error", "text/plain",
+                                      "failed");
+                        }
+                    }
+                    client_reset(s);
+                    return 0;
+                }
+            }
+            /* Queue control for the desktop companion's Downloads tab: cancel
+             * or restart one item by slot, or a queue-wide bulk action. No
+             * body; confined to this server's token/host like rm and mv. */
+            size_t qlen = 0;
+            const char *qval = route_pval(s, p, pl, "q_cancel", &qlen);
+            const char *qleaf = "q_cancel";
+            if (!qval) {
+                qval = route_pval(s, p, pl, "q_retry", &qlen);
+                qleaf = "q_retry";
+            }
+            if (!qval) {
+                qval = route_pval(s, p, pl, "q_remove", &qlen);
+                qleaf = "q_remove";
+            }
+            if (qval) {
+                make_blocking(fd);
+                if (!host_ok(s, s->head)) {
+                    send_resp(fd, "403 Forbidden", "text/plain", "wrong host");
+                } else {
+                    char slotbuf[16];
+                    pct_decode(qval, qlen, slotbuf, sizeof(slotbuf));
+                    int slot = atoi(slotbuf);
+                    if (strcmp(qleaf, "q_cancel") == 0) {
+                        queue_cancel(slot);
+                        send_resp(fd, "200 OK", "text/plain", "ok");
+                    } else if (strcmp(qleaf, "q_retry") == 0) {
+                        queue_retry(slot);
+                        send_resp(fd, "200 OK", "text/plain", "ok");
+                    } else {
+                        bool ok = queue_remove(slot);
+                        send_resp(fd, ok ? "200 OK" : "409 Conflict",
+                                  "text/plain", ok ? "removed" : "not finished");
+                    }
+                }
+                client_reset(s);
+                return 0;
+            }
+            if (route_leaf(s, p, pl, "q_pause_all") ||
+                route_leaf(s, p, pl, "q_resume_all") ||
+                route_leaf(s, p, pl, "q_clear_all")) {
+                make_blocking(fd);
+                if (!host_ok(s, s->head)) {
+                    send_resp(fd, "403 Forbidden", "text/plain", "wrong host");
+                } else {
+                    if (route_leaf(s, p, pl, "q_pause_all")) {
+                        queue_pause_all();
+                    } else if (route_leaf(s, p, pl, "q_resume_all")) {
+                        queue_retry_status(Q_PAUSED);
+                    } else {
+                        queue_clear_finished();
+                    }
+                    send_resp(fd, "200 OK", "text/plain", "ok");
+                }
+                client_reset(s);
+                return 0;
+            }
         }
         /* The inventory server serves GET read-only, but accepts one write: a
          * collection pushed from the app utility. It is buffered like an import
@@ -1561,6 +1975,30 @@ static int client_step(HttpSrv *s) {
             s->recv_app_path[0] = '\0';
             s->recv_app_new = false;
             s->recv_folder[0] = '\0';   /* cleared unless this is a Library game push */
+            s->recv_fs_dest[0] = '\0'; /* cleared unless this is an SD Card tab write */
+            /* SD Card tab direct write: X-Fs-Path names the exact destination
+             * (percent-encoded), honored only when sd_access is on and the
+             * decoded path is a plain sdmc: path with no ".." escape (see
+             * sd_path_allowed). The client also sends X-Filename with the same
+             * basename, so this still rides the ordinary staged-to-INBOX_DIR
+             * .part upload every other push uses — InvApplyFile just moves the
+             * finished part straight to recv_fs_dest afterwards instead of
+             * routing it through the app/library/inbox logic a game push
+             * gets. An invalid or disallowed path is left empty rather than
+             * rejecting the request outright, so a bad value falls back to
+             * landing in the inbox (like a nameless push) instead of the
+             * connection erroring mid-setup. */
+            if (s->sd_access) {
+                const char *fp = hdr_val(s->head, "x-fs-path:");
+                if (fp) {
+                    char dest[768];
+                    pct_decode(fp, strcspn(fp, "\r\n"), dest, sizeof(dest));
+                    if (sd_path_allowed(s, dest)) {
+                        snprintf(s->recv_fs_dest, sizeof(s->recv_fs_dest), "%s",
+                                dest);
+                    }
+                }
+            }
             /* A DAT push (companion › DAT Files) carries X-Dat and must buffer so
              * the caller can read its header and file it by console — never route
              * it to the streamed-to-inbox path even though it has an X-Filename. */
@@ -2054,11 +2492,13 @@ void httpsrv_abort(HttpSrv *s) {
      * ".part" sink and any outgoing pull, and clears the head/body-in-progress —
      * exactly a cancel. listen_fd is left open so the caller can keep serving. */
     rx_join(s);
+    rm_join(s); /* signals rm_cancel first, so this doesn't ride out a huge delete */
     client_reset(s);
 }
 
 void httpsrv_close(HttpSrv *s) {
     rx_join(s);
+    rm_join(s);
     client_reset(s);
     if (s->listen_fd >= 0) {
         close(s->listen_fd);
@@ -2079,6 +2519,7 @@ bool httpsrv_rebind(HttpSrv *s) {
      * swapped for a live one. Any connection that was in flight when we slept is
      * already dead, so drop it. */
     rx_join(s);
+    rm_join(s);
     client_reset(s);
     if (s->listen_fd >= 0) {
         close(s->listen_fd);

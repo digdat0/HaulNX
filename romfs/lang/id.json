@@ -495,6 +495,8 @@
   "unknown": "Tidak diketahui",
   "inv_server": "Server inventaris perangkat",
   "inv_address": "Alamat companion",
+  "sd_full_access": "Akses penuh kartu SD",
+  "sd_full_access_confirm": "Ini memungkinkan aplikasi companion PC menjelajah, menambah, mengganti nama, dan menghapus SEMUA file di kartu SD Anda lewat Wi-Fi dan USB — bukan hanya folder yang dikelola HaulNX. Aktifkan?",
   "storage_title": "Kartu SD",
   "storage_detail": "%s kosong dari %s\nFolder unduhan: %s\nCache metadata: %s",
   "getting_started": "Memulai",
