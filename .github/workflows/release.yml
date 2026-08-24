@@ -19,6 +19,11 @@ on:
       tag:
         description: "Release tag to create (e.g. v1.1.2-romm.2)"
         required: true
+      notes:
+        description: "Release notes body (optional). Dispatching again for an
+          existing tag updates that release's notes/asset in place instead of
+          creating a new one."
+        required: false
 
 permissions:
   contents: write
@@ -55,5 +60,6 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ inputs.tag || github.ref_name }}
+          body: ${{ inputs.notes }}
           files: "*.nro"
           generate_release_notes: true
