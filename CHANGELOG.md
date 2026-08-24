@@ -7,6 +7,29 @@ Notes for each release. `release.sh` pulls the section matching the version in
 `VERSION` and attaches it to the GitHub release. Add a `## <version>` section
 here before running a release.
 
+## 2.1.14
+
+**Fix: guided tour never ran on a fresh install. Help content overhauled.**
+
+- **Fixed the first-launch bug**: the tour's trigger checked
+  `g_cfg.console_count == 0`, but a fresh install seeds every supported
+  console (with 0 repos each) from the bundled `dl_sources.json` — so
+  `console_count` was never actually 0 and the tour silently never fired. It
+  now checks whether any console has a repo configured instead, which is what
+  "nothing to browse yet" actually means.
+- Help content reframed around **ROM management, not just downloading**:
+  organizing, verifying, and maintaining a library are now front and center
+  in the tour and Getting Started, alongside browsing/downloading.
+- New tour step and Getting Started/How-To articles on **pointing your
+  emulators at your ROM folder** (sdmc:/roms/<console>, or a custom Install
+  Folder) — previously missing entirely.
+- How-To grew from 12 to 18 guides, adding: downloading several games at
+  once, changing view/theme/language, choosing which consoles show, clearing
+  out the Downloads/Inbox/largest-files scratch space, and viewing/exporting
+  logs.
+- Troubleshooting grew from 10 to 12, adding: "my emulator can't find my
+  games" and "box art isn't showing."
+
 ## 2.1.13
 
 **New: in-app Help hub + first-time guided tour.**

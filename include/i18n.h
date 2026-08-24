@@ -687,6 +687,7 @@ enum {
     S_TOUR4_TITLE, S_TOUR4_BODY,
     S_TOUR5_TITLE, S_TOUR5_BODY,
     S_TOUR6_TITLE, S_TOUR6_BODY,
+    S_TOUR7_TITLE, S_TOUR7_BODY,
 
     /* Getting Started articles. */
     S_GS1_TITLE, S_GS1_BODY,
@@ -694,6 +695,7 @@ enum {
     S_GS3_TITLE, S_GS3_BODY,
     S_GS4_TITLE, S_GS4_BODY,
     S_GS5_TITLE, S_GS5_BODY,
+    S_GS6_TITLE, S_GS6_BODY,
 
     /* How-To articles. */
     S_HOWTO1_TITLE, S_HOWTO1_BODY,
@@ -708,6 +710,12 @@ enum {
     S_HOWTO10_TITLE, S_HOWTO10_BODY,
     S_HOWTO11_TITLE, S_HOWTO11_BODY,
     S_HOWTO12_TITLE, S_HOWTO12_BODY,
+    S_HOWTO13_TITLE, S_HOWTO13_BODY,
+    S_HOWTO14_TITLE, S_HOWTO14_BODY,
+    S_HOWTO15_TITLE, S_HOWTO15_BODY,
+    S_HOWTO16_TITLE, S_HOWTO16_BODY,
+    S_HOWTO17_TITLE, S_HOWTO17_BODY,
+    S_HOWTO18_TITLE, S_HOWTO18_BODY,
 
     /* Troubleshooting articles. */
     S_TS1_TITLE, S_TS1_BODY,
@@ -720,6 +728,8 @@ enum {
     S_TS8_TITLE, S_TS8_BODY,
     S_TS9_TITLE, S_TS9_BODY,
     S_TS10_TITLE, S_TS10_BODY,
+    S_TS11_TITLE, S_TS11_BODY,
+    S_TS12_TITLE, S_TS12_BODY,
 
     /* ---- DAT verification (Library tab) ---- */
     S_VERIFY_DAT,      /* console options-menu entry ("Verify Files") */

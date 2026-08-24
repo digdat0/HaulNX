@@ -4496,7 +4496,7 @@ struct HelpArticle { int title; int body; };
 static const HelpArticle kHelpGetStarted[] = {
     {S_GS1_TITLE, S_GS1_BODY}, {S_GS2_TITLE, S_GS2_BODY},
     {S_GS3_TITLE, S_GS3_BODY}, {S_GS4_TITLE, S_GS4_BODY},
-    {S_GS5_TITLE, S_GS5_BODY},
+    {S_GS5_TITLE, S_GS5_BODY}, {S_GS6_TITLE, S_GS6_BODY},
 };
 static const HelpArticle kHelpHowTo[] = {
     {S_HOWTO1_TITLE, S_HOWTO1_BODY},   {S_HOWTO2_TITLE, S_HOWTO2_BODY},
@@ -4505,6 +4505,9 @@ static const HelpArticle kHelpHowTo[] = {
     {S_HOWTO7_TITLE, S_HOWTO7_BODY},   {S_HOWTO8_TITLE, S_HOWTO8_BODY},
     {S_HOWTO9_TITLE, S_HOWTO9_BODY},   {S_HOWTO10_TITLE, S_HOWTO10_BODY},
     {S_HOWTO11_TITLE, S_HOWTO11_BODY}, {S_HOWTO12_TITLE, S_HOWTO12_BODY},
+    {S_HOWTO13_TITLE, S_HOWTO13_BODY}, {S_HOWTO14_TITLE, S_HOWTO14_BODY},
+    {S_HOWTO15_TITLE, S_HOWTO15_BODY}, {S_HOWTO16_TITLE, S_HOWTO16_BODY},
+    {S_HOWTO17_TITLE, S_HOWTO17_BODY}, {S_HOWTO18_TITLE, S_HOWTO18_BODY},
 };
 static const HelpArticle kHelpTrouble[] = {
     {S_TS1_TITLE, S_TS1_BODY},   {S_TS2_TITLE, S_TS2_BODY},
@@ -4512,6 +4515,7 @@ static const HelpArticle kHelpTrouble[] = {
     {S_TS5_TITLE, S_TS5_BODY},   {S_TS6_TITLE, S_TS6_BODY},
     {S_TS7_TITLE, S_TS7_BODY},   {S_TS8_TITLE, S_TS8_BODY},
     {S_TS9_TITLE, S_TS9_BODY},   {S_TS10_TITLE, S_TS10_BODY},
+    {S_TS11_TITLE, S_TS11_BODY}, {S_TS12_TITLE, S_TS12_BODY},
 };
 // Category -> {article array, count, screen title string id}. Getting Started
 // is index 0, matching GotoHelp's row order and Screen::Help's Sel().
@@ -4568,13 +4572,14 @@ void MainApplication::ShowHelpArticle(int cat, int idx) {
 // First-time guided walkthrough: a short run of Next/Back/Close dialogs
 // (SideMenu under the hood, same as every other confirm/pick flow), ending in
 // the existing Welcome() import/manual/later prompt. Reachable at first launch
-// (g_cfg.console_count == 0) and any time after from Help > Getting Started >
-// "Replay the guided tour".
+// (no repos configured on any console yet) and any time after from
+// Help > Getting Started > "Replay the guided tour".
 void MainApplication::GuidedTour() {
     static const HelpArticle kSteps[] = {
         {S_TOUR1_TITLE, S_TOUR1_BODY}, {S_TOUR2_TITLE, S_TOUR2_BODY},
         {S_TOUR3_TITLE, S_TOUR3_BODY}, {S_TOUR4_TITLE, S_TOUR4_BODY},
         {S_TOUR5_TITLE, S_TOUR5_BODY}, {S_TOUR6_TITLE, S_TOUR6_BODY},
+        {S_TOUR7_TITLE, S_TOUR7_BODY},
     };
     const int n = (int)(sizeof(kSteps) / sizeof(kSteps[0]));
     int i = 0;
@@ -14317,7 +14322,16 @@ void MainApplication::HandleInput(u64 down, u64 held,
         }
         // Last of the three: it offers a Wi-Fi transfer, so it must not come
         // before the network warning has had its say.
-        if (g_cfg.console_count == 0) {
+        //
+        // NOT console_count == 0: the bundled dl_sources.json seeds every
+        // supported console (with zero repos each) on first launch, so
+        // console_count is never 0 on a fresh install and this never fired.
+        // "Nothing to browse yet" actually means every console has 0 repos.
+        bool any_repos = false;
+        for (int c = 0; c < g_cfg.console_count && !any_repos; c++) {
+            any_repos = g_cfg.consoles[c].repo_count > 0;
+        }
+        if (!any_repos) {
             this->GuidedTour();
         }
         // Bring the companion inventory server up if it was left enabled.
