@@ -1148,10 +1148,22 @@ static void rebuild_files(MainLayout *lay, const char *target,
         lay->AddRow(tr(S_META_FAILED));
         return;
     }
+    // A repo whose URL override points into a subfolder of the item (rather
+    // than the item root) only browses files under that subfolder, matching
+    // what ia_file_url() actually downloads them as -- instead of showing
+    // every file across the whole (possibly multi-console) item.
+    char subfolder[512];
+    bool scoped = ia_item_subfolder(&g_item, subfolder, sizeof(subfolder));
+    size_t sub_len = scoped ? strlen(subfolder) : 0;
     for (int i = 0; i < g_item.file_count; i++) {
         // Hide sidecar/metadata files (.torrent, .xml, ...) per the Settings >
         // UI extension filter, so they never show as downloadable ROMs.
         if (prefs_ext_hidden(&g_prefs, g_item.files[i].name)) {
+            continue;
+        }
+        if (scoped &&
+            !(strncmp(g_item.files[i].name, subfolder, sub_len) == 0 &&
+              g_item.files[i].name[sub_len] == '/')) {
             continue;
         }
         if (g_filter.empty() ||
@@ -1197,9 +1209,18 @@ static void rebuild_files(MainLayout *lay, const char *target,
             }
         }
         g_marks.push_back((char)mark);
+        // Display-only: within a scoped subfolder, show names relative to it
+        // instead of repeating the same folder path on every row. Lookups
+        // above (install index, md5) and the URL builder still use the full
+        // f->name, so this has no effect beyond the row label.
+        const char *disp = f->name;
+        if (scoped && strncmp(disp, subfolder, sub_len) == 0 &&
+            disp[sub_len] == '/') {
+            disp += sub_len + 1;
+        }
         char name[540];
         snprintf(name, sizeof(name), "%s%s",
-                 mark == 2 ? "↑ " : mark == 1 ? "* " : "", f->name);
+                 mark == 2 ? "↑ " : mark == 1 ? "* " : "", disp);
         lay->AddRow2(name, human_size(f->size),
                      g_theme->row_text, size_color(f->size));
         // Re-apply the selection: ClearMenu() wiped the widget's row marks, but
@@ -3533,7 +3554,10 @@ MainApplication::Tab MainApplication::CurrentTab() {
     case Screen::Import:
     case Screen::ReleaseNotes:
     case Screen::ReleaseNote:
-    case Screen::QueueState: return Tab::Settings;
+    case Screen::QueueState:
+    case Screen::Help:
+    case Screen::HelpTopics:
+    case Screen::HelpArticle: return Tab::Settings;
     default:                return Tab::Browse; // Home/Repos/Files/RepoEdit/Picker/Search
     }
 }
@@ -3736,7 +3760,7 @@ void MainApplication::GotoSettings() {
         {S_SEC_UPDATES,     "set-updates"},     // 6 — carries the update chip
         {S_SEC_LOGS,        "set-logs"},        // 7
         {S_SEC_DIAGNOSTICS, "set-diagnostics"}, // 8
-        {S_GETTING_STARTED, "set-getting-started"}, // 9 — stub: re-runs onboarding
+        {S_SEC_HELP,        "set-help"},      // 9 — Getting Started/How-To/Troubleshooting
         {S_SEC_ABOUT,       "set-credits"},     // 10
     };
     // The "Update available" / "Restart to update" chip rides the Updates row,
@@ -4450,10 +4474,131 @@ void MainApplication::GotoAbout() {
     this->layout->SetEmptyState(logo, msg, "", true);
 }
 
-// Re-runnable onboarding: the same two-way "get a collection onto the console"
-// prompt a first-run user sees, reachable any time from About.
-void MainApplication::GettingStarted() {
-    this->Welcome();
+// ---- Help hub: Getting Started / How-To / Troubleshooting -----------------
+// Three flat category rows; each opens a scrollable article list. Content is
+// static (see ShowHelpCategory), so every screen here just (re)builds off the
+// category/index the caller passes in — nothing is fetched or cached.
+void MainApplication::GotoHelp() {
+    this->screen = Screen::Help;
+    this->layout->SetTitle(tr(S_TITLE_HELP));
+    this->layout->SetSubtitle(tr(S_SUB_HELP));
+    this->layout->ClearMenu();
+    this->layout->AddRow(tr(S_GETTING_STARTED));      // 0
+    this->layout->AddRow(tr(S_HELP_HOWTO));            // 1
+    this->layout->AddRow(tr(S_HELP_TROUBLESHOOTING));  // 2
+}
+
+// One category's article list. Getting Started's row 0 is a live action (replay
+// the guided tour) rather than an article, so it's spliced in ahead of the
+// static list — ShowHelpArticle's idx is always into kGetStarted/kHowTo/kTrouble
+// directly (never offset by that action row; OnInput subtracts 1 for it).
+struct HelpArticle { int title; int body; };
+static const HelpArticle kHelpGetStarted[] = {
+    {S_GS1_TITLE, S_GS1_BODY}, {S_GS2_TITLE, S_GS2_BODY},
+    {S_GS3_TITLE, S_GS3_BODY}, {S_GS4_TITLE, S_GS4_BODY},
+    {S_GS5_TITLE, S_GS5_BODY},
+};
+static const HelpArticle kHelpHowTo[] = {
+    {S_HOWTO1_TITLE, S_HOWTO1_BODY},   {S_HOWTO2_TITLE, S_HOWTO2_BODY},
+    {S_HOWTO3_TITLE, S_HOWTO3_BODY},   {S_HOWTO4_TITLE, S_HOWTO4_BODY},
+    {S_HOWTO5_TITLE, S_HOWTO5_BODY},   {S_HOWTO6_TITLE, S_HOWTO6_BODY},
+    {S_HOWTO7_TITLE, S_HOWTO7_BODY},   {S_HOWTO8_TITLE, S_HOWTO8_BODY},
+    {S_HOWTO9_TITLE, S_HOWTO9_BODY},   {S_HOWTO10_TITLE, S_HOWTO10_BODY},
+    {S_HOWTO11_TITLE, S_HOWTO11_BODY}, {S_HOWTO12_TITLE, S_HOWTO12_BODY},
+};
+static const HelpArticle kHelpTrouble[] = {
+    {S_TS1_TITLE, S_TS1_BODY},   {S_TS2_TITLE, S_TS2_BODY},
+    {S_TS3_TITLE, S_TS3_BODY},   {S_TS4_TITLE, S_TS4_BODY},
+    {S_TS5_TITLE, S_TS5_BODY},   {S_TS6_TITLE, S_TS6_BODY},
+    {S_TS7_TITLE, S_TS7_BODY},   {S_TS8_TITLE, S_TS8_BODY},
+    {S_TS9_TITLE, S_TS9_BODY},   {S_TS10_TITLE, S_TS10_BODY},
+};
+// Category -> {article array, count, screen title string id}. Getting Started
+// is index 0, matching GotoHelp's row order and Screen::Help's Sel().
+static const HelpArticle *help_articles(int cat, size_t *n) {
+    switch (cat) {
+    case 1:  *n = sizeof(kHelpHowTo) / sizeof(kHelpHowTo[0]);   return kHelpHowTo;
+    case 2:  *n = sizeof(kHelpTrouble) / sizeof(kHelpTrouble[0]); return kHelpTrouble;
+    default: *n = sizeof(kHelpGetStarted) / sizeof(kHelpGetStarted[0]);
+             return kHelpGetStarted;
+    }
+}
+static int help_category_title(int cat) {
+    switch (cat) {
+    case 1:  return S_HELP_HOWTO;
+    case 2:  return S_HELP_TROUBLESHOOTING;
+    default: return S_GETTING_STARTED;
+    }
+}
+
+void MainApplication::ShowHelpCategory(int cat) {
+    this->help_cat = cat;
+    this->screen = Screen::HelpTopics;
+    this->layout->SetTitle(tr(help_category_title(cat)));
+    this->layout->SetSubtitle(tr(S_SUB_HELP_TOPICS));
+    this->layout->ClearMenu();
+    if (cat == 0) {
+        this->layout->AddRow(tr(S_REPLAY_TOUR)); // live action, not an article
+    }
+    size_t n = 0;
+    const HelpArticle *arts = help_articles(cat, &n);
+    for (size_t i = 0; i < n; i++) {
+        this->layout->AddRow(tr(arts[i].title));
+    }
+}
+
+// One article, rendered as an "instruction sheet" (icon + wrapped body) --
+// the same layout Import/Export/USB-transfer already use for short numbered
+// how-to text, which is exactly what these articles are.
+void MainApplication::ShowHelpArticle(int cat, int idx) {
+    size_t n = 0;
+    const HelpArticle *arts = help_articles(cat, &n);
+    if (idx < 0 || (size_t)idx >= n) {
+        return;
+    }
+    this->help_cat = cat;
+    this->screen = Screen::HelpArticle;
+    this->layout->SetTitle(tr(arts[idx].title));
+    this->layout->SetSubtitle(tr(S_SUB_HELP_ARTICLE));
+    this->layout->ClearMenu();
+    this->layout->SetEmptyState(console_icon("default"), "", tr(arts[idx].body),
+                                true, "", "");
+}
+
+// First-time guided walkthrough: a short run of Next/Back/Close dialogs
+// (SideMenu under the hood, same as every other confirm/pick flow), ending in
+// the existing Welcome() import/manual/later prompt. Reachable at first launch
+// (g_cfg.console_count == 0) and any time after from Help > Getting Started >
+// "Replay the guided tour".
+void MainApplication::GuidedTour() {
+    static const HelpArticle kSteps[] = {
+        {S_TOUR1_TITLE, S_TOUR1_BODY}, {S_TOUR2_TITLE, S_TOUR2_BODY},
+        {S_TOUR3_TITLE, S_TOUR3_BODY}, {S_TOUR4_TITLE, S_TOUR4_BODY},
+        {S_TOUR5_TITLE, S_TOUR5_BODY}, {S_TOUR6_TITLE, S_TOUR6_BODY},
+    };
+    const int n = (int)(sizeof(kSteps) / sizeof(kSteps[0]));
+    int i = 0;
+    while (i >= 0 && i < n) {
+        const bool last = (i == n - 1);
+        std::vector<std::string> opts;
+        opts.push_back(tr(last ? S_TOUR_DONE : S_TOUR_NEXT)); // 0
+        if (i > 0) {
+            opts.push_back(tr(S_TOUR_BACK));                  // 1
+        }
+        opts.push_back(tr(S_TOUR_CLOSE));                     // last: B/cancel too
+        int r = this->CreateShowDialog(tr(kSteps[i].title), tr(kSteps[i].body),
+                                       opts, true, {}, style_dialog);
+        if (r == 0) {
+            i++;
+        } else if (i > 0 && r == 1) {
+            i--;
+        } else {
+            break; // Close, or B (use_last_opt_as_cancel maps both here)
+        }
+    }
+    if (i >= n) {
+        this->Welcome(); // finished the tour: offer to actually add a collection
+    }
 }
 
 // Diagnostics -> Export debug bundle: fold every log the app keeps into one
@@ -8648,7 +8793,7 @@ static const DatSource DAT_SOURCES[] = {
         {"virtual-boy", "Nintendo - Virtual Boy", DAT_FOLDER_NOINTRO},
         {"pokemon-mini", "Nintendo - Pokemon Mini", DAT_FOLDER_NOINTRO},
         {"game-and-watch", "Nintendo - Game & Watch", DAT_FOLDER_NOINTRO},
-        {"sg-1000", "Sega - SG-1000", DAT_FOLDER_NOINTRO},
+        {"sg-1000", "Sega - SG-1000 - SC-3000", DAT_FOLDER_NOINTRO},
         {"master-system", "Sega - Master System - Mark III", DAT_FOLDER_NOINTRO},
         {"game-gear", "Sega - Game Gear", DAT_FOLDER_NOINTRO},
         {"genesis", "Sega - Mega Drive - Genesis", DAT_FOLDER_NOINTRO},
@@ -8666,7 +8811,7 @@ static const DatSource DAT_SOURCES[] = {
         {"wonderswan-color", "Bandai - WonderSwan Color", DAT_FOLDER_NOINTRO},
         {"colecovision", "Coleco - ColecoVision", DAT_FOLDER_NOINTRO},
         {"intellivision", "Mattel - Intellivision", DAT_FOLDER_NOINTRO},
-        {"odyssey2", "Magnavox - Odyssey2", DAT_FOLDER_NOINTRO},
+        {"odyssey2", "Magnavox - Odyssey 2", DAT_FOLDER_NOINTRO},
         {"vectrex", "GCE - Vectrex", DAT_FOLDER_NOINTRO},
         {"channel-f", "Fairchild - Channel F", DAT_FOLDER_NOINTRO},
         {"supervision", "Watara - Supervision", DAT_FOLDER_NOINTRO},
@@ -8713,6 +8858,37 @@ static const DatSource *dat_source_for(const char *target) {
             return &DAT_SOURCES[i];
     }
     return NULL;
+}
+
+// Download-only filename overrides, for systems with more than one format
+// variant published under the same base name (NES Headered/Headerless, N64
+// BigEndian/ByteSwapped, FDS FDS/QD, NDS Decrypted/Encrypted/Download Play,
+// Atari Jaguar J64/ROM). DAT_SOURCES.name stays bare so a hand-supplied DAT of
+// *any* variant still self-files via sys_name_match's boundary rule; this
+// table only narrows which exact file DatSyncThread requests.
+//
+// This is NOT the place to fix a system whose Fresh1G1R filename just isn't
+// the bare system name at all (that was SG-1000 filed as "... - SC-3000", and
+// Odyssey2 missing its space) — an override here only helped the download
+// path, while identify (dat_system_target, for a DAT pushed from a PC) kept
+// matching against the wrong bare name in DAT_SOURCES and failed with
+// "Couldn't tell which console" for every such DAT. Fix DAT_SOURCES.name
+// itself for those; only reach for this table for genuine sibling variants.
+struct DatDlOverride { const char *key; const char *dl_name; };
+static const DatDlOverride DAT_DL_OVERRIDES[] = {
+    {"nes",          "Nintendo - Nintendo Entertainment System (Headered)"},
+    {"fds",          "Nintendo - Family Computer Disk System (FDS)"},
+    {"n64",          "Nintendo - Nintendo 64 (BigEndian)"},
+    {"nds",          "Nintendo - Nintendo DS (Decrypted)"},
+    {"atari-7800",   "Atari - Atari 7800 (BIN)"},
+    {"atari-lynx",   "Atari - Atari Lynx (LYX)"},
+    {"atari-jaguar", "Atari - Atari Jaguar (J64)"},
+};
+static const char *dat_dl_name_for(const char *key, const char *fallback) {
+    for (size_t i = 0; i < sizeof(DAT_DL_OVERRIDES) / sizeof(DAT_DL_OVERRIDES[0]); i++)
+        if (strcasecmp(key, DAT_DL_OVERRIDES[i].key) == 0)
+            return DAT_DL_OVERRIDES[i].dl_name;
+    return fallback;
 }
 
 // Human label for the checklist source of a console target, for the Settings
@@ -8934,7 +9110,7 @@ void MainApplication::DatSyncStart() {
         bool dup = false;
         for (auto &it : g_dat_items)
             if (it.target == t) { dup = true; break; }
-        if (!dup) g_dat_items.push_back({t, src->name, src->folder});
+        if (!dup) g_dat_items.push_back({t, dat_dl_name_for(t, src->name), src->folder});
     }
     if (g_dat_items.empty()) {
         this->ToastErr(tr(S_DAT_NO_MATCH));
@@ -9009,11 +9185,17 @@ void MainApplication::DatSyncThread(void *arg) {
     fs_mkdir_p(DATS_DIR);
     for (auto &it : g_dat_items) {
         if (self->dat_cancel) break;
-        // "<system> (" — the listing appends "(No-Intro …)" / "(Redump …)".
-        std::string anchor = it.match + " (";
+        // Exact filename match: "<system> (<No-Intro|Redump> - Fresh1G1R -
+        // McLean).dat". A prefix/substring match here would collide whenever
+        // Fresh1G1R ships more than one variant under the same base name
+        // (see DAT_DL_OVERRIDES) — exact match pins each console to one
+        // specific file regardless of listing order.
+        const char *tag =
+            strcmp(it.folder.c_str(), DAT_FOLDER_NOINTRO) == 0 ? "No-Intro" : "Redump";
+        std::string want = it.match + " (" + tag + " - Fresh1G1R - McLean).dat";
         const char *url = NULL;
         for (auto &f : listing_for(it.folder)) {
-            if (ci_contains(f.first.c_str(), anchor.c_str())) {
+            if (strcasecmp(f.first.c_str(), want.c_str()) == 0) {
                 url = f.second.c_str();
                 break;
             }
@@ -9147,7 +9329,8 @@ void MainApplication::VerifyStart(const std::string &folder,
                                        false, {}, style_dialog) != 0)
                 return;
             g_dat_items.clear();
-            g_dat_items.push_back({target, src->name, src->folder});
+            g_dat_items.push_back(
+                {target, dat_dl_name_for(target.c_str(), src->name), src->folder});
             this->dat_cancel = false;
             this->dat_idx = 0;
             this->dat_total = 1;
@@ -14135,7 +14318,7 @@ void MainApplication::HandleInput(u64 down, u64 held,
         // Last of the three: it offers a Wi-Fi transfer, so it must not come
         // before the network warning has had its say.
         if (g_cfg.console_count == 0) {
-            this->Welcome();
+            this->GuidedTour();
         }
         // Bring the companion inventory server up if it was left enabled.
         if (g_prefs.inv_server) {
@@ -15533,7 +15716,7 @@ void MainApplication::HandleInput(u64 down, u64 held,
             case 6: this->GotoUpdates();     return;
             case 7: this->GotoViewLogs();    return;
             case 8: this->GotoDiagnostics(); return;
-            case 9: this->GettingStarted();  return; // stub: re-runs onboarding
+            case 9: this->GotoHelp();        return; // Getting Started/How-To/Troubleshooting
             case 10: this->GotoAbout();      return; // About = credits page
             default: break;
             }
@@ -16359,6 +16542,40 @@ void MainApplication::HandleInput(u64 down, u64 held,
         } else if (down & HidNpadButton_A) {
             this->layout->ClearEmptyState();
             this->GotoReleaseNotes();
+        }
+        break;
+    }
+
+    case Screen::Help: {
+        if (down & HidNpadButton_B) {
+            this->GotoSettings();
+        } else if (down & HidNpadButton_A) {
+            this->ShowHelpCategory(this->layout->Sel());
+        }
+        break;
+    }
+
+    case Screen::HelpTopics: {
+        if (down & HidNpadButton_B) {
+            this->GotoHelp();
+        } else if (down & HidNpadButton_A) {
+            s32 sel = this->layout->Sel();
+            if (this->help_cat == 0) {
+                if (sel == 0) {
+                    this->GuidedTour();
+                    return; // GuidedTour leaves the Help screens entirely
+                }
+                sel--; // row 0 was the "replay tour" action, not an article
+            }
+            this->ShowHelpArticle(this->help_cat, sel);
+        }
+        break;
+    }
+
+    case Screen::HelpArticle: {
+        if (down & HidNpadButton_B) {
+            this->layout->ClearEmptyState();
+            this->ShowHelpCategory(this->help_cat);
         }
         break;
     }

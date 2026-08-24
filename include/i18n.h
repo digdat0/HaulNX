@@ -669,8 +669,57 @@ enum {
     S_STORAGE_TITLE,
     S_STORAGE_DETAIL,     /* "%s free of %s\nDownloads: %s\nCache: %s" */
 
-    /* About: re-runnable onboarding entry. */
-    S_GETTING_STARTED,
+    /* ---- Help hub: Getting Started / How-To / Troubleshooting ---- */
+    S_SEC_HELP,             /* Settings row + Help hub screen title: "Help" */
+    S_TITLE_HELP,           S_SUB_HELP,
+    S_SUB_HELP_TOPICS,      /* article-list subtitle: "A select  B back" */
+    S_SUB_HELP_ARTICLE,     /* article-detail subtitle: "B back" */
+    S_GETTING_STARTED,      /* category label + row: "Getting started" */
+    S_HELP_HOWTO,           /* category label + row: "How-To" */
+    S_HELP_TROUBLESHOOTING, /* category label + row: "Troubleshooting" */
+    S_REPLAY_TOUR,          /* Getting Started category: row 0, replays the tour */
+
+    /* Guided first-time tour (Welcome() is its final step). */
+    S_TOUR_NEXT, S_TOUR_BACK, S_TOUR_CLOSE, S_TOUR_DONE,
+    S_TOUR1_TITLE, S_TOUR1_BODY,
+    S_TOUR2_TITLE, S_TOUR2_BODY,
+    S_TOUR3_TITLE, S_TOUR3_BODY,
+    S_TOUR4_TITLE, S_TOUR4_BODY,
+    S_TOUR5_TITLE, S_TOUR5_BODY,
+    S_TOUR6_TITLE, S_TOUR6_BODY,
+
+    /* Getting Started articles. */
+    S_GS1_TITLE, S_GS1_BODY,
+    S_GS2_TITLE, S_GS2_BODY,
+    S_GS3_TITLE, S_GS3_BODY,
+    S_GS4_TITLE, S_GS4_BODY,
+    S_GS5_TITLE, S_GS5_BODY,
+
+    /* How-To articles. */
+    S_HOWTO1_TITLE, S_HOWTO1_BODY,
+    S_HOWTO2_TITLE, S_HOWTO2_BODY,
+    S_HOWTO3_TITLE, S_HOWTO3_BODY,
+    S_HOWTO4_TITLE, S_HOWTO4_BODY,
+    S_HOWTO5_TITLE, S_HOWTO5_BODY,
+    S_HOWTO6_TITLE, S_HOWTO6_BODY,
+    S_HOWTO7_TITLE, S_HOWTO7_BODY,
+    S_HOWTO8_TITLE, S_HOWTO8_BODY,
+    S_HOWTO9_TITLE, S_HOWTO9_BODY,
+    S_HOWTO10_TITLE, S_HOWTO10_BODY,
+    S_HOWTO11_TITLE, S_HOWTO11_BODY,
+    S_HOWTO12_TITLE, S_HOWTO12_BODY,
+
+    /* Troubleshooting articles. */
+    S_TS1_TITLE, S_TS1_BODY,
+    S_TS2_TITLE, S_TS2_BODY,
+    S_TS3_TITLE, S_TS3_BODY,
+    S_TS4_TITLE, S_TS4_BODY,
+    S_TS5_TITLE, S_TS5_BODY,
+    S_TS6_TITLE, S_TS6_BODY,
+    S_TS7_TITLE, S_TS7_BODY,
+    S_TS8_TITLE, S_TS8_BODY,
+    S_TS9_TITLE, S_TS9_BODY,
+    S_TS10_TITLE, S_TS10_BODY,
 
     /* ---- DAT verification (Library tab) ---- */
     S_VERIFY_DAT,      /* console options-menu entry ("Verify Files") */

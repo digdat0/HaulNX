@@ -7,6 +7,24 @@ Notes for each release. `release.sh` pulls the section matching the version in
 `VERSION` and attaches it to the GitHub release. Add a `## <version>` section
 here before running a release.
 
+## 2.1.13
+
+**New: in-app Help hub + first-time guided tour.**
+
+- Settings' old "Getting started" stub is now **Help**, with three sections:
+  **Getting Started** (essentials for a fresh install, plus a "Replay the
+  guided tour" action), **How-To** (12 short guides — adding a repo,
+  downloading, box art, DAT verification, 1G1R, updating emulators, USB/Wi-Fi
+  transfer, and more), and **Troubleshooting** (10 common problems with fixes,
+  from stalled downloads to a companion that won't connect).
+- New **first-time guided tour**: a 6-step walkthrough shown automatically the
+  first time HaulNX has no consoles configured, covering Library/Add, queuing
+  downloads, the Queue tab, keeping your library healthy, and the PC
+  companion. Move forward and back freely, or close at any point — it ends in
+  the same "send from a computer / add a repo by hand" prompt as before.
+- Help content is English-only for now; other languages fall back to English
+  for the new strings until translated.
+
 ## 2.1.12
 
 **Desktop companion: manual update check + startup toggle.**
