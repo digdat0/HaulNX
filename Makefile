@@ -41,9 +41,9 @@ include $(DEVKITPRO)/libnx/switch_rules
 #   of a homebrew executable (.nro). This is intended to be used for sysmodules.
 #   NACP building is skipped as well.
 #---------------------------------------------------------------------------------
-TARGET	:=	HaulNX
-APP_TITLE	:=	HaulNX
-APP_AUTHOR	:=	digdat0
+TARGET	:=	HaulNX-Romm-App
+APP_TITLE	:=	HaulNX-Romm-App
+APP_AUTHOR	:=	cicerolps (fork of digdat0)
 # Single source of truth: the version string lives in the VERSION file. It is
 # baked into the .nacp (APP_VERSION) and regenerated into include/version.h (the
 # version the running app compares against for self-update) by the version_header

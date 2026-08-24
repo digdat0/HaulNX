@@ -166,19 +166,19 @@ static const char PAGE_EXPORT[] =
 static const char PAGE_NRO[] =
     "<!doctype html><meta charset=utf-8>"
     "<meta name=viewport content=\"width=device-width,initial-scale=1\">"
-    "<title>HaulNX - Update app</title>" PAGE_CSS UPLOAD_CSS
+    "<title>HaulNX-Romm-App - Update app</title>" PAGE_CSS UPLOAD_CSS
     "<div class=card>"
     "<header><img src=\"/logo.png\" alt=\"\">"
     "<div><h1>Haul<span>NX</span></h1><p>Update app</p></div></header>"
     "<ol>"
-    "<li>Find the <b>HaulNX .nro</b> build to install &mdash; the same "
-    "version as installed is fine.</li>"
+    "<li>Find the <b>HaulNX-Romm-App .nro</b> build to install &mdash; the "
+    "same version as installed is fine.</li>"
     "<li>Drop it below, or click to browse for it. (The app utility can "
     "also push it: <b>Send to Switch &rsaquo; App update</b>.)</li>"
     "<li>Send it, then confirm the install on your Switch.</li>"
     "</ol>"
     "<form method=post enctype=multipart/form-data>"
-    "<label id=drop><b>Drop HaulNX.nro here</b>or click to choose a file"
+    "<label id=drop><b>Drop HaulNX-Romm-App.nro here</b>or click to choose a file"
     "<input type=file name=f accept=\".nro\" required>"
     "</label>"
     "<button id=go disabled>Send to Switch</button>"

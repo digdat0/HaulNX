@@ -1019,8 +1019,9 @@ void MainApplication::SetLaunchPath(const std::string &p) { g_launch_path = p; }
 
 // Resolve which .nro the self-update should overwrite. Prefer the actual launch
 // path (argv[0]); otherwise probe the documented install locations; finally
-// fall back to the default. This handles both sdmc:/switch/HaulNX/...nro
-// and sdmc:/switch/HaulNX.nro.
+// fall back to the default. This handles both
+// sdmc:/switch/HaulNX-Romm-App/HaulNX-Romm-App.nro and
+// sdmc:/switch/HaulNX-Romm-App.nro.
 static std::string resolve_self_path() {
     if (g_launch_path.size() >= 4 &&
         strcasecmp(g_launch_path.c_str() + g_launch_path.size() - 4, ".nro") ==
@@ -1028,8 +1029,8 @@ static std::string resolve_self_path() {
         fs_exists(g_launch_path.c_str())) {
         return g_launch_path;
     }
-    const char *candidates[] = {"sdmc:/switch/HaulNX/HaulNX.nro",
-                                "sdmc:/switch/HaulNX.nro"};
+    const char *candidates[] = {"sdmc:/switch/HaulNX-Romm-App/HaulNX-Romm-App.nro",
+                                "sdmc:/switch/HaulNX-Romm-App.nro"};
     for (const char *c : candidates) {
         if (fs_exists(c)) {
             return std::string(c);
@@ -3185,7 +3186,7 @@ void MainApplication::ExportBundle() {
         this->ToastErr(tr(S_BUNDLE_FAIL));
         return;
     }
-    fprintf(out, "HaulNX v%s debug bundle\n\n", APP_VERSION_STR);
+    fprintf(out, "HaulNX-Romm-App v%s debug bundle\n\n", APP_VERSION_STR);
     bundle_append(out, "debug", LOG_PATH);
     bundle_append(out, "transfers", XFERLOG_PATH);
     bundle_append(out, "speedtest", SPEEDLOG_PATH);
@@ -7508,7 +7509,8 @@ void MainApplication::HandleInput(u64 down, u64 held,
                 // option, so it and B both return -1.
                 int cr = this->CreateShowDialog(
                     tr(S_CREDITS),
-                    std::string("HaulNX v") + APP_VERSION_STR + " by digdat0\n\n"
+                    std::string("HaulNX-Romm-App v") + APP_VERSION_STR +
+                    "\nFork of HaulNX by digdat0, with RomM support added\n\n"
                     "Plutonium UI library provided by XorTroll",
                     {tr(S_RELEASE_NOTES), tr(S_OK)}, true, logo, style_dialog);
                 if (cr == 0) {
@@ -9005,10 +9007,10 @@ void MainApplication::UpdStart(const std::string &url, const std::string &dl,
         this->layout->SetCardsMode(true);
         this->layout->SetSingleCard(true);
         this->layout->SetQueueCount(1);
-        this->layout->SetQueueCard(0, "HaulNX", upd_card_icon(),
+        this->layout->SetQueueCard(0, "HaulNX-Romm-App", upd_card_icon(),
                                    qstatus(Q_DOWNLOADING),
                                    qstatus_color(Q_DOWNLOADING), tag, "", "",
-                                   "HaulNX.nro", 0.0f, true);
+                                   "HaulNX-Romm-App.nro", 0.0f, true);
     } else {
         this->layout->AddRow(tr(S_UPDATE_DL_CANCEL));
     }
@@ -9039,10 +9041,10 @@ void MainApplication::UpdTick() {
             char c1[64];
             snprintf(c1, sizeof(c1), "%s / %s", human_size(now).c_str(),
                      total ? human_size(total).c_str() : "?");
-            this->layout->SetQueueCard(0, "HaulNX", upd_card_icon(), st,
+            this->layout->SetQueueCard(0, "HaulNX-Romm-App", upd_card_icon(), st,
                                        qstatus_color(Q_DOWNLOADING),
                                        this->upd_tag, c1, "",
-                                       "HaulNX.nro",
+                                       "HaulNX-Romm-App.nro",
                                        total ? (float)now / (float)total
                                              : 0.0f,
                                        true);

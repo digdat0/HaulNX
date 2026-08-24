@@ -1,6 +1,6 @@
 #!/bin/sh
 # Publish the current build as a GitHub release whose tag == the version baked
-# into HaulNX.nro. Run AFTER `make` (do not run `make` in between, or the
+# into HaulNX-Romm-App.nro. Run AFTER `make` (do not run `make` in between, or the
 # VERSION will have advanced past the built .nro).
 #
 # This uploads the .nro as a release asset (via the GitHub API) and tags the
@@ -19,7 +19,7 @@
 set -e
 cd "$(dirname "$0")"
 
-nro="HaulNX.nro"
+nro="HaulNX-Romm-App.nro"
 [ -f "$nro" ] || { echo "No $nro found - run 'make' first."; exit 1; }
 
 # The app utility ships with every release: a single self-contained HTML file
@@ -115,10 +115,10 @@ notes="$(printf '%s\n' "$notes" | sed -e '/./,$!d' | sed -e ':a' -e '/^\n*$/{$d;
 notesfile="$(mktemp)"
 trap 'rm -f "$notesfile"' EXIT
 if [ -n "$notes" ]; then
-  printf 'HaulNX %s\n\n%s\n' "$v" "$notes" > "$notesfile"
+  printf 'HaulNX-Romm-App %s\n\n%s\n' "$v" "$notes" > "$notesfile"
 else
   echo "WARN: no CHANGELOG.md section for $v - add a '## $v' entry for real notes."
-  printf 'HaulNX %s\n' "$v" > "$notesfile"
+  printf 'HaulNX-Romm-App %s\n' "$v" > "$notesfile"
 fi
 
 echo "Releasing v$v to $repo with notes:"
@@ -126,6 +126,6 @@ echo "----------------------------------------"
 cat "$notesfile"
 echo "----------------------------------------"
 echo "Assets: $nro, $editor"
-gh release create "$v" "$nro" "$editor" -R "$repo" -t "HaulNX $v" -F "$notesfile" \
+gh release create "$v" "$nro" "$editor" -R "$repo" -t "HaulNX-Romm-App $v" -F "$notesfile" \
   --target "$local_head" --latest
 echo "Done. Users can now update in-app via Settings (L) -> R."

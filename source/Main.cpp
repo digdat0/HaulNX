@@ -7,17 +7,6 @@ extern "C" {
 #include "config.h"
 }
 
-// Builds up to 1.0.0 staged a copy of the Vietnamese fallback font on the SD
-// card, believing a romfs-loaded font would hold our NRO open and break the
-// self-updater. Neither concern holds: Plutonium reads font files fully into
-// RAM and closes them at once, and the update swap runs at next launch before
-// romfs is even mounted. The font now loads straight from romfs; this just
-// sweeps up the copy those older builds left behind.
-static void remove_staged_viet_font(void) {
-    remove("sdmc:/switch/HaulNX/viet-fallback.ttf");
-    remove("sdmc:/switch/ticodlplus/viet-fallback.ttf"); // pre-rebrand path
-}
-
 // Finish a self-update staged by the previous run. The updater can't replace
 // the running NRO (the loader keeps it open for the app's whole lifetime), so
 // it leaves the new build at "<self>.new" and we swap the files here — before
@@ -108,7 +97,6 @@ int main(int argc, char **argv) {
     // Additional (ế, ệ, ợ...). This subset contains ONLY those glyphs, so the
     // system font still renders everything it can (font paths are consulted
     // before shared fonts, hence the aggressive subsetting).
-    remove_staged_viet_font();
     opts.AddDefaultFontPath("romfs:/fonts/viet-fallback.ttf");
     opts.AddDefaultAllSharedFonts();
     // Tiny size for the queue cards' chip/filename (defaults start at 27).

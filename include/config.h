@@ -16,9 +16,13 @@ extern "C" {
 #define UPDATE_REPO   "cicerolps/HaulNX-Romm-App"
 
 /* Where the app lives if it can't determine its own path from argv[0]. */
-#define DEFAULT_SELF_PATH "sdmc:/switch/HaulNX/HaulNX.nro"
+#define DEFAULT_SELF_PATH "sdmc:/switch/HaulNX-Romm-App/HaulNX-Romm-App.nro"
 
-#define CONFIG_DIR    "sdmc:/switch/HaulNX"
+/* Own folder, distinct from upstream HaulNX's "sdmc:/switch/HaulNX" -- lets
+ * this fork and a separately-installed HaulNX run side by side on the same
+ * SD card without sharing (or clobbering) each other's config, credentials,
+ * cache, logs or self-update file. */
+#define CONFIG_DIR    "sdmc:/switch/HaulNX-Romm-App"
 /* The app's files live in two subfolders under CONFIG_DIR so its root stays
  * tidy: config/ holds the JSON state (collections, credentials, prefs, queue,
  * size cache) and logs/ holds every append-only log. Builds up to 1.0.2 wrote
