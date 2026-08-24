@@ -71,6 +71,17 @@ bool ia_fetch_on(void *conn, const char *identifier, ArchiveItem *item,
 void ia_file_url(const ArchiveItem *item, const ArchiveFile *file,
                  char *out, size_t out_sz);
 
+/*
+ * If item->download_base points into a subfolder of this same archive.org
+ * item (e.g. ".../download/<identifier>/Neo-Geo%20CD/Games") this decodes and
+ * writes that subfolder path (percent-decoded, no leading/trailing slash)
+ * into out and returns true. Returns false (out left empty) for a bare item
+ * root, a custom mirror host, or an item-relative path that doesn't actually
+ * start under item->identifier. Used to scope the browsable file list to a
+ * repo's configured subfolder, matching what ia_file_url() downloads.
+ */
+bool ia_item_subfolder(const ArchiveItem *item, char *out, size_t out_sz);
+
 void ia_free(ArchiveItem *item);
 
 #ifdef __cplusplus

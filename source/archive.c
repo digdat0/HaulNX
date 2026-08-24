@@ -3,6 +3,7 @@
 #include "jsonutil.h"
 #include "fsutil.h"
 
+#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -239,6 +240,49 @@ static void url_encode_path(const char *in, char *out, size_t out_sz) {
     out[o] = '\0';
 }
 
+/* Percent-decode a URL path component: %XX -> byte. '+' is left literal --
+ * archive.org paths encode a space as %20, never '+'. */
+static void url_decode_path(const char *in, char *out, size_t out_sz) {
+    size_t o = 0;
+    for (const char *p = in; *p && o + 1 < out_sz;) {
+        if (p[0] == '%' && isxdigit((unsigned char)p[1]) &&
+            isxdigit((unsigned char)p[2])) {
+            char hex[3] = {p[1], p[2], '\0'};
+            out[o++] = (char)strtol(hex, NULL, 16);
+            p += 3;
+        } else {
+            out[o++] = *p++;
+        }
+    }
+    out[o] = '\0';
+}
+
+bool ia_item_subfolder(const ArchiveItem *item, char *out, size_t out_sz) {
+    if (!item || !out || out_sz == 0) {
+        return false;
+    }
+    out[0] = '\0';
+    if (!item->download_base[0] || !item->identifier[0]) {
+        return false;
+    }
+    char base[512];
+    snprintf(base, sizeof(base), "%s", item->download_base);
+    strip_trailing_slashes(base);
+
+    char marker[288];
+    snprintf(marker, sizeof(marker), "/download/%s", item->identifier);
+    char *m = strstr(base, marker);
+    if (!m || m[strlen(marker)] != '/') {
+        return false; /* item root, or a custom/mirror base -- no subfolder */
+    }
+    const char *sub = m + strlen(marker) + 1; /* past the slash */
+    if (!*sub) {
+        return false;
+    }
+    url_decode_path(sub, out, out_sz);
+    return out[0] != '\0';
+}
+
 void ia_file_url(const ArchiveItem *item, const ArchiveFile *file,
                  char *out, size_t out_sz) {
     char base[512];
@@ -258,20 +302,21 @@ void ia_file_url(const ArchiveItem *item, const ArchiveFile *file,
      * that lives outside the subfolder (item-level metadata, a sibling
      * folder), fall back to the item root, which is what its name is relative
      * to. Custom mirror bases have no such marker and are used as-is. */
+    char prefix[512];
     size_t skip = 0;
-    if (item->identifier[0]) {
-        char marker[288];
-        snprintf(marker, sizeof(marker), "/download/%s", item->identifier);
-        char *m = strstr(base, marker);
-        char *sub = m ? m + strlen(marker) : NULL;
-        if (sub && *sub == '/') {
-            const char *prefix = sub + 1; /* subfolder path within the item */
-            size_t plen = strlen(prefix);
-            if (plen > 0 && strncmp(file->name, prefix, plen) == 0 &&
-                file->name[plen] == '/') {
-                skip = plen + 1;
-            } else {
-                *sub = '\0'; /* outside the subfolder: use the item root */
+    if (ia_item_subfolder(item, prefix, sizeof(prefix))) {
+        size_t plen = strlen(prefix);
+        if (plen > 0 && strncmp(file->name, prefix, plen) == 0 &&
+            file->name[plen] == '/') {
+            skip = plen + 1;
+        } else {
+            /* outside the subfolder: fall back to the item root, which is
+             * what its (unstripped) name is relative to */
+            char marker[288];
+            snprintf(marker, sizeof(marker), "/download/%s", item->identifier);
+            char *m = strstr(base, marker);
+            if (m && m[strlen(marker)] == '/') {
+                m[strlen(marker)] = '\0';
             }
         }
     }
