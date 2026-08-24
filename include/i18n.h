@@ -678,6 +678,11 @@ enum {
     S_HELP_HOWTO,           /* category label + row: "How-To" */
     S_HELP_TROUBLESHOOTING, /* category label + row: "Troubleshooting" */
     S_REPLAY_TOUR,          /* Getting Started category: row 0, replays the tour */
+    S_HELP_SEARCH,          /* Help hub row 3: "Search" */
+    S_TITLE_HELP_SEARCH,    /* Screen::HelpSearch title: "Search Help" */
+    S_HELP_SEARCH_GUIDE,    /* swkbd guide text prompting for a keyword */
+    S_SUB_HELP_SEARCH,      /* results-list subtitle: "A open  Y new search  B back" */
+    S_HELP_SEARCH_NO_RESULTS, /* empty-state body when no article matched */
 
     /* Guided first-time tour (Welcome() is its final step). */
     S_TOUR_NEXT, S_TOUR_BACK, S_TOUR_CLOSE, S_TOUR_DONE,

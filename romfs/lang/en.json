@@ -601,6 +601,11 @@
   "help_howto": "How-To",
   "help_troubleshooting": "Troubleshooting",
   "replay_tour": "Replay the guided tour",
+  "help_search": "Search",
+  "title_help_search": "Search Help",
+  "help_search_guide": "Search Help (e.g. \"emulator folder\", \"box art\")",
+  "sub_help_search": "A open  Y new search  B back",
+  "help_search_no_results": "Nothing matched that search. Try fewer or different words, or browse Getting Started, How-To, and Troubleshooting instead.",
 
   "tour_next": "Next",
   "tour_back": "Back",

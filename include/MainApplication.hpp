@@ -714,7 +714,8 @@ class MainApplication : public pu::ui::Application {
         BoxArtPicker,         // browse/select among a matched game's cover-art options
         Help,                 // settings submenu: Getting Started/How-To/Troubleshooting hub
         HelpTopics,           // one Help category's article list
-        HelpArticle           // one Help article's full text
+        HelpArticle,          // one Help article's full text
+        HelpSearch            // keyword search results across every Help article
     };
     enum class Pending { None, AddRepo, Manual, SortAssign };
     // Tab positions, left to right. The library is the front door of the app, so
@@ -744,6 +745,9 @@ class MainApplication : public pu::ui::Application {
     uint8_t appman_kind = 0; // Screen::AppUpdates section: UPD_KIND_EMU / _APP
     int help_cat = 0;        // Screen::HelpTopics/HelpArticle: 0=Getting Started,
                               // 1=How-To, 2=Troubleshooting
+    std::string help_query;  // Screen::HelpSearch: last search text (Y repeats it)
+    std::vector<std::pair<int, int>> help_hits; // Screen::HelpSearch rows, in list
+                              // order: {category, index into that category's array}
     std::vector<UpdSource> appman_list; // entries shown on Screen::AppUpdates
     s32 appman_sel = 0;      // selection to restore after the list is (re)built
     int picker_console = -1; // ROM-folder picker target: -1 = the ROM root, else
@@ -1370,6 +1374,8 @@ class MainApplication : public pu::ui::Application {
     void GotoHelp();          // Settings > Help hub: Getting Started/How-To/Troubleshooting
     void ShowHelpCategory(int cat); // article list for one Help category
     void ShowHelpArticle(int cat, int idx); // one article's full text
+    void GotoHelpSearch();     // prompt for a keyword (swkbd), then RunHelpSearch it
+    void RunHelpSearch(const std::string &query); // build Screen::HelpSearch's rows
     void GuidedTour();         // first-time guided walkthrough (Next/Back/Close), ends
                                 // in Welcome()'s import/manual/later prompt
     // Search cached metadata. scope_ci < 0 searches every repo; scope_ci >= 0

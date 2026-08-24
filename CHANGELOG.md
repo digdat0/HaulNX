@@ -7,6 +7,20 @@ Notes for each release. `release.sh` pulls the section matching the version in
 `VERSION` and attaches it to the GitHub release. Add a `## <version>` section
 here before running a release.
 
+## 2.1.15
+
+**Guided tour now shows its subject on screen; Help gets keyword search.**
+
+- The guided tour navigates to the real screen behind each contextual step —
+  "here's the Queue tab" now actually opens the Queue tab, "point your
+  emulators at your library" opens Install Folders, and so on for
+  Library/Add/Queue/Install Folders/Storage/PC Sync. General steps (welcome,
+  the closing note) leave the background alone.
+- New: **Settings > Help > Search**. Type one or more keywords (Switch
+  keyboard) and every Getting Started/How-To/Troubleshooting article whose
+  title or body contains all of them is listed, tagged with its category; A
+  opens one, Y starts a new search, B returns to the Help hub.
+
 ## 2.1.14
 
 **Fix: guided tour never ran on a fresh install. Help content overhauled.**

@@ -3557,7 +3557,8 @@ MainApplication::Tab MainApplication::CurrentTab() {
     case Screen::QueueState:
     case Screen::Help:
     case Screen::HelpTopics:
-    case Screen::HelpArticle: return Tab::Settings;
+    case Screen::HelpArticle:
+    case Screen::HelpSearch: return Tab::Settings;
     default:                return Tab::Browse; // Home/Repos/Files/RepoEdit/Picker/Search
     }
 }
@@ -4486,6 +4487,7 @@ void MainApplication::GotoHelp() {
     this->layout->AddRow(tr(S_GETTING_STARTED));      // 0
     this->layout->AddRow(tr(S_HELP_HOWTO));            // 1
     this->layout->AddRow(tr(S_HELP_TROUBLESHOOTING));  // 2
+    this->layout->AddRow(tr(S_HELP_SEARCH));           // 3: keyword search (see GotoHelpSearch)
 }
 
 // One category's article list. Getting Started's row 0 is a live action (replay
@@ -4569,21 +4571,114 @@ void MainApplication::ShowHelpArticle(int cat, int idx) {
                                 true, "", "");
 }
 
+// Keyword search across every Help article's title + body. A query can be one
+// word or several; an article matches only if *every* word appears somewhere
+// in it (order doesn't matter), so adding words narrows results rather than
+// broadening them -- "emulator folder" only turns up articles mentioning both.
+// Reuses ci_contains (see near the top of this file) for each word.
+static bool help_article_matches(const HelpArticle &a,
+                                 const std::vector<std::string> &words) {
+    const std::string hay = std::string(tr(a.title)) + " " + tr(a.body);
+    for (const auto &w : words) {
+        if (!ci_contains(hay.c_str(), w.c_str())) {
+            return false;
+        }
+    }
+    return true;
+}
+
+void MainApplication::RunHelpSearch(const std::string &query) {
+    this->help_query = query;
+    this->screen = Screen::HelpSearch;
+    this->layout->SetTitle(tr(S_TITLE_HELP_SEARCH));
+    this->layout->ClearMenu();
+
+    std::vector<std::string> words;
+    std::string w;
+    for (char c : query) {
+        if (isspace((unsigned char)c)) {
+            if (!w.empty()) { words.push_back(w); w.clear(); }
+        } else {
+            w += c;
+        }
+    }
+    if (!w.empty()) {
+        words.push_back(w);
+    }
+
+    this->help_hits.clear();
+    for (int cat = 0; cat <= 2; cat++) {
+        size_t n = 0;
+        const HelpArticle *arts = help_articles(cat, &n);
+        for (size_t i = 0; i < n; i++) {
+            if (help_article_matches(arts[i], words)) {
+                this->help_hits.push_back({cat, (int)i});
+            }
+        }
+    }
+
+    if (this->help_hits.empty()) {
+        this->layout->SetSubtitle(tr(S_SUB_HELP_SEARCH));
+        this->layout->SetEmptyState(console_icon("default"), "",
+                                    tr(S_HELP_SEARCH_NO_RESULTS), true, "", "");
+        return;
+    }
+    this->layout->SetSubtitle(tr(S_SUB_HELP_SEARCH));
+    for (const auto &h : this->help_hits) {
+        size_t n = 0;
+        const HelpArticle *arts = help_articles(h.first, &n);
+        char row[192];
+        snprintf(row, sizeof(row), "%s — %s", tr(help_category_title(h.first)),
+                 tr(arts[h.second].title));
+        this->layout->AddRow(row);
+    }
+}
+
+// Help hub row 3 ("Search"): prompt for a keyword with the OS keyboard, then
+// build the results list. Declining the keyboard (empty/cancelled) just
+// leaves the Help hub showing -- there's nothing to search for yet.
+void MainApplication::GotoHelpSearch() {
+    char q[128] = {0};
+    if (!prompt(tr(S_HELP_SEARCH_GUIDE), this->help_query.c_str(), q, sizeof(q))) {
+        return;
+    }
+    this->RunHelpSearch(q);
+}
+
 // First-time guided walkthrough: a short run of Next/Back/Close dialogs
 // (SideMenu under the hood, same as every other confirm/pick flow), ending in
 // the existing Welcome() import/manual/later prompt. Reachable at first launch
 // (no repos configured on any console yet) and any time after from
 // Help > Getting Started > "Replay the guided tour".
 void MainApplication::GuidedTour() {
-    static const HelpArticle kSteps[] = {
-        {S_TOUR1_TITLE, S_TOUR1_BODY}, {S_TOUR2_TITLE, S_TOUR2_BODY},
-        {S_TOUR3_TITLE, S_TOUR3_BODY}, {S_TOUR4_TITLE, S_TOUR4_BODY},
-        {S_TOUR5_TITLE, S_TOUR5_BODY}, {S_TOUR6_TITLE, S_TOUR6_BODY},
-        {S_TOUR7_TITLE, S_TOUR7_BODY},
+    // Steps that are about one specific screen name it here, so the tour
+    // actually opens that screen behind the dialog panel while describing it
+    // -- "here's the Queue tab" shows the Queue tab, not whatever screen the
+    // tour happened to start from. Steps about the app in general (welcome,
+    // the closing PC-companion note) leave the background screen alone.
+    enum class Page { None, Library, Browse, Queue, InstallFolders, Storage, Transfers };
+    struct Step { int title; int body; Page page; };
+    static const Step kSteps[] = {
+        {S_TOUR1_TITLE, S_TOUR1_BODY, Page::Library},
+        {S_TOUR2_TITLE, S_TOUR2_BODY, Page::Library},
+        {S_TOUR3_TITLE, S_TOUR3_BODY, Page::Browse},
+        {S_TOUR4_TITLE, S_TOUR4_BODY, Page::Queue},
+        {S_TOUR5_TITLE, S_TOUR5_BODY, Page::InstallFolders},
+        {S_TOUR6_TITLE, S_TOUR6_BODY, Page::Storage},
+        {S_TOUR7_TITLE, S_TOUR7_BODY, Page::Transfers},
     };
     const int n = (int)(sizeof(kSteps) / sizeof(kSteps[0]));
     int i = 0;
     while (i >= 0 && i < n) {
+        switch (kSteps[i].page) {
+        case Page::Library:        this->GotoInstalled(roms_root(&g_tico)); break;
+        case Page::Browse:         this->GotoHome();                       break;
+        case Page::Queue:          this->GotoQueue();                      break;
+        case Page::InstallFolders: this->GotoInstallFolders();             break;
+        case Page::Storage:        this->GotoStorage();                   break;
+        case Page::Transfers:      this->GotoTransfers();                 break;
+        case Page::None:                                                  break;
+        }
         const bool last = (i == n - 1);
         std::vector<std::string> opts;
         opts.push_back(tr(last ? S_TOUR_DONE : S_TOUR_NEXT)); // 0
@@ -16564,7 +16659,12 @@ void MainApplication::HandleInput(u64 down, u64 held,
         if (down & HidNpadButton_B) {
             this->GotoSettings();
         } else if (down & HidNpadButton_A) {
-            this->ShowHelpCategory(this->layout->Sel());
+            s32 sel = this->layout->Sel();
+            if (sel == 3) {
+                this->GotoHelpSearch();
+            } else {
+                this->ShowHelpCategory(sel);
+            }
         }
         break;
     }
@@ -16590,6 +16690,26 @@ void MainApplication::HandleInput(u64 down, u64 held,
         if (down & HidNpadButton_B) {
             this->layout->ClearEmptyState();
             this->ShowHelpCategory(this->help_cat);
+        }
+        break;
+    }
+
+    case Screen::HelpSearch: {
+        if (down & HidNpadButton_B) {
+            this->GotoHelp();
+        } else if (down & HidNpadButton_A) {
+            s32 sel = this->layout->Sel();
+            if (sel >= 0 && sel < (s32)this->help_hits.size()) {
+                const auto &h = this->help_hits[sel];
+                this->ShowHelpArticle(h.first, h.second);
+            }
+        } else if (down & HidNpadButton_Y) {
+            char q[128] = {0};
+            if (prompt_raw(tr(S_HELP_SEARCH_GUIDE), this->help_query.c_str(), q,
+                           sizeof(q)) &&
+                q[0]) {
+                this->RunHelpSearch(q);
+            }
         }
         break;
     }
