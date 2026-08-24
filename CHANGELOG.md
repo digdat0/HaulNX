@@ -7,6 +7,19 @@ Notes for each release. `release.sh` pulls the section matching the version in
 `VERSION` and attaches it to the GitHub release. Add a `## <version>` section
 here before running a release.
 
+## 2.1.22
+
+**Full translation of the Help hub and guided tour into all 24 non-English languages.**
+
+- The entire Help/Getting Started/How-To/Troubleshooting hub and the first-run
+  guided tour (130 strings: the Help UI chrome, all 8 tour steps, all 6 Getting
+  Started articles, all 24 How-To articles, and all 18 Troubleshooting
+  articles, including the 6 added in 2.1.21) had never been translated since
+  the feature was introduced — every non-English language silently fell back
+  to English for that whole section. All 24 `romfs/lang/*.json` files now
+  carry full translations, verified with zero keys missing against `en.json`
+  and zero `gen_i18n.py` warnings.
+
 ## 2.1.21
 
 **First-run tour now shows once, ever; six new Help articles; tour1 wording fix.**
