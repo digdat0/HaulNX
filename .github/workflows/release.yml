@@ -5,10 +5,20 @@ name: Release
 # to a Release the in-app updater (UPDATE_REPO in config.h) can find -- see
 # update_fetch_latest, which scans this repo's releases for one with a .nro
 # asset and a tag_name it can parse as X.Y.Z.
+#
+# Also runnable by hand (workflow_dispatch) with an explicit tag: the release
+# job below creates that tag itself via the runner's own GITHUB_TOKEN
+# (contents: write, below), which can push tags even in contexts where a
+# plain `git push` of one is refused.
 on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to create (e.g. v1.1.2-romm.2)"
+        required: true
 
 permissions:
   contents: write
@@ -44,5 +54,6 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ inputs.tag || github.ref_name }}
           files: "*.nro"
           generate_release_notes: true
