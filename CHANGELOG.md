@@ -7,6 +7,17 @@ Notes for each release. `release.sh` pulls the section matching the version in
 `VERSION` and attaches it to the GitHub release. Add a `## <version>` section
 here before running a release.
 
+## 2.1.16
+
+**Fix: guided tour's tab bar didn't follow the screen it navigated to.**
+
+- 2.1.15 made each contextual tour step navigate to its real screen, but the
+  tab-bar highlight (Library/Add/Queue/Settings) stayed frozen on whichever
+  tab was active when the tour started — the tour's blocking dialog loop
+  never returns to the per-frame code that normally keeps the tab strip in
+  sync. Each step now re-syncs the tab bar right after navigating, so it
+  visibly follows along.
+
 ## 2.1.15
 
 **Guided tour now shows its subject on screen; Help gets keyword search.**

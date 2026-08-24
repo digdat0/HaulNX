@@ -4679,6 +4679,16 @@ void MainApplication::GuidedTour() {
         case Page::Transfers:      this->GotoTransfers();                 break;
         case Page::None:                                                  break;
         }
+        // Goto*() only sets screen/title/rows -- the tab-bar highlight is
+        // synced separately, once per frame, from HandleInput's outer loop
+        // (see the `this->SyncTab()` call there). GuidedTour() runs entirely
+        // inside CreateShowDialog's own blocking render loop and never
+        // returns to that outer frame body, so without this call the tab
+        // strip stays frozen on whatever tab was active when the tour
+        // started even though the screen underneath is switching correctly.
+        if (kSteps[i].page != Page::None) {
+            this->SyncTab();
+        }
         const bool last = (i == n - 1);
         std::vector<std::string> opts;
         opts.push_back(tr(last ? S_TOUR_DONE : S_TOUR_NEXT)); // 0
