@@ -932,6 +932,17 @@ static int flat_count() {
     }
     return k;
 }
+// Unlike flat_count(), counts every console regardless of shown/hidden --
+// used to tell "no repo set up anywhere yet" apart from "repos exist but
+// their console is hidden", e.g. gating where the guided tour/Welcome lands
+// the user when they back out without adding one.
+static int repo_count_total() {
+    int k = 0;
+    for (int c = 0; c < g_cfg.console_count; c++) {
+        k += g_cfg.consoles[c].repo_count;
+    }
+    return k;
+}
 
 static bool file_installed(const char *target, const char *fname) {
     char p[1200];
@@ -4777,6 +4788,12 @@ void MainApplication::GuidedTour() {
     }
     if (i >= n) {
         this->Welcome(); // finished the tour: offer to actually add a collection
+    } else if (repo_count_total() == 0) {
+        // Backed out early (Close/B) with no repo set up yet -- land back on
+        // Library instead of leaving them on whatever step's screen (Storage,
+        // Transfers, ...) happened to be behind the dialog when they backed out.
+        this->GotoInstalled(roms_root(&g_tico));
+        this->SyncTab();
     }
 }
 
@@ -8732,6 +8749,11 @@ void MainApplication::Welcome() {
         this->GotoPicker(Pending::AddRepo); // same flow Y opens on Home
     } else if (r == 1) {
         this->ImportStart(true); // come back to Home, not into Manage data
+    } else if (repo_count_total() == 0) {
+        // "Not now" (or B) and still no repo set up -- land back on Library
+        // instead of leaving them on the tour's last screen.
+        this->GotoInstalled(roms_root(&g_tico));
+        this->SyncTab();
     }
 }
 

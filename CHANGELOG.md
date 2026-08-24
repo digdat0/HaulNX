@@ -7,6 +7,17 @@ Notes for each release. `release.sh` pulls the section matching the version in
 `VERSION` and attaches it to the GitHub release. Add a `## <version>` section
 here before running a release.
 
+## 2.1.23
+
+**Fix: backing out of the first-run guided tour without adding a repo could strand you on an empty Storage/Transfers/etc. screen.**
+
+- The guided tour opens each step on the actual screen it's describing (Queue,
+  Install Folders, Storage, Transfers, ...). If you closed the tour early (or
+  said "Not now" at the end) before setting up your first repo, you'd land on
+  whatever step's screen was showing behind the dialog instead of somewhere
+  useful. Both exit paths now check whether a repo has actually been added
+  yet and, if not, send you back to the Library tab.
+
 ## 2.1.22
 
 **Full translation of the Help hub and guided tour into all 24 non-English languages.**
