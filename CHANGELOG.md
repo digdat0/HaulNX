@@ -7,6 +7,25 @@ Notes for each release. `release.sh` pulls the section matching the version in
 `VERSION` and attaches it to the GitHub release. Add a `## <version>` section
 here before running a release.
 
+## 2.1.21
+
+**First-run tour now shows once, ever; six new Help articles; tour1 wording fix.**
+
+- The first-run guided tour was gated on "no repos added anywhere yet," so it
+  reappeared on every single launch until the user actually added one — even
+  after they'd already seen it and closed it. It's now gated on a persistent
+  `tourDone` flag, set the moment the tour opens, so it auto-shows at most
+  once. Still reachable any time from Settings > Help > Getting Started >
+  Replay the Guided Tour, which doesn't consult the flag.
+- Tour intro copy reworded: "It also happens to browse curated archive.org
+  collections..." read too much like a hedge; now "You can also browse
+  curated archive.org collections...".
+- Six new Help articles: How-To gets "Set a custom install folder for a
+  console," "Control download speed and concurrency," and "Hide file types
+  you don't want to see"; Troubleshooting gets "Downloads are slower than
+  expected," "A file type isn't showing in Library," and "The first-run tour
+  or Welcome screen won't come back."
+
 ## 2.1.20
 
 **Queue tour step gets a mocked-up card; dialog titles wrap; tour copy cleanup.**

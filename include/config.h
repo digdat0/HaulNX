@@ -9,7 +9,7 @@ extern "C" {
 #endif
 
 #define MAX_CONSOLES 128 /* ~50 pre-seeded consoles + room for custom ones */
-#define MAX_REPOS    16 /* download repos per console */
+#define MAX_REPOS    32 /* download repos per console */
 
 /* GitHub repo (owner/name) the in-app updater pulls releases from.
  * >>> EDIT THIS to your repo before building a release you intend to ship. <<< */
@@ -311,6 +311,11 @@ typedef struct {
      * app's normal confined-to-its-own-folders reach; the toggle lives in
      * Settings > PC Sync so turning it on is a deliberate choice. */
     bool sd_full_access;
+    /* Set the moment the first-run guided tour is shown, so it never
+     * auto-triggers again on a later launch -- see the startup check in
+     * MainApplication.cpp and GuidedTour() itself. Still reachable any time
+     * from Settings > Help, which doesn't consult this flag. */
+    bool tour_done;
 } Prefs;
 
 /* Relocate app files left in the old flat layout (everything directly under

@@ -726,6 +726,9 @@ enum {
     S_HOWTO19_TITLE, S_HOWTO19_BODY, /* how unzipping/extraction works */
     S_HOWTO20_TITLE, S_HOWTO20_BODY, /* set up archive.org/GitHub/SteamGridDB credentials */
     S_HOWTO21_TITLE, S_HOWTO21_BODY, /* what's in each Settings section */
+    S_HOWTO22_TITLE, S_HOWTO22_BODY, /* set a custom install folder for a console */
+    S_HOWTO23_TITLE, S_HOWTO23_BODY, /* control download speed and concurrency */
+    S_HOWTO24_TITLE, S_HOWTO24_BODY, /* hide file types you don't want to see */
 
     /* Troubleshooting articles. */
     S_TS1_TITLE, S_TS1_BODY,
@@ -743,6 +746,9 @@ enum {
     S_TS13_TITLE, S_TS13_BODY, /* an archive downloaded but won't extract */
     S_TS14_TITLE, S_TS14_BODY, /* GitHub rate limit hit */
     S_TS15_TITLE, S_TS15_BODY, /* archive.org says the item needs a login */
+    S_TS16_TITLE, S_TS16_BODY, /* downloads are slower than expected */
+    S_TS17_TITLE, S_TS17_BODY, /* a file type isn't showing in Library */
+    S_TS18_TITLE, S_TS18_BODY, /* the first-run tour / Welcome screen won't come back */
 
     /* ---- DAT verification (Library tab) ---- */
     S_VERIFY_DAT,      /* console options-menu entry ("Verify Files") */

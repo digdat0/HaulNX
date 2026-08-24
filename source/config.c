@@ -853,6 +853,7 @@ void prefs_load(Prefs *p) {
     p->box_art_enabled = true; /* show cached covers in the list by default */
     p->box_art_auto_fetch = true; /* auto-fetch art for new arrivals by default */
     p->sd_full_access = false; /* whole-SD-card access off by default */
+    p->tour_done = false;    /* first-run guided tour hasn't shown yet */
     prefs_ext_seed_defaults(p);
     size_t len = 0;
     char *js = json_read_file(PREFS_PATH, &len);
@@ -992,6 +993,10 @@ void prefs_load(Prefs *p) {
         if (idx >= 0) {
             p->sd_full_access = json_bool(js, tok, idx);
         }
+        idx = json_obj_get(js, tok, 0, "tourDone");
+        if (idx >= 0) {
+            p->tour_done = json_bool(js, tok, idx);
+        }
         idx = json_obj_get(js, tok, 0, "excludeExts");
         if (idx >= 0 && tok[idx].type == JSMN_ARRAY) {
             /* A saved list replaces the seeded defaults wholesale (so a user who
@@ -1093,6 +1098,7 @@ bool prefs_save(const Prefs *p) {
     fprintf(f, ",\n  \"boxArtEnabled\": %s", p->box_art_enabled ? "true" : "false");
     fprintf(f, ",\n  \"boxArtAutoFetch\": %s", p->box_art_auto_fetch ? "true" : "false");
     fprintf(f, ",\n  \"sdFullAccess\": %s", p->sd_full_access ? "true" : "false");
+    fprintf(f, ",\n  \"tourDone\": %s", p->tour_done ? "true" : "false");
     fputs(",\n  \"excludeExts\": [", f);
     for (int i = 0; i < p->exclude_ext_count; i++) {
         if (i) {

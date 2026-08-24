@@ -4518,7 +4518,8 @@ static const HelpArticle kHelpHowTo[] = {
     {S_HOWTO15_TITLE, S_HOWTO15_BODY}, {S_HOWTO16_TITLE, S_HOWTO16_BODY},
     {S_HOWTO17_TITLE, S_HOWTO17_BODY}, {S_HOWTO18_TITLE, S_HOWTO18_BODY},
     {S_HOWTO19_TITLE, S_HOWTO19_BODY}, {S_HOWTO20_TITLE, S_HOWTO20_BODY},
-    {S_HOWTO21_TITLE, S_HOWTO21_BODY},
+    {S_HOWTO21_TITLE, S_HOWTO21_BODY}, {S_HOWTO22_TITLE, S_HOWTO22_BODY},
+    {S_HOWTO23_TITLE, S_HOWTO23_BODY}, {S_HOWTO24_TITLE, S_HOWTO24_BODY},
 };
 static const HelpArticle kHelpTrouble[] = {
     {S_TS1_TITLE, S_TS1_BODY},   {S_TS2_TITLE, S_TS2_BODY},
@@ -4528,7 +4529,8 @@ static const HelpArticle kHelpTrouble[] = {
     {S_TS9_TITLE, S_TS9_BODY},   {S_TS10_TITLE, S_TS10_BODY},
     {S_TS11_TITLE, S_TS11_BODY}, {S_TS12_TITLE, S_TS12_BODY},
     {S_TS13_TITLE, S_TS13_BODY}, {S_TS14_TITLE, S_TS14_BODY},
-    {S_TS15_TITLE, S_TS15_BODY},
+    {S_TS15_TITLE, S_TS15_BODY}, {S_TS16_TITLE, S_TS16_BODY},
+    {S_TS17_TITLE, S_TS17_BODY}, {S_TS18_TITLE, S_TS18_BODY},
 };
 // Category -> {article array, count, screen title string id}. Getting Started
 // is index 0, matching GotoHelp's row order and Screen::Help's Sel().
@@ -4662,6 +4664,16 @@ void MainApplication::GotoHelpSearch() {
 // (no repos configured on any console yet) and any time after from
 // Help > Getting Started > "Replay the guided tour".
 void MainApplication::GuidedTour() {
+    // Mark it seen the moment it's shown, not on some later "finished"
+    // branch -- the startup check below only fires when this is still
+    // false, so a user who backs out mid-tour (or just force-quits) must not
+    // have it come back on the next launch. Replaying from Settings > Help
+    // calls this same function but never consults the flag, so it stays
+    // reachable there regardless.
+    if (!g_prefs.tour_done) {
+        g_prefs.tour_done = true;
+        prefs_save(&g_prefs);
+    }
     // Steps that are about one specific screen name it here, so the tour
     // actually opens that screen behind the dialog panel while describing it
     // -- "here's the Queue tab" shows the Queue tab, not whatever screen the
@@ -14487,15 +14499,12 @@ void MainApplication::HandleInput(u64 down, u64 held,
         // Last of the three: it offers a Wi-Fi transfer, so it must not come
         // before the network warning has had its say.
         //
-        // NOT console_count == 0: the bundled dl_sources.json seeds every
-        // supported console (with zero repos each) on first launch, so
-        // console_count is never 0 on a fresh install and this never fired.
-        // "Nothing to browse yet" actually means every console has 0 repos.
-        bool any_repos = false;
-        for (int c = 0; c < g_cfg.console_count && !any_repos; c++) {
-            any_repos = g_cfg.consoles[c].repo_count > 0;
-        }
-        if (!any_repos) {
+        // Gated on tour_done, not on "no repos configured yet" -- that used
+        // to be the trigger, but it meant the tour reappeared on every
+        // single launch until the user actually added a repo, even after
+        // they'd already seen it and closed it. tour_done is set the moment
+        // GuidedTour() opens (see there), so this fires at most once ever.
+        if (!g_prefs.tour_done) {
             this->GuidedTour();
         }
         // Bring the companion inventory server up if it was left enabled.
