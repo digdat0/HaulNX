@@ -4482,12 +4482,11 @@ void MainApplication::GotoAbout() {
 void MainApplication::GotoHelp() {
     this->screen = Screen::Help;
     this->layout->SetTitle(tr(S_TITLE_HELP));
-    this->layout->SetSubtitle(tr(S_SUB_HELP));
+    this->layout->SetSubtitle(tr(S_SUB_HELP)); // footer: "A open  B back  X search"
     this->layout->ClearMenu();
     this->layout->AddRow(tr(S_GETTING_STARTED));      // 0
     this->layout->AddRow(tr(S_HELP_HOWTO));            // 1
     this->layout->AddRow(tr(S_HELP_TROUBLESHOOTING));  // 2
-    this->layout->AddRow(tr(S_HELP_SEARCH));           // 3: keyword search (see GotoHelpSearch)
 }
 
 // One category's article list. Getting Started's row 0 is a live action (replay
@@ -4510,6 +4509,8 @@ static const HelpArticle kHelpHowTo[] = {
     {S_HOWTO13_TITLE, S_HOWTO13_BODY}, {S_HOWTO14_TITLE, S_HOWTO14_BODY},
     {S_HOWTO15_TITLE, S_HOWTO15_BODY}, {S_HOWTO16_TITLE, S_HOWTO16_BODY},
     {S_HOWTO17_TITLE, S_HOWTO17_BODY}, {S_HOWTO18_TITLE, S_HOWTO18_BODY},
+    {S_HOWTO19_TITLE, S_HOWTO19_BODY}, {S_HOWTO20_TITLE, S_HOWTO20_BODY},
+    {S_HOWTO21_TITLE, S_HOWTO21_BODY},
 };
 static const HelpArticle kHelpTrouble[] = {
     {S_TS1_TITLE, S_TS1_BODY},   {S_TS2_TITLE, S_TS2_BODY},
@@ -4518,6 +4519,8 @@ static const HelpArticle kHelpTrouble[] = {
     {S_TS7_TITLE, S_TS7_BODY},   {S_TS8_TITLE, S_TS8_BODY},
     {S_TS9_TITLE, S_TS9_BODY},   {S_TS10_TITLE, S_TS10_BODY},
     {S_TS11_TITLE, S_TS11_BODY}, {S_TS12_TITLE, S_TS12_BODY},
+    {S_TS13_TITLE, S_TS13_BODY}, {S_TS14_TITLE, S_TS14_BODY},
+    {S_TS15_TITLE, S_TS15_BODY},
 };
 // Category -> {article array, count, screen title string id}. Getting Started
 // is index 0, matching GotoHelp's row order and Screen::Help's Sel().
@@ -4671,7 +4674,33 @@ void MainApplication::GuidedTour() {
     int i = 0;
     while (i >= 0 && i < n) {
         switch (kSteps[i].page) {
-        case Page::Library:        this->GotoInstalled(roms_root(&g_tico)); break;
+        case Page::Library:
+            this->GotoInstalled(roms_root(&g_tico));
+            if (this->layout->RowCount() == 0) {
+                // The tour's own trigger condition is "no repos configured
+                // anywhere yet", so the real Library listing is often just
+                // the empty state at this point. Show what Library will
+                // actually look like -- a card per console -- instead of a
+                // blank "no games" message on the very first thing the tour
+                // points at. Same console set/icon lookup GotoHome() uses
+                // for the Add tab; ClearEmptyState/AddCard undo GotoInstalled's
+                // empty-state call above.
+                this->layout->ClearEmptyState();
+                this->layout->ClearMenu();
+                this->layout->SetCardCols(6);
+                this->layout->SetCardPoster(true);
+                this->layout->SetCardsMode(true);
+                for (int c = 0; c < g_cfg.console_count; c++) {
+                    if (!g_cfg.consoles[c].shown_installed) continue;
+                    const char *name = g_cfg.consoles[c].console;
+                    const char *full = console_full_name(name);
+                    bool ic_is_art = false;
+                    pu::sdl2::Texture ic = console_display_icon(name, &ic_is_art);
+                    this->layout->AddCard(full ? full : name, "", ic, false,
+                                          false, ic_is_art);
+                }
+            }
+            break;
         case Page::Browse:         this->GotoHome();                       break;
         case Page::Queue:          this->GotoQueue();                      break;
         case Page::InstallFolders: this->GotoInstallFolders();             break;
@@ -16669,12 +16698,9 @@ void MainApplication::HandleInput(u64 down, u64 held,
         if (down & HidNpadButton_B) {
             this->GotoSettings();
         } else if (down & HidNpadButton_A) {
-            s32 sel = this->layout->Sel();
-            if (sel == 3) {
-                this->GotoHelpSearch();
-            } else {
-                this->ShowHelpCategory(sel);
-            }
+            this->ShowHelpCategory(this->layout->Sel());
+        } else if (down & HidNpadButton_X) {
+            this->GotoHelpSearch();
         }
         break;
     }

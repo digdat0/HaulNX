@@ -7,6 +7,24 @@ Notes for each release. `release.sh` pulls the section matching the version in
 `VERSION` and attaches it to the GitHub release. Add a `## <version>` section
 here before running a release.
 
+## 2.1.18
+
+**Help search moves to a footer button; more Help content; tour shows console cards on a totally fresh install.**
+
+- Search is no longer a row on the Help hub — press **X** from Help (footer
+  now reads "A open  B back  X search"). Same keyword search as before,
+  otherwise unchanged.
+- New How-To articles: how unzipping/extraction actually works, setting up
+  your Archive.org/GitHub/SteamGridDB credentials, and a one-page map of
+  what's in each Settings section. New Troubleshooting articles: an archive
+  that downloads but won't extract, hitting a GitHub rate limit, and
+  archive.org asking for a login. 6 new articles, 42 total.
+- Guided tour: the Library step's trigger condition (no repos configured
+  anywhere) meant the real Library listing was often just the "no games yet"
+  empty state. That step now shows a card per known console instead, the
+  same set/icons the Add tab lists, so the tour has something to point at
+  even before a single game is installed.
+
 ## 2.1.16
 
 **Fix: guided tour's tab bar didn't follow the screen it navigated to.**
