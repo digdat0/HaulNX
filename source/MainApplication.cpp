@@ -4664,6 +4664,7 @@ void MainApplication::GuidedTour() {
     static const Step kSteps[] = {
         {S_TOUR1_TITLE, S_TOUR1_BODY, Page::Library},
         {S_TOUR2_TITLE, S_TOUR2_BODY, Page::Library},
+        {S_TOUR8_TITLE, S_TOUR8_BODY, Page::Browse}, // Collections tab: what it is + adding a repo
         {S_TOUR3_TITLE, S_TOUR3_BODY, Page::Browse},
         {S_TOUR4_TITLE, S_TOUR4_BODY, Page::Queue},
         {S_TOUR5_TITLE, S_TOUR5_BODY, Page::InstallFolders},

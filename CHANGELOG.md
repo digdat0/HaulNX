@@ -7,6 +7,20 @@ Notes for each release. `release.sh` pulls the section matching the version in
 `VERSION` and attaches it to the GitHub release. Add a `## <version>` section
 here before running a release.
 
+## 2.1.19
+
+**Tour gets a dedicated Collections step; Welcome copy drops "not just a downloader."**
+
+- The tour used to jump straight from Library into "building your library"
+  (picking files inside a repo) without ever explaining what a repository
+  or the Collections tab actually is. New step, right after Library:
+  "The Collections tab" — background switches there, and the copy covers
+  what it's for and how to add a repository (Y, or Search), before the
+  existing "building your library" step covers picking/queueing files.
+- Welcome step's copy no longer leads with "not just a downloader" — it's a
+  ROM management app that happens to browse curated archive.org collections
+  for legitimate homebrew, public-domain, and preservation content.
+
 ## 2.1.18
 
 **Help search moves to a footer button; more Help content; tour shows console cards on a totally fresh install.**
