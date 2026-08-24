@@ -694,6 +694,7 @@ enum {
     S_TOUR6_TITLE, S_TOUR6_BODY,
     S_TOUR7_TITLE, S_TOUR7_BODY,
     S_TOUR8_TITLE, S_TOUR8_BODY, /* Collections tab: what it is + adding a repo (shown between tour2 and tour3) */
+    S_TOUR_QUEUE_MOCK_NAME, /* mocked-up queue card filename behind the Queue tour step */
 
     /* Getting Started articles. */
     S_GS1_TITLE, S_GS1_BODY,

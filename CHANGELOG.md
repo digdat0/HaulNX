@@ -7,6 +7,29 @@ Notes for each release. `release.sh` pulls the section matching the version in
 `VERSION` and attaches it to the GitHub release. Add a `## <version>` section
 here before running a release.
 
+## 2.1.20
+
+**Queue tour step gets a mocked-up card; dialog titles wrap; tour copy cleanup.**
+
+- Queue tab tour step: the real queue is empty on a fresh install (and its
+  live per-frame refresh doesn't run while the tour's dialog loop owns
+  rendering, same root cause 2.1.16 fixed for the tab bar), so there was
+  nothing behind that step to point at. Now shows one mocked-up card: an
+  N64 download partway through, in the same visual state a real one would
+  be in.
+- Dialog titles now word-wrap instead of running off the panel's edge — hit
+  by "Point your emulators at your library" in the tour, but this is a
+  SideMenu-level fix so it covers every long title in the app, not just
+  that one.
+- Reworded tour1, tour3, tour5, tour7, and tour8's copy to drop em dashes.
+- Collections tab step no longer points at a magnifying-glass search icon
+  that doesn't exist there (search only works across repos you've already
+  added, so it's not a way to find new ones anyway) — now just points at
+  X > Add Repo on a console, which is accurate in the default (grouped)
+  view the tour actually shows.
+- Welcome's two options are reordered so "Add your first repo" (renamed
+  from "Add a repo by hand") leads, ahead of "Send from a computer".
+
 ## 2.1.19
 
 **Tour gets a dedicated Collections step; Welcome copy drops "not just a downloader."**

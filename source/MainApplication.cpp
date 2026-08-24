@@ -2673,11 +2673,19 @@ s32 MainApplication::SideMenu(const std::string &title,
         pu::ui::GetDefaultFont(pu::ui::DefaultFontSize::Medium);
     const std::string ofont =
         pu::ui::GetDefaultFont(pu::ui::DefaultFontSize::Medium);
-    pu::sdl2::Texture title_tex = rnd::RenderText(tfont, title, title_clr);
+    // Word-wrapped like the body below (see wrap_to_px) -- a long title (a
+    // tour/help step, a long console name) used to run straight off the
+    // panel's right edge instead of dropping to a second line.
+    pu::sdl2::Texture title_tex = rnd::RenderText(
+        tfont, wrap_to_px(tfont, title, panel_w - 2 * pad), title_clr);
     // Optional body under the title, word-wrapped to the panel width (see
     // wrap_to_px — RenderText itself only truncates). A divider then separates
-    // this top section from the selectable options below it.
-    const s32 body_y = 132;
+    // this top section from the selectable options below it. 132 assumes a
+    // single-line title; a wrapped title pushes body_y down by however much
+    // taller its texture came out than one line of it would have been.
+    const s32 title_line_h = rnd::GetTextHeight(tfont, title);
+    const s32 title_extra = rnd::GetTextureHeight(title_tex) - title_line_h;
+    const s32 body_y = 132 + (title_extra > 0 ? title_extra : 0);
     pu::sdl2::Texture body_tex =
         body.empty()
             ? nullptr
@@ -4703,7 +4711,26 @@ void MainApplication::GuidedTour() {
             }
             break;
         case Page::Browse:         this->GotoHome();                       break;
-        case Page::Queue:          this->GotoQueue();                      break;
+        case Page::Queue:
+            this->GotoQueue();
+            // The real queue is empty on a fresh install (and its live
+            // refresh only runs from HandleInput's outer per-frame loop,
+            // which GuidedTour never returns to -- see SyncTab above), so
+            // there's nothing to actually point at. Mock up one card: an
+            // N64 download partway through, matching SetQueueCard's real
+            // fields (see the live queue-render loop in HandleInput).
+            this->layout->SetCardsMode(true);
+            this->layout->SetQueueCount(1);
+            {
+                bool ic_is_art = false;
+                pu::sdl2::Texture ic =
+                    console_display_icon("n64", &ic_is_art, false);
+                this->layout->SetQueueCard(
+                    0, "n64", ic, "dl", qstatus_color(Q_DOWNLOADING),
+                    "850 MB", "4.1 MB/s", "~38s", tr(S_TOUR_QUEUE_MOCK_NAME),
+                    0.62f, true, 0, 0, true, false, ic_is_art);
+            }
+            break;
         case Page::InstallFolders: this->GotoInstallFolders();             break;
         case Page::Storage:        this->GotoStorage();                   break;
         case Page::Transfers:      this->GotoTransfers();                 break;
@@ -8683,14 +8710,16 @@ bool MainApplication::StagedRestartPrompt(const std::string &msg) {
 void MainApplication::Welcome() {
     // Last option as cancel, so it and B both come back as -1 (see the note on
     // CreateShowDialog above) — a real index is never returned for "Not now".
+    // "Add your first repo" leads (the direct, no-other-device path); sending
+    // from a computer is second.
     int r = this->CreateShowDialog(
         tr(S_WELCOME_TITLE), tr(S_WELCOME_BODY),
-        {tr(S_WELCOME_IMPORT), tr(S_WELCOME_MANUAL), tr(S_WELCOME_LATER)}, true,
+        {tr(S_WELCOME_MANUAL), tr(S_WELCOME_IMPORT), tr(S_WELCOME_LATER)}, true,
         {}, style_dialog);
     if (r == 0) {
-        this->ImportStart(true); // come back to Home, not into Manage data
-    } else if (r == 1) {
         this->GotoPicker(Pending::AddRepo); // same flow Y opens on Home
+    } else if (r == 1) {
+        this->ImportStart(true); // come back to Home, not into Manage data
     }
 }
 
