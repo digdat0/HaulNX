@@ -7,6 +7,27 @@ Notes for each release. `release.sh` pulls the section matching the version in
 `VERSION` and attaches it to the GitHub release. Add a `## <version>` section
 here before running a release.
 
+## 2.2.0
+
+**Console cover art is ~9x smaller and much faster; several box-art bugs fixed; new PS Vita icon.**
+
+- Custom console cover art pushed from the desktop companion is now sent as a
+  200×300 JPEG instead of a 600×900 PNG. This fixes slow tab navigation and
+  missing/broken cover art that could show up once several consoles had
+  custom art enabled at once.
+- New desktop setting (on by default): "Auto-push cover art to the Switch
+  right after picking it from the PC." Picking an image in the Console Art
+  dialog now crops and sends it immediately, instead of requiring an extra
+  manual "Push to Switch" step.
+- Fixed a bug where enabling custom cover art on many consoles at once could
+  make some consoles show blank, or another console's art, on the
+  Library/Collections screens.
+- The desktop app's Library folder setup now creates a subfolder for every
+  console automatically, including ones added since you last picked your
+  ROMs folder.
+- New PS Vita console icon. PS Vita is now shown by default in the console
+  list instead of requiring manual opt-in via Settings > Manage Consoles.
+
 ## 2.1.23
 
 **Fix: backing out of the first-run guided tour without adding a repo could strand you on an empty Storage/Transfers/etc. screen.**
