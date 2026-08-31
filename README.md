@@ -27,7 +27,7 @@ works.**
 
 ## What it does
 
-HaulNX manages one central ROM library — `sdmc:/roms/<console>/`, across **53
+HaulNX manages one central ROM library — `sdmc:/roms/<console>/`, across **60
 supported console folders**. Get files in from wherever (archive.org, or your PC),
 and HaulNX handles the rest: it extracts archives, verifies dumps against the
 official DATs, files everything under the right console, and cleans up duplicates and
@@ -121,7 +121,7 @@ The wiki has the details:
 - **[App Utility](https://github.com/digdat0/HaulNX/wiki/Reference-App-Utility)** —
   building collections on a PC, sending them across, and updating the app.
 - **[Configuration](https://github.com/digdat0/HaulNX/wiki/Reference-Configuration)** —
-  the `dl_sources.json` schema, `credentials.json`, the 53 supported console folders,
+  the `dl_sources.json` schema, `credentials.json`, the 60 supported console folders,
   and every file HaulNX keeps on the card.
 
 Restricted archive.org items need your own S3 keys
