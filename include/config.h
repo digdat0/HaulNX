@@ -283,6 +283,10 @@ typedef struct {
      * the console never presents itself as a USB file-transfer device, so a
      * cable plugged in "just to charge" can't be used to browse the library. */
     bool mtp_enabled;
+    /* false (default): the header shows only the "HaulNX" wordmark. true:
+     * "vX.Y.Z" is shown right after it, e.g. for telling builds apart across
+     * consoles without opening Settings. Settings > Diagnostics. */
+    bool show_header_version;
     /* true (default): the Installed list shows cached SteamGridDB covers and
      * lets a scan resolve new ones. false: the list never looks up or decodes
      * box art, for anyone who'd rather not have the extra disk/network use —

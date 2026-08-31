@@ -17,6 +17,7 @@
 #include "jsonutil.h"
 #include "net.h"
 
+#include <switch.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -32,6 +33,24 @@ static BoxArtEntry *g_e = NULL;
 static int g_count = 0, g_cap = 0;
 static bool g_dirty = false;
 static bool g_loaded = false;
+
+/* Guards every read/write of g_e/g_count/g_cap/g_dirty/g_loaded above. This
+ * index is touched from more than the UI thread: BoxArtScanThread,
+ * BoxArtPickConfirmThread and the companion's InvBoxartPickThread (all real
+ * libnx threads, see MainApplication.cpp) call into this file's fetch/record
+ * functions in the background while the UI thread concurrently calls
+ * boxart_lookup() via boxart_icon_for() on every screen that shows box art.
+ * Without this, ba_reserve()'s realloc() -- which can move or free the old
+ * g_e block -- could run on one thread while another is mid-ba_find() over
+ * the old pointer: a use-after-free / heap-corruption race, most reachable
+ * via the companion picker since that flow runs while the on-device UI stays
+ * fully interactive (unlike the on-device pickers, which sit behind a modal).
+ * Zero-initialized is already a valid unlocked libnx Mutex (a plain lock
+ * word) -- no explicit mutexInit call needed, and this file has no separate
+ * init entry point to call one from. Held only around the actual struct
+ * touches below, never across the network I/O ba_fetch_internal/
+ * boxart_fetch_candidate do -- see ba_load_locked/ba_save_locked. */
+static Mutex g_ba_mtx;
 
 static bool ba_reserve(int need) {
     if (need <= g_cap) {
@@ -53,7 +72,9 @@ static bool ba_reserve(int need) {
 /* Linear scan: the index holds one entry per distinct title in the library
  * (at most a few hundred for any real collection) and is only consulted at
  * folder-open/scan time, never per frame, so this doesn't need hashcache's
- * sorted binary search. */
+ * sorted binary search. Caller must hold g_ba_mtx -- and must not hang onto
+ * the returned pointer past the lock, since another thread's ba_reserve()
+ * can realloc/move g_e the moment it's released. */
 static BoxArtEntry *ba_find(const char *title) {
     for (int i = 0; i < g_count; i++) {
         if (strcmp(g_e[i].title, title) == 0) {
@@ -63,7 +84,12 @@ static BoxArtEntry *ba_find(const char *title) {
     return NULL;
 }
 
-void boxart_index_load(void) {
+/* Unlocked bodies of boxart_index_load/save below -- for callers in this
+ * file that already hold g_ba_mtx across a larger operation (a Mutex here
+ * isn't recursive, so re-entering the public locking wrappers would
+ * deadlock). External callers (MainApplication.cpp calls boxart_index_save()
+ * directly after a scan batch) always go through the locking wrappers. */
+static void ba_load_locked(void) {
     if (g_loaded) {
         return;
     }
@@ -92,7 +118,7 @@ void boxart_index_load(void) {
     fclose(f);
 }
 
-void boxart_index_save(void) {
+static void ba_save_locked(void) {
     if (!g_dirty) {
         return;
     }
@@ -110,21 +136,34 @@ void boxart_index_save(void) {
     g_dirty = false;
 }
 
+void boxart_index_load(void) {
+    mutexLock(&g_ba_mtx);
+    ba_load_locked();
+    mutexUnlock(&g_ba_mtx);
+}
+
+void boxart_index_save(void) {
+    mutexLock(&g_ba_mtx);
+    ba_save_locked();
+    mutexUnlock(&g_ba_mtx);
+}
+
 bool boxart_lookup(const char *title, char *path_out, size_t path_sz) {
     if (!title || !title[0]) {
         return false;
     }
-    boxart_index_load();
+    mutexLock(&g_ba_mtx);
+    ba_load_locked();
     BoxArtEntry *e = ba_find(title);
-    if (!e || !e->found) {
-        return false;
-    }
-    if (path_out) {
+    bool found = e && e->found;
+    if (found && path_out) {
         snprintf(path_out, path_sz, "%s/%s", BOXART_DIR, e->file);
     }
-    return true;
+    mutexUnlock(&g_ba_mtx);
+    return found;
 }
 
+/* Caller must hold g_ba_mtx. */
 static void ba_record(const char *title, bool found, const char *file) {
     BoxArtEntry *e = ba_find(title);
     if (!e) {
@@ -525,16 +564,26 @@ static bool ba_fetch_internal(const char *key, const char *title,
     if (!key || !key[0] || !title || !title[0] || !query || !query[0]) {
         return false;
     }
-    boxart_index_load();
+    // The lock is only ever held around the actual g_e touches below, never
+    // across the network calls in between (ba_search_game_id/ba_grid_url/
+    // ba_icon_url/http_download) -- those can take seconds, and holding a
+    // non-recursive lock across them would stall every other thread's box-art
+    // lookups (including the UI thread's boxart_icon_for, called on every
+    // screen that shows box art) for that whole time. See g_ba_mtx's comment.
+    mutexLock(&g_ba_mtx);
+    ba_load_locked();
     if (!force) {
         BoxArtEntry *existing = ba_find(title);
         if (existing) {
-            if (existing->found && path_out) {
+            bool found = existing->found;
+            if (found && path_out) {
                 snprintf(path_out, path_sz, "%s/%s", BOXART_DIR, existing->file);
             }
-            return existing->found;
+            mutexUnlock(&g_ba_mtx);
+            return found;
         }
     }
+    mutexUnlock(&g_ba_mtx);
 
     net_set_steamgriddb_key(key);
     bool definite = false;
@@ -546,7 +595,9 @@ static bool ba_fetch_internal(const char *key, const char *title,
          * -- otherwise one bad key poisons the whole library's index in a
          * single pass. */
         if (definite) {
+            mutexLock(&g_ba_mtx);
             ba_record(title, false, NULL);
+            mutexUnlock(&g_ba_mtx);
         }
         return false;
     }
@@ -565,7 +616,9 @@ static bool ba_fetch_internal(const char *key, const char *title,
     }
     if (!img_url[0]) {
         if (definite) {
+            mutexLock(&g_ba_mtx);
             ba_record(title, false, NULL);
+            mutexUnlock(&g_ba_mtx);
         }
         return false;
     }
@@ -584,12 +637,16 @@ static bool ba_fetch_internal(const char *key, const char *title,
          * miss; a transport-level failure (dl_code == 0, connection never
          * completed) is not -- same retry-don't-poison rule as above. */
         if (dl_code > 0) {
+            mutexLock(&g_ba_mtx);
             ba_record(title, false, NULL);
+            mutexUnlock(&g_ba_mtx);
         }
         return false;
     }
 
+    mutexLock(&g_ba_mtx);
     ba_record(title, true, fname);
+    mutexUnlock(&g_ba_mtx);
     if (path_out) {
         snprintf(path_out, path_sz, "%s", dest);
     }
@@ -678,7 +735,10 @@ bool boxart_fetch_candidate(const char *key, const char *title,
     if (!url[0]) {
         return false;
     }
-    boxart_index_load();
+    // boxart_index_load() moved from here to just before ba_record below --
+    // nothing between here and there reads the index, and this keeps the
+    // lock off for the whole http_download() (see g_ba_mtx's comment: never
+    // hold it across network I/O).
     fs_mkdir_p(BOXART_DIR);
     char fname[64];
     snprintf(fname, sizeof(fname), "%08x.png", ba_hash(title));
@@ -693,16 +753,60 @@ bool boxart_fetch_candidate(const char *key, const char *title,
     }
     /* An explicit user pick always overwrites whatever the index already had
      * for this title, hit or miss -- same rule as boxart_fetch_query. */
+    mutexLock(&g_ba_mtx);
+    ba_load_locked();
     ba_record(title, true, fname);
-    boxart_index_save();
+    ba_save_locked();
+    mutexUnlock(&g_ba_mtx);
     if (path_out) {
         snprintf(path_out, path_sz, "%s", dest);
     }
     return true;
 }
 
+bool boxart_set_console_art(const char *target, const void *data, size_t len,
+                            char *path_out, size_t path_sz) {
+    if (!target || !target[0] || !data || !len) {
+        return false;
+    }
+    char title[280];
+    snprintf(title, sizeof(title), "console:%s", target);
+    fs_mkdir_p(BOXART_DIR);
+    char fname[64];
+    snprintf(fname, sizeof(fname), "%08x.png", ba_hash(title));
+    char dest[768];
+    snprintf(dest, sizeof(dest), "%s/%s", BOXART_DIR, fname);
+    FILE *f = fopen(dest, "wb");
+    if (!f) {
+        return false;
+    }
+    size_t wrote = fwrite(data, 1, len, f);
+    fclose(f);
+    if (wrote != len) {
+        remove(dest);
+        return false;
+    }
+    /* A PC push always overwrites whatever was cached for this console before,
+     * hit or miss -- same "explicit pick always wins" rule as
+     * boxart_fetch_candidate above. */
+    mutexLock(&g_ba_mtx);
+    ba_load_locked();
+    ba_record(title, true, fname);
+    ba_save_locked();
+    mutexUnlock(&g_ba_mtx);
+    if (path_out) {
+        snprintf(path_out, path_sz, "%s", dest);
+    }
+    return true;
+}
+
+// The four functions below only ever touch local disk (a directory scan +
+// remove()s + the index itself) -- no network I/O, so unlike the fetch
+// functions above there's no reason to split the lock: each holds g_ba_mtx
+// for its entire body.
 void boxart_clear_all(void) {
-    boxart_index_load();
+    mutexLock(&g_ba_mtx);
+    ba_load_locked();
     for (int i = 0; i < g_count; i++) {
         if (g_e[i].found && g_e[i].file[0]) {
             char path[768];
@@ -712,11 +816,13 @@ void boxart_clear_all(void) {
     }
     g_count = 0;
     g_dirty = true;
-    boxart_index_save();
+    ba_save_locked();
+    mutexUnlock(&g_ba_mtx);
 }
 
 void boxart_clear_consoles(void) {
-    boxart_index_load();
+    mutexLock(&g_ba_mtx);
+    ba_load_locked();
     int kept = 0;
     for (int i = 0; i < g_count; i++) {
         if (ba_is_console_key(g_e[i].title)) {
@@ -734,11 +840,13 @@ void boxart_clear_consoles(void) {
     }
     g_count = kept;
     g_dirty = true;
-    boxart_index_save();
+    ba_save_locked();
+    mutexUnlock(&g_ba_mtx);
 }
 
 void boxart_clear_games(void) {
-    boxart_index_load();
+    mutexLock(&g_ba_mtx);
+    ba_load_locked();
     int kept = 0;
     for (int i = 0; i < g_count; i++) {
         if (!ba_is_console_key(g_e[i].title)) {
@@ -756,16 +864,19 @@ void boxart_clear_games(void) {
     }
     g_count = kept;
     g_dirty = true;
-    boxart_index_save();
+    ba_save_locked();
+    mutexUnlock(&g_ba_mtx);
 }
 
 bool boxart_forget(const char *title) {
     if (!title || !title[0]) {
         return false;
     }
-    boxart_index_load();
+    mutexLock(&g_ba_mtx);
+    ba_load_locked();
     BoxArtEntry *e = ba_find(title);
     if (!e) {
+        mutexUnlock(&g_ba_mtx);
         return false;
     }
     if (e->found && e->file[0]) {
@@ -780,8 +891,9 @@ bool boxart_forget(const char *title) {
     }
     g_count--;
     g_dirty = true;
-    boxart_index_save(); /* one interactive delete, not a batch pass -- save
-                          right away rather than risk it on some later call
-                          that may never come. */
+    ba_save_locked(); /* one interactive delete, not a batch pass -- save
+                       right away rather than risk it on some later call
+                       that may never come. */
+    mutexUnlock(&g_ba_mtx);
     return true;
 }

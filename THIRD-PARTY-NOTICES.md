@@ -159,6 +159,25 @@ SOFTWARE.
 
 ---
 
+## switch-hbas-repo (app/emulator catalog data)
+
+`romfs/update_sources.json` — the bundled catalog the on-device update manager
+(see the `[[ondevice-update-manager]]` project note) uses to know each app's
+GitHub repo — was expanded using package metadata from **fortheusers'
+switch-hbas-repo** (https://github.com/fortheusers/switch-hbas-repo), which
+backs the community's hb-app.store index. Only the repo-ownership metadata
+(each package's `pkgbuild.json`, cross-checked against its actual
+`releases/download/` asset URL) was used to identify which GitHub repo each
+app's updates come from; HaulNX always resolves and downloads the update
+itself directly from GitHub Releases, never from hb-app.store's own hosting.
+
+```
+The metadata within fortheusers/switch-hbas-repo is licensed under
+Creative Commons Attribution-ShareAlike (CC-BY-SA).
+```
+
+---
+
 Other build/runtime dependencies (devkitPro / libnx, libcurl, libarchive, SDL2
 and its codec libraries) are provided via the devkitPro toolchain under their
 own respective licenses.

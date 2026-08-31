@@ -503,6 +503,8 @@ enum {
     S_SEC_INSTALL_PC,
     S_SEC_ACCOUNT,
     S_SEC_UPDATES,
+    S_SEC_APP_EMU_UPDATES, /* new top-level row: emulator/app update management,
+                             * split out of Updates (which stayed HaulNX-only) */
     S_SEC_LOGS,
     S_SEC_DIAGNOSTICS,
     S_SEC_ABOUT,
@@ -516,6 +518,7 @@ enum {
     S_TITLE_RECV_CONSOLE, S_SUB_RECV_CONSOLE,
     S_TITLE_ACCOUNT,      S_SUB_ACCOUNT,
     S_TITLE_UPDATES,      S_SUB_UPDATES,
+    S_TITLE_APP_EMU_UPDATES, S_SUB_APP_EMU_UPDATES,
     S_TITLE_DIAGNOSTICS,  S_SUB_DIAGNOSTICS,
     S_TITLE_ABOUT,        S_SUB_ABOUT,
     S_TITLE_EXT_TUNING,   S_SUB_EXT_TUNING,
@@ -657,6 +660,7 @@ enum {
     S_MTP_ENABLED,        /* Diagnostics: USB file-transfer (MTP) on/off toggle */
     S_MTP_DISABLED_TOAST, /* toast: "Connect to PC over USB" while the toggle is off */
     S_USB3_STATUS,        /* Diagnostics: read-only "USB 3.0" row label */
+    S_SHOW_HEADER_VERSION, /* Diagnostics: show the build version in the header, toggle */
     S_ENABLED,
     S_DISABLED,
     S_UNKNOWN,
@@ -879,6 +883,8 @@ enum {
     S_INBOX_LABEL,       /* on-screen label for the inbox as a receive target */
     S_INV_GAME_INBOX,    /* toast: a game pushed over the live link (%s) hit the inbox */
     S_INV_GAME_FILED,    /* toast: a Library push (%s) landed straight in a console folder (%s) */
+    S_INV_ART_SET,       /* toast: the PC pushed new cover art for a console (%s) */
+    S_INV_ART_FAIL,      /* toast: a PC cover-art push couldn't be saved */
     S_LIVE_RECV_TITLE,   /* title of the receive page shown for a push over the live link */
     S_LIVE_RECV_MSG,     /* body of that page while a file is arriving */
     S_SORT_DONE,         /* results title (%d filed, %d need a console) */
@@ -917,7 +923,7 @@ enum {
     S_EMU_INSTALL_DONE,  /* toast: <app> v%s installed */
 
     /* ---- Tools: on-device emulator / app update manager ---- */
-    S_APPMAN_MENU,        /* Tools slide-out row: shortcut to Settings -> Updates */
+    S_APPMAN_MENU,        /* Tools slide-out row: shortcut to Settings -> App & Emulator Updates */
     S_UPDSRC_PUSHED,      /* toast: desktop pushed the shared update manifest */
     S_APPMAN_EMUS,        /* Updates row + section title: Emulators */
     S_APPMAN_APPS,        /* Updates row + section title: Apps */
@@ -946,6 +952,8 @@ enum {
     S_APPMAN_REINSTALL,   /* button: reinstall %s */
     S_APPMAN_NOT_INST_LATEST, /* body: not installed, latest is %s */
     S_APPMAN_INSTALL_V,   /* button: install %s */
+    S_APPMAN_INSTALL_CHECK, /* entry action: not installed, nothing checked yet —
+                              * check for a release and install it in one step */
     S_APPMAN_REVERT,      /* entry action: revert to a backup */
     S_APPMAN_REVERT_PICK, /* revert list body: choose a build to restore */
     S_APPMAN_NO_BACKUPS,  /* dialog: no backups stored yet */

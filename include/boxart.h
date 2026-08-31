@@ -130,6 +130,20 @@ bool boxart_fetch_candidate(const char *key, const char *title,
                             const BoxArtCandidate *c, char *path_out,
                             size_t path_sz);
 
+/* Register `data` (`len` bytes, PNG or JPEG -- the loader sniffs content, not
+ * the extension, same as every other cached cover) as `target`'s console-art
+ * image: writes it into BOXART_DIR under the "console:<target>" cache key,
+ * force-overwriting whatever was cached for that console before (hit or miss),
+ * same "always wins" contract boxart_fetch_query has for a game. For the
+ * desktop companion's Console Art push -- the image already arrived as bytes
+ * in memory (an HTTP POST body), not as a file on disk to copy. Does NOT flip
+ * ConsoleGroup::use_boxart on -- same split boxart_fetch/ConsoleArtMenu keep,
+ * so the caller decides that and persists config, and must also drop the
+ * runtime icon-texture cache (this only touches disk, see boxart_forget's
+ * note). Returns true and fills path_out on success. */
+bool boxart_set_console_art(const char *target, const void *data, size_t len,
+                            char *path_out, size_t path_sz);
+
 /* Delete every cached cover -- every PNG under BOXART_DIR this index knows
  * about -- and the index itself, hits and misses alike, in one pass. This is
  * the deliberate nuke-everything action behind Data Files > Art Cache's

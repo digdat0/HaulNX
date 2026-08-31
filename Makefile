@@ -183,7 +183,19 @@ endif
 .PHONY: $(BUILD) clean all plutonium version_header i18n_strings dist
 
 #---------------------------------------------------------------------------------
+# Local-only: every plain `make` also drops a copy onto the Ryujinx sdcard
+# folder as haulnx.nro, so a fresh build is immediately launchable in the
+# emulator without a manual copy step. Skipped for `make dist` (PUBLIC_BUILD=1)
+# since that's the release artifact, not something to shove at an emulator.
+RYUJINX_SDCARD_DIR := /c/Users/Steve/AppData/Roaming/Ryujinx/sdcard/switch/HaulNX
+
+#---------------------------------------------------------------------------------
 all: $(BUILD)
+ifneq ($(PUBLIC_BUILD),1)
+	@mkdir -p "$(RYUJINX_SDCARD_DIR)"
+	@cp -f "$(TARGET).nro" "$(RYUJINX_SDCARD_DIR)/haulnx.nro"
+	@echo "Copied $(TARGET).nro -> $(RYUJINX_SDCARD_DIR)/haulnx.nro"
+endif
 
 $(BUILD): plutonium version_header i18n_strings
 	@[ -d $@ ] || mkdir -p $@

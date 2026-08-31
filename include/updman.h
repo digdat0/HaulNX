@@ -11,7 +11,7 @@ extern "C" {
 
 /* One row of the shared update manifest (update_sources.json). The desktop
  * companion edits the same file, so this mirrors its entry shape. */
-#define UPD_MAX      64
+#define UPD_MAX      300
 #define UPD_KIND_EMU 0
 #define UPD_KIND_APP 1
 

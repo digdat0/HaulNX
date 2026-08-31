@@ -6,6 +6,8 @@
 #include <stdint.h>
 #include <stdio.h>
 
+#include "boxart.h" /* BOXART_MAX_CANDIDATES, for the companion box-art search fields below */
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -118,6 +120,42 @@ typedef struct {
      * — the desktop's USB push already had this via WPD's own folder walk;
      * this is the Wi-Fi equivalent. Sanitized like recv_app. */
     char recv_folder[64];
+    /* Inventory mode only: an X-Art-Target header on a buffered POST (the
+     * desktop companion's Console Art push) names the console this image is
+     * cover art for -- the short target key config.h consoles use, same as
+     * recv_folder. Forces the body to buffer in RAM rather than stream to the
+     * inbox (a cover PNG is small), same as recv_dat, so the caller can write
+     * it straight into the box-art cache and flip that console's use_boxart
+     * on instead of filing a "game". Empty for every other kind of push. */
+    char recv_art_target[64];
+    /* ---- companion box-art search/pick (SteamGridDB, via the device's own
+     * key) -- request handoff + result state. A search/pick is genuine
+     * network I/O (SteamGridDB round trip), so it can never run inline
+     * inside httpsrv_poll like the routes above: GET/POST just stash the
+     * decoded request here and respond immediately, MainApplication's
+     * InvBoxartTick (called every frame alongside InvServerPoll) notices a
+     * non-empty target on its next poll and kicks the real work off on a
+     * background thread, then writes the result fields back here once it
+     * finishes -- same one-way producer/consumer handoff recv_art_target
+     * above already uses for a push. */
+    char boxsearch_req_target[64];  /* set by GET .../boxartsearch; consumed (cleared) by InvBoxartTick */
+    char boxsearch_req_query[256];
+    bool boxsearch_running; /* true from the request until the thread finishes */
+    bool boxsearch_done;    /* a result set is ready; stays true until the next search starts */
+    int  boxsearch_count;   /* candidates found, 0..BOXART_MAX_CANDIDATES */
+    /* Per-candidate size, for .../boxartsearch_status's JSON (lets the
+     * companion tell a poster-shaped grid from a square icon before ever
+     * downloading a thumb). The thumb bytes themselves live at the ordinary
+     * BOXART_TMP_DIR/<i>.png path boxart_fetch_thumb always writes, so
+     * .../boxartthumb?p=<i> just opens that directly -- no path needs to
+     * travel through this struct. */
+    int  boxsearch_w[BOXART_MAX_CANDIDATES];
+    int  boxsearch_h[BOXART_MAX_CANDIDATES];
+    char boxpick_req_target[64]; /* set by POST .../boxartpick; consumed by InvBoxartTick */
+    int  boxpick_req_index;      /* index into the last search's results */
+    bool boxpick_running;
+    bool boxpick_done; /* stays true until the next pick starts */
+    bool boxpick_ok;
     /* Inventory mode only, and only when sd_access is on: an X-Fs-Path header
      * on a streamed push names the SD Card tab's exact destination file
      * (percent-encoded, validated to be a plain sdmc: path with no ".."

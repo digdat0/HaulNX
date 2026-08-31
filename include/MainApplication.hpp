@@ -488,12 +488,16 @@ class MainLayout : public pu::ui::Layout {
     // `title` holds only the per-screen breadcrumb after it. Member names are
     // legacy from the old three-part lockup; wm_plus is now unused.
     pu::ui::elm::TextBlock::Ref wm_tico, wm_dl, wm_plus;
+    // Optional build version after the wordmark (Settings > Diagnostics,
+    // off by default) -- see SetHeaderVersion. Empty text when disabled.
+    pu::ui::elm::TextBlock::Ref ver_text;
+    bool header_ver_on = false;
     pu::ui::elm::TextBlock::Ref title; // first breadcrumb segment
     // Breadcrumb continuation: green "›" separators + up to two more path
     // segments ("SNES › repo"); hidden off-screen when unused.
     std::vector<pu::ui::elm::TextBlock::Ref> bc_seps, bc_parts;
     s32 bc_end_x = 0; // right edge of the breadcrumb (for the title icon)
-    s32 title_x0 = 0; // fixed breadcrumb anchor after the wordmark
+    s32 title_x0 = 0; // fixed breadcrumb anchor after the wordmark/version
     IconElement::Ref title_icon; // console icon shown after the title text
     pu::ui::elm::TextBlock::Ref status;
     NetBarsElement::Ref net_bars;   // drawn signal bars (was a text glyph)
@@ -522,11 +526,6 @@ class MainLayout : public pu::ui::Layout {
     // stripe happens to be under any given tab.
     PillElement::Ref tab_chip;
     PillElement::Ref accent_line; // solid accent-blue strip under the shell
-    // Ambient transfer progress: a thin blue sliver over accent_line's left
-    // edge, growing with the active item's now/total — visible from any tab,
-    // not just Queue's dot, so a running transfer stays glanceable everywhere.
-    // Width-only per frame (no new draw calls when idle: SetVisible(false)).
-    PillElement::Ref queue_progress;
     PulseDotElement::Ref queue_dot;   // "downloads running" pulse on the Queue tab
     PulseDotElement::Ref settings_dot; // "update available" pulse on the Settings tab
     IconElement::Ref empty_icon;      // big dimmed icon for empty states
@@ -566,6 +565,11 @@ class MainLayout : public pu::ui::Layout {
 
     void SetTitle(const std::string &t);
     void SetTitleIcon(pu::sdl2::Texture tex); // console icon after the title
+    // Settings > Diagnostics toggle: show/hide "vX.Y.Z" right after the
+    // wordmark, shifting the breadcrumb anchor (and anything already placed
+    // relative to it) over to make room. Safe to call with the same value
+    // twice -- a no-op past the first call.
+    void SetHeaderVersion(bool on);
     void SetStatus(const std::string &t);
     void SetNetLevel(int lit); // bars lit 1..3, -1 = disconnected
     void SetBattery(int pct, bool charging);
@@ -574,9 +578,6 @@ class MainLayout : public pu::ui::Layout {
     void SetRomInfo(const std::string &t);
     void SetActiveTab(int idx); // 0=Library 1=Add 2=Queue 3=Settings
     void SetQueueActivity(bool active); // pulse the Queue tab while downloading
-    // frac in [0,1] draws the ambient sliver at that width; frac < 0 hides it
-    // (nothing actively moving bytes right now).
-    void SetQueueProgress(float frac);
     void SetUpdateAvailable(bool avail); // pulse the Settings tab when an update is up
     void RefreshTabs();
     void ApplyTheme();
@@ -626,6 +627,9 @@ class MainLayout : public pu::ui::Layout {
     // Queue card view: per-frame diff updates instead of Clear + AddCard.
     // Single-card mode shows one enlarged centred card (self-update).
     void SetSingleCard(bool on);
+    // Same tall row height as poster mode (6-wide), without poster's box-art
+    // behavior -- see CardGrid::SetQueueTall.
+    void SetCardQueueTall(bool on);
     void SetQueueCount(s32 n);
     void SetQueueCard(s32 i, const std::string &console,
                       pu::sdl2::Texture icon, const std::string &status,
@@ -680,7 +684,8 @@ class MainApplication : public pu::ui::Application {
         InstallFolders, // Storage sub-screen: per-console custom install folders
         Backups,   // Storage sub-screen: emulator/app rollback backups (view/delete)
         Account,   // settings submenu: archive.org creds + startup net check
-        Updates,   // settings submenu: check now + auto-check toggle
+        Updates,   // settings submenu: HaulNX build check now + auto-check toggle
+        AppEmuUpdates, // settings submenu: emulator/app update management hub
         Diagnostics, // settings submenu: logs, self-test, tuning, reset
         About,     // settings submenu: getting started, release notes, credits
         SpeedTest, // Diagnostics sub-screen: live download/upload meters
@@ -1357,6 +1362,7 @@ class MainApplication : public pu::ui::Application {
     std::vector<std::pair<std::string, std::string>> backup_rows;
     void GotoAccount();
     void GotoUpdates();
+    void GotoAppEmuUpdates(); // Settings section: hosts Emulator/App updates rows
     void PushListToPc();          // console-initiated sources/list push (Updates)
     bool CompanionConnected() const; // a companion polled inventory.json within 15s
     void GotoDiagnostics();
@@ -1448,6 +1454,34 @@ class MainApplication : public pu::ui::Application {
     void PushExtractTick();    // per-frame: reap the extract worker when done
     void InvApplyNro(char *body, size_t len); // stage an .nro pushed to the inv server
     void InvApplyDat(char *body, size_t len); // file a DAT pushed to the inv server (no modal)
+    // set a console's cover art from a companion push (X-Art-Target, no modal)
+    void InvApplyConsoleArt(const std::string &target, char *body, size_t len);
+    // ---- companion box-art search/pick (SteamGridDB via the device's own
+    // key) -- see the HttpSrv fields' own comment for the request/result
+    // handoff shape. Two independent BgTasks, kept apart from boxpick/
+    // boxart_candidates above so a companion search can't collide with
+    // someone browsing Scan Console Art on-device at the same time. Threads
+    // only ever do network I/O and fill plain data members (same discipline
+    // BoxArtPickListThread/BoxArtPickConfirmThread already follow) --
+    // everything that touches config/UI/the texture cache happens back on
+    // the UI thread in InvBoxartTick, after Join().
+    BgTask inv_boxsearch;
+    std::string inv_boxsearch_target; // "console:<target>" would collide with a
+                                      // simultaneous on-device search under the
+                                      // same key, but the two never run at once
+                                      // in practice (one active user at a time);
+                                      // kept as the bare target key regardless.
+    std::string inv_boxsearch_query;
+    std::vector<BoxArtCandidate> inv_boxsearch_results;
+    static void InvBoxartSearchThread(void *arg);
+
+    BgTask inv_boxpick;
+    std::string inv_boxpick_target;
+    int inv_boxpick_index = -1;
+    bool inv_boxpick_ok = false;
+    static void InvBoxartPickThread(void *arg);
+
+    void InvBoxartTick(); // per frame from InvServerPoll: start/reap the above
     // overwrite an installed emulator's .nro in place (Emulators-tab update)
     void InvApplyEmuNro(const std::string &app, const std::string &part);
     void InvApplyEmuNroAt(const std::string &app, const std::string &dest,

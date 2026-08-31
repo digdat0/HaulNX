@@ -173,7 +173,7 @@ static void load_console_icons() {
         "nes", "snes", "n64", "gb", "gbc", "gba", "3ds", "nds", "gc", "wii",
         "wiiu",
         "genesis", "master-system", "game-gear", "sega-cd", "saturn", "dc",
-        "atomiswave", "naomi", "psx", "ps2", "psp", "default",
+        "atomiswave", "naomi", "psx", "ps2", "psp", "vita", "default",
         // consoles added with the 52-console expansion
         "fds", "virtual-boy", "pokemon-mini", "game-and-watch", "sg-1000",
         "sega-32x", "pc-engine", "pc-engine-cd", "supergrafx", "pc-fx",
@@ -182,13 +182,15 @@ static void load_console_icons() {
         "wonderswan", "wonderswan-color", "colecovision", "intellivision",
         "odyssey2", "vectrex", "3do", "cd-i", "supervision",
         "channel-f", "arcade", "fbneo",
+        "amiga", "zx-spectrum", "chip8", "pico8", "tamagotchi", "flash",
         // settings-screen card icons (same cache, "set-" prefixed keys)
         "set-updates", "set-ui", "set-advanced", "set-logs", "set-data",
         "set-credits",
         // v2 reorganized settings hierarchy
         "set-appearance", "set-downloads", "set-sources", "set-storage",
         "set-transfers", "set-install-pc", "set-account", "set-diagnostics",
-        "set-logs", "set-getting-started", "set-dats"};
+        "set-logs", "set-getting-started", "set-dats", "set-app-updates",
+        "set-help"};
     for (const char *k : keys) {
         auto tex = pu::ui::render::LoadImageFromFile(std::string("romfs:/icons/") +
                                                      k + ".png");
@@ -269,7 +271,36 @@ static pu::sdl2::Texture console_icon(const char *key) {
 // the Switch's GPU memory, evicting the least-recently-used entry once full.
 // Keyed by title only (not console), matching boxart.c's own cache key: two
 // consoles sharing an exact title share one resolved cover and one texture.
-static const int kBoxArtCacheCap = 48;
+//
+// MUST stay comfortably above the number of consoles that can have custom
+// box art at once -- 60 as of 2026-08-30 (see CONSOLE_NAMES in the desktop
+// companion), but MAX_CONSOLES (config.h) is 128, the app's own supported
+// ceiling, so that -- not today's 60 -- is the real number to clear with
+// headroom. Unlike boxart_row_icon (game covers), which is memory-only on a
+// cache miss and defers the actual decode to BoxArtIconsPoll so a screen
+// build never decodes more than what's currently visible,
+// console_display_icon/boxart_icon_for decodes inline and synchronously --
+// so a single Library/Collections screen build calls boxart_icon_for() for
+// EVERY configured console back-to-back in one pass. If that pass pushes the
+// cache past its cap, LRU eviction DeleteTexture()s the entry built earlier
+// in that same pass -- the widget already constructed for it is left holding
+// a dangling texture handle, which then draws either blank or (if the freed
+// GPU slot gets reused by a texture decoded later in the same pass) a
+// completely different console's art. Confirmed on hardware 2026-08-30: with
+// 60 consoles opted into custom art against the old cap of 48, exactly the
+// first 12 built (alphabetically first, i.e. evicted first) came back
+// blank/wrong on the Library/Collections cards while every other UI path
+// that re-decodes on demand (the X options thumbnail, the desktop's own
+// inventory sync) showed them correctly the whole time. A cap of exactly
+// MAX_CONSOLES would still leave zero headroom for the other things that
+// share this cache (game covers, and the install screen's "backdrop" lookup
+// at boxart_icon_for(g_inst[i].name) below) -- one of those touched in the
+// same pass as all 128 consoles would reproduce the same bug at the new
+// ceiling. 192 clears MAX_CONSOLES with 64 slots of headroom. Each console
+// texture is tiny now (200x300, ~234KB decoded -- see the desktop crop
+// dialog's PREF_W/PREF_H), so even a full 128 consoles costs ~30MB, nowhere
+// near GPU pressure.
+static const int kBoxArtCacheCap = 192;
 static std::vector<std::pair<std::string, pu::sdl2::Texture>> g_boxart_cache; // MRU-front
 
 // Games only, extension + region/revision tag stripped -- the search term
@@ -585,6 +616,7 @@ static const char *console_full_name(const char *abbr) {
         {"psx", "Sony PlayStation"},
         {"ps2", "Sony PlayStation 2"},
         {"psp", "Sony PlayStation Portable"},
+        {"vita", "Sony PlayStation Vita"},
         // NEC
         {"pc-engine", "NEC PC Engine"},
         {"pc-engine-cd", "NEC PC Engine CD"},
@@ -618,6 +650,13 @@ static const char *console_full_name(const char *abbr) {
         {"naomi", "Sega NAOMI"},
         {"arcade", "Arcade"},
         {"fbneo", "FinalBurn Neo"},
+        // Homebrew / misc systems
+        {"amiga", "Commodore Amiga"},
+        {"zx-spectrum", "Sinclair ZX Spectrum"},
+        {"chip8", "CHIP-8"},
+        {"pico8", "PICO-8"},
+        {"tamagotchi", "Tamagotchi"},
+        {"flash", "Adobe Flash"},
     };
     for (size_t i = 0; i < sizeof(map) / sizeof(map[0]); i++) {
         if (strcasecmp(abbr, map[i].key) == 0) {
@@ -625,6 +664,28 @@ static const char *console_full_name(const char *abbr) {
         }
     }
     return NULL;
+}
+
+// Keep g_cfg.consoles ordered by *displayed* name (A-Z), not by the internal
+// slug config_sort() (config.c) uses -- config.c is plain C and has no access
+// to console_full_name, so e.g. "gc" (Nintendo GameCube) would otherwise sort
+// next to "game-gear" instead of the other Nintendo entries. Every list screen
+// (Browse, Installed, Manage Consoles, Receive-from-PC, ...) just walks
+// g_cfg.consoles in array order, so normalizing the array here once covers all
+// of them. Mirrors the comparator GotoPicker already used for the "Add
+// console" screen. Call after anything that can add/reorder consoles: initial
+// load, a new console picked in-app, or a PC collection push/restore.
+static bool console_group_az_less(const ConsoleGroup &a, const ConsoleGroup &b) {
+    const char *fa = console_full_name(a.target);
+    const char *fb = console_full_name(b.target);
+    const char *la = fa ? fa : a.target;
+    const char *lb = fb ? fb : b.target;
+    int c = strcasecmp(la, lb);
+    return c != 0 ? c < 0 : strcasecmp(a.target, b.target) < 0;
+}
+static void config_sort_az(SourcesConfig *cfg) {
+    std::sort(cfg->consoles, cfg->consoles + cfg->console_count,
+              console_group_az_less);
 }
 
 // Browse display label for a console folder, e.g.
@@ -859,42 +920,30 @@ static pu::ui::Color xfer_color(const QueueItem *it) {
     return qstatus_color(it->status);
 }
 
-// Header one-liner for the queue screen ("1 active · 3 waiting · 1 failed");
-// empty when the queue holds only finished items.
+// Display-only basename: a recursed subfolder download's it->name carries the
+// folder prefix (e.g. "apfix/file.nds") since that's also what builds the
+// on-disk destination path elsewhere -- the queue card only has room for, and
+// only needs, the filename itself.
+static const char *queue_display_name(const char *name) {
+    const char *slash = strrchr(name, '/');
+    return slash ? slash + 1 : name;
+}
+
+// Header one-liner for the queue screen. Used to also report "N active · M
+// waiting · K failed", but each card already carries its own status, so that
+// count was redundant chrome at the bottom of the page -- removed, keeping
+// only the one message here that isn't shown anywhere else on screen: the
+// card-full space hold (nothing is starting because the SD card is nearly
+// full, which would otherwise look like a mysteriously stalled queue). qv/n
+// are unused now that the count is gone, kept only so the call sites below
+// don't need touching.
 static std::string queue_summary(const QueueView *qv, int n) {
-    int act = 0, wait = 0, fail = 0;
-    for (int i = 0; i < n; i++) {
-        switch (qv[i].item.status) {
-        case Q_DOWNLOADING:
-        case Q_VERIFYING:
-        case Q_AWAIT_EXTRACT:
-        case Q_EXTRACTING:  act++; break;
-        case Q_QUEUED:
-        case Q_PAUSED:      wait++; break;
-        case Q_FAILED:      fail++; break;
-        default:            break;
-        }
-    }
-    std::string s;
-    char buf[64];
-    const struct { int n; int key; } parts[] = {
-        {act, S_QUEUE_N_ACTIVE},
-        {wait, S_QUEUE_N_WAITING},
-        {fail, S_QUEUE_N_FAILED},
-    };
-    for (const auto &p : parts) {
-        if (p.n > 0) {
-            snprintf(buf, sizeof(buf), tr(p.key), p.n);
-            s += (s.empty() ? "" : " · ") + std::string(buf);
-        }
-    }
-    // Nothing is starting because the card is nearly full. Say so here rather
-    // than letting the queue look mysteriously stalled — no item has failed and
-    // the hold lifts by itself once space is freed.
+    (void)qv;
+    (void)n;
     if (queue_space_hold()) {
-        s += (s.empty() ? "" : " · ") + std::string(tr(S_SPACE_HOLD));
+        return tr(S_SPACE_HOLD);
     }
-    return s;
+    return std::string();
 }
 
 // Flat-mode rows skip the repos of hidden consoles, so indexing matches the
@@ -1762,6 +1811,19 @@ MainLayout::MainLayout() : Layout::Layout() {
     this->wm_plus->SetColor(pu::ui::Color(90, 160, 245, 255));
     this->Add(this->wm_plus);
     wx += this->wm_plus->GetWidth();
+    // Optional build version right after the wordmark (Settings >
+    // Diagnostics "Show version in header", off by default). Folded into wx
+    // before title_x0 is set below so the existing wordmark-to-breadcrumb
+    // gap (+24) becomes the version-to-breadcrumb gap too -- no separate
+    // spacing constant to keep in sync.
+    this->ver_text = pu::ui::elm::TextBlock::New(wx + 14, 24, "");
+    this->ver_text->SetColor(g_theme->rom_info_clr);
+    this->Add(this->ver_text);
+    this->header_ver_on = g_prefs.show_header_version;
+    if (this->header_ver_on) {
+        this->ver_text->SetText(std::string("v") + APP_VERSION_STR);
+        wx += 14 + this->ver_text->GetWidth();
+    }
     this->title = pu::ui::elm::TextBlock::New(wx + 24, 24, " ");
     this->title->SetColor(g_theme->title_clr);
     this->title_x0 = wx + 24; // fixed anchor: SetTitle re-bases from here
@@ -1835,15 +1897,6 @@ MainLayout::MainLayout() : Layout::Layout() {
     this->accent_line = PillElement::New(0, strip_y + strip_h, sw, 2, 0,
                                          pu::ui::Color(150, 155, 165, 160));
     this->Add(this->accent_line);
-
-    // Ambient progress sliver: a touch thicker than accent_line and drawn
-    // after it, so it reads as an overlay riding on top of the strip rather
-    // than a second competing line. Starts hidden/zero-width; SetQueueProgress
-    // drives it every frame while something is actually moving bytes.
-    this->queue_progress = PillElement::New(0, strip_y + strip_h - 1, 0, 4, 0,
-                                            accent_blue());
-    this->queue_progress->SetVisible(false);
-    this->Add(this->queue_progress);
 
     const s32 footer_h = 64;
     // A little breathing room under the line below the tabs before the
@@ -1951,6 +2004,7 @@ void MainLayout::ApplyTheme() {
     this->status->SetColor(g_theme->status_clr);
     this->bat_info->SetColor(g_theme->status_clr);
     this->rom_info->SetColor(g_theme->rom_info_clr);
+    this->ver_text->SetColor(g_theme->rom_info_clr);
     this->tab_pill->SetColor(accent_blue());
     this->tab_chip->SetColor(pu::ui::Color(accent_blue().r,
                                            accent_blue().g,
@@ -1961,10 +2015,6 @@ void MainLayout::ApplyTheme() {
     // preset the user picks in Appearance > Accent Color.
     this->queue_dot->SetColor(accent_blue());
     this->settings_dot->SetColor(accent_blue());
-    // The ambient queue-progress sliver on the tab strip was set once at
-    // construction and never revisited; recolor it here too so it follows
-    // theme/accent changes the same as everything else.
-    this->queue_progress->SetColor(accent_blue());
     this->empty_text->SetColor(g_theme->rom_info_clr);
     this->empty_code->SetColor(accent_green());
     this->empty_hint->SetColor(g_theme->rom_info_clr);
@@ -2076,18 +2126,6 @@ void MainLayout::SetActiveTab(int idx) {
 void MainLayout::SetQueueActivity(bool active) {
     this->queue_dot->SetActive(active);
 }
-void MainLayout::SetQueueProgress(float frac) {
-    if (frac < 0.0f) {
-        this->queue_progress->SetVisible(false);
-        return;
-    }
-    if (frac > 1.0f) frac = 1.0f;
-    const s32 strip_y = 80, strip_h = 70;
-    const s32 sw = (s32)pu::ui::render::ScreenWidth;
-    this->queue_progress->SetBounds(0, strip_y + strip_h - 1,
-                                    (s32)(sw * frac), 4);
-    this->queue_progress->SetVisible(true);
-}
 void MainLayout::SetUpdateAvailable(bool avail) {
     this->settings_dot->SetActive(avail);
 }
@@ -2170,6 +2208,38 @@ void MainLayout::SetTitleIcon(pu::sdl2::Texture tex) {
             p->SetX(p->GetX() + d);
         }
     }
+    this->bc_end_x += d;
+}
+void MainLayout::SetHeaderVersion(bool on) {
+    if (this->header_ver_on == on) {
+        return;
+    }
+    s32 d;
+    if (on) {
+        this->ver_text->SetText(std::string("v") + APP_VERSION_STR);
+        d = 14 + this->ver_text->GetWidth();
+    } else {
+        d = -(14 + this->ver_text->GetWidth()); // measure before clearing
+        this->ver_text->SetText("");
+    }
+    this->header_ver_on = on;
+    // Shift everything anchored off the wordmark's end the same way
+    // SetTitleIcon does above -- the breadcrumb anchor, whatever's currently
+    // placed relative to it, and the console icon (if one is showing).
+    this->title_x0 += d;
+    this->title->SetX(this->title->GetX() + d);
+    for (auto &s : this->bc_seps) {
+        if (s->GetX() != -100) {
+            s->SetX(s->GetX() + d);
+        }
+    }
+    for (auto &p : this->bc_parts) {
+        if (p->GetX() != -100) {
+            p->SetX(p->GetX() + d);
+        }
+    }
+    this->title_icon->SetPos(this->title_icon->GetX() + d,
+                             this->title_icon->GetY());
     this->bc_end_x += d;
 }
 void MainLayout::SetRomInfo(const std::string &t) {
@@ -2437,6 +2507,7 @@ void MainLayout::SetCardIcon(s32 i, pu::sdl2::Texture icon) {
 s32 MainLayout::CardFirstVisible() { return this->grid->FirstVisibleCard(); }
 s32 MainLayout::CardVisibleCount() { return this->grid->VisibleCardCount(); }
 void MainLayout::SetSingleCard(bool on) { this->grid->SetSingle(on); }
+void MainLayout::SetCardQueueTall(bool on) { this->grid->SetQueueTall(on); }
 void MainLayout::SetQueueCount(s32 n) { this->grid->SetQueueCount(n); }
 void MainLayout::SetQueueCard(s32 i, const std::string &console,
                               pu::sdl2::Texture icon,
@@ -3565,6 +3636,7 @@ MainApplication::Tab MainApplication::CurrentTab() {
     case Screen::Backups:
     case Screen::Account:
     case Screen::Updates:
+    case Screen::AppEmuUpdates:
     case Screen::AppUpdates:
     case Screen::Diagnostics:
     case Screen::About:
@@ -3761,7 +3833,7 @@ static const char *CHEVRON = "›"; // › — marks a row that opens a screen
 
 void MainApplication::GotoSettings() {
     this->screen = Screen::Settings;
-    this->layout->SetTitle(std::string(tr(S_TITLE_SETTINGS)) + "   (v" + APP_VERSION_STR + ")");
+    this->layout->SetTitle(tr(S_TITLE_SETTINGS));
     this->layout->SetSubtitle(tr(S_SUB_SETTINGS));
     this->layout->ClearMenu();
     // Row order here is the contract for the A-press switch in OnInput; the
@@ -3777,11 +3849,16 @@ void MainApplication::GotoSettings() {
         {S_SEC_DATA_FILES,  "set-data"},        // 3 — DAT files + metadata cache
         {S_SEC_TRANSFERS,   "set-transfers"},   // 4 — PC Sync (now hosts Install from PC)
         {S_SEC_ACCOUNT,     "set-account"},     // 5
-        {S_SEC_UPDATES,     "set-updates"},     // 6 — carries the update chip
-        {S_SEC_LOGS,        "set-logs"},        // 7
-        {S_SEC_DIAGNOSTICS, "set-diagnostics"}, // 8
-        {S_SEC_HELP,        "set-help"},      // 9 — Getting Started/How-To/Troubleshooting
-        {S_SEC_ABOUT,       "set-credits"},     // 10
+        {S_SEC_UPDATES,     "set-updates"},     // 6 — carries the update chip; HaulNX's
+                                                 // own build check only now (emulator/app
+                                                 // update management moved out below)
+        {S_SEC_APP_EMU_UPDATES, "set-app-updates"}, // 7 — emulator/app updates, split out
+                                                 // of Updates into its own section; own
+                                                 // icon as of 2.1.45, was sharing set-updates
+        {S_SEC_LOGS,        "set-logs"},        // 8
+        {S_SEC_DIAGNOSTICS, "set-diagnostics"}, // 9
+        {S_SEC_HELP,        "set-help"},      // 10 — Getting Started/How-To/Troubleshooting
+        {S_SEC_ABOUT,       "set-credits"},     // 11
     };
     // The "Update available" / "Restart to update" chip rides the Updates row,
     // the section that now owns checking and installing.
@@ -4379,19 +4456,30 @@ void MainApplication::GotoUpdates() {
     } else {
         this->layout->AddRow(tr(S_CHECK_NOW));                        // 1
     }
-    // 2/3: per-app update management — check each installed emulator/app against
-    // its GitHub source and install/update/revert from the list.
-    this->layout->AddRow2(tr(S_APPMAN_EMUS), CHEVRON, lbl, chevron_color(),
-                          -1.0f, nullptr, "", false, false);         // 2
-    this->layout->AddRow2(tr(S_APPMAN_APPS), CHEVRON, lbl, chevron_color(),
-                          -1.0f, nullptr, "", false, false);         // 3
-    // 4: release-notes history (moved here from About — it's about versions).
-    // (The "push list to PC" action moved to Settings › PC Sync.)
+    // 2: release-notes history (moved here from About — it's about versions).
+    // (The "push list to PC" action moved to Settings › PC Sync. Emulator/app
+    // update management moved out to its own Settings section — see
+    // GotoAppEmuUpdates — since it isn't about HaulNX's own build at all.)
     this->layout->AddRow2(tr(S_RELEASE_NOTES), CHEVRON, lbl, chevron_color(),
-                          -1.0f, nullptr, "", false, false);         // 4
+                          -1.0f, nullptr, "", false, false);         // 2
     bool b = g_prefs.chk_updates;
     this->layout->AddRow2(settings_label(tr(S_CHK_UPDATES_STARTUP)),
-                          b ? tr(S_ON) : tr(S_OFF), lbl, onoff_color(b)); // 5
+                          b ? tr(S_ON) : tr(S_OFF), lbl, onoff_color(b)); // 3
+}
+
+// The new top-level Settings section that houses the two per-app update-
+// management rows (Emulator updates / App updates) that used to live under
+// Updates. Same rows, same GotoAppUpdates(kind) destinations — just moved.
+void MainApplication::GotoAppEmuUpdates() {
+    this->screen = Screen::AppEmuUpdates;
+    this->layout->SetTitle(tr(S_TITLE_APP_EMU_UPDATES));
+    this->layout->SetSubtitle(tr(S_SUB_APP_EMU_UPDATES));
+    this->layout->ClearMenu();
+    pu::ui::Color lbl = g_theme->row_text;
+    this->layout->AddRow2(tr(S_APPMAN_EMUS), CHEVRON, lbl, chevron_color(),
+                          -1.0f, nullptr, "", false, false);         // 0
+    this->layout->AddRow2(tr(S_APPMAN_APPS), CHEVRON, lbl, chevron_color(),
+                          -1.0f, nullptr, "", false, false);         // 1
 }
 
 // A companion is "connected" when it has read our inventory recently: over
@@ -4466,7 +4554,11 @@ void MainApplication::GotoDiagnostics() {
     }
     this->layout->AddRow2(tr(S_USB3_STATUS), usb3, g_theme->row_text,
                           g_theme->rom_info_clr); // 5 read-only info row
-    this->layout->AddRow(tr(S_RESET_DEFAULTS)); // 6 restore default settings — bottom
+    bool hv = g_prefs.show_header_version;
+    this->layout->AddRow2(settings_label(tr(S_SHOW_HEADER_VERSION)),
+                          hv ? tr(S_ON) : tr(S_OFF), g_theme->row_text,
+                          onoff_color(hv));         // 6 header version toggle
+    this->layout->AddRow(tr(S_RESET_DEFAULTS)); // 7 restore default settings — bottom
 }
 
 // About: a single credits card with the app badge, shown as a modal over
@@ -4743,6 +4835,8 @@ void MainApplication::GuidedTour() {
             // N64 download partway through, matching SetQueueCard's real
             // fields (see the live queue-render loop in HandleInput).
             this->layout->SetCardsMode(true);
+            this->layout->SetCardCols(6);
+            this->layout->SetCardQueueTall(true);
             this->layout->SetQueueCount(1);
             {
                 bool ic_is_art = false;
@@ -4750,8 +4844,9 @@ void MainApplication::GuidedTour() {
                     console_display_icon("n64", &ic_is_art, false);
                 this->layout->SetQueueCard(
                     0, "n64", ic, "dl", qstatus_color(Q_DOWNLOADING),
-                    "850 MB", "4.1 MB/s", "~38s", tr(S_TOUR_QUEUE_MOCK_NAME),
-                    0.62f, true, 0, 0, true, false, ic_is_art);
+                    "850 MB / 1.4 GB", "4.1 MB/s", "~38s",
+                    tr(S_TOUR_QUEUE_MOCK_NAME), 0.62f, true, 0, 0, true,
+                    false, ic_is_art);
             }
             break;
         case Page::InstallFolders: this->GotoInstallFolders();             break;
@@ -5234,6 +5329,13 @@ void MainApplication::InvJsonStepConsole() {
         }
     }
     const char *full = console_full_name(c.target);
+    // Whether this console has a resolved custom cover (SteamGridDB scan or a
+    // companion push) -- doesn't imply it's actively shown (see use_boxart),
+    // just that GET /consoleart won't 404. Cheap: a linear scan of an
+    // in-memory index already loaded for the on-device Library/Options menus.
+    char art_key[280];
+    snprintf(art_key, sizeof(art_key), "console:%s", c.target);
+    bool has_art = boxart_lookup(art_key, NULL, 0);
 
     if (!this->inv_json_first_console) {
         fputc(',', f);
@@ -5249,11 +5351,12 @@ void MainApplication::InvJsonStepConsole() {
             ",\n      \"count\": %d,\n      \"bytes\": %llu,\n"
             "      \"has_dat\": %s,\n      \"dat_bytes\": %llu,\n"
             "      \"repo_count\": %d,\n      \"active_repos\": %d,\n"
-            "      \"shown\": %s,\n      \"shown_installed\": %s,\n",
+            "      \"shown\": %s,\n      \"shown_installed\": %s,\n"
+            "      \"has_art\": %s,\n",
             count, (unsigned long long)bytes, has_dat ? "true" : "false",
             (unsigned long long)dat_size, c.repo_count, active,
-            c.shown ? "true" : "false",
-            c.shown_installed ? "true" : "false");
+            c.shown ? "true" : "false", c.shown_installed ? "true" : "false",
+            has_art ? "true" : "false");
     fputs("      \"files\": [", f);
     bool first = true;
     // Read once, reused below for "sets" too -- one listing per console,
@@ -5675,6 +5778,7 @@ void MainApplication::InvServerPoll() {
             this->LiveRecvEnd(false);
         }
     }
+    this->InvBoxartTick();
 }
 
 // Defined below find_nro_in_dir (needs it); forward-declared here because
@@ -5690,7 +5794,9 @@ void MainApplication::InvApplyPush() {
     char *body = this->inv_srv.body;
     size_t len = this->inv_srv.body_len;
     bool is_dat = this->inv_srv.recv_dat;
+    std::string art_target = this->inv_srv.recv_art_target;
     this->inv_srv.recv_dat = false;
+    this->inv_srv.recv_art_target[0] = '\0';
     this->inv_srv.body = NULL; // owned here now; httpsrv_close must not free it
     if (!body) {
         return;
@@ -5700,6 +5806,13 @@ void MainApplication::InvApplyPush() {
     // without a modal, like the collection push below.
     if (is_dat) {
         this->InvApplyDat(body, len); // takes ownership of body
+        return;
+    }
+    // Cover art pushed from the companion's Console Art button (X-Art-Target).
+    // Same "no modal" treatment: it's confined to the named console and can't
+    // land anywhere else.
+    if (!art_target.empty()) {
+        this->InvApplyConsoleArt(art_target, body, len); // takes ownership of body
         return;
     }
     // The .nro can also arrive zipped (or in any archive extract_archive/RAR3
@@ -5752,12 +5865,202 @@ void MainApplication::InvApplyPush() {
     }
     xfer_log("push       PC applied %d console(s), %d repo(s); previous %d kept "
              "for restore", consoles, repos, SOURCES_BAK_SLOTS);
+    config_sort_az(&g_cfg); // commit_config's internal sort is by slug, not display name
     config_seed_rom_folders(&g_cfg, roms_root(&g_tico));
     this->inv_last_gen_ns = 0; // regenerate the inventory with the new collection
 
     char done[96];
     snprintf(done, sizeof(done), tr(S_IMPORT_DONE), consoles, repos);
     this->Toast(done);
+}
+
+// Cover art pushed from the companion's Console Art button (X-Art-Target,
+// while connected): body/len are the raw image bytes, buffered like a DAT
+// rather than streamed to disk (see httpsrv.c's recv_art_target). Confined to
+// a console this device actually has configured -- an unrecognized target
+// (stale companion cache, or the console was since removed) is dropped rather
+// than guessed at. Takes ownership of body.
+void MainApplication::InvApplyConsoleArt(const std::string &target,
+                                         char *body, size_t len) {
+    ConsoleGroup *g = config_find_console(&g_cfg, target.c_str());
+    if (!g) {
+        free(body);
+        xfer_log("rejected   PC console-art push: %s not configured",
+                 target.c_str());
+        return;
+    }
+    char path[768];
+    bool ok = boxart_set_console_art(target.c_str(), body, len, path,
+                                     sizeof(path));
+    free(body);
+    if (!ok) {
+        xfer_log("FAILED     PC console-art push for %s", target.c_str());
+        this->ToastErr(tr(S_INV_ART_FAIL));
+        return;
+    }
+    if (!g->use_boxart) {
+        g->use_boxart = true;
+        config_save(&g_cfg);
+    }
+    // Drop the runtime texture (if any) so the Library actually shows the new
+    // cover on its next draw instead of the previous one until a restart --
+    // same cleanup BoxArtPickConsoleCommit does after an on-device pick.
+    boxart_cache_forget(std::string("console:") + target);
+    // Home's console tiles (and a console's own Repos screen) bake this exact
+    // texture pointer into already-built card/title-icon widgets at Goto*
+    // time. On the on-device pick path that's harmless -- BoxArtPickReturn
+    // always navigates back afterward, which rebuilds the screen fresh -- but
+    // a companion push can land while the user is already sitting on the
+    // screen showing this console, so the widget is left pointing at the
+    // texture just deleted above: blank until the next unrelated navigation
+    // forces a rebuild. Force that rebuild right now instead of waiting on it.
+    if (this->screen == Screen::Home) {
+        this->GotoHome();
+    } else if (this->screen == Screen::Repos && this->sel_ci >= 0 &&
+               this->sel_ci < g_cfg.console_count &&
+               &g_cfg.consoles[this->sel_ci] == g) {
+        this->GotoRepos(this->sel_ci);
+    }
+    this->inv_last_gen_ns = 0; // regenerate the inventory (has_art changed)
+    const char *full = console_full_name(g->target);
+    char t[160];
+    snprintf(t, sizeof(t), tr(S_INV_ART_SET), full ? full : g->target);
+    this->Toast(t);
+    xfer_log("push       PC set console art for %s", g->target);
+}
+
+// ---- companion box-art search/pick (SteamGridDB) ---------------------------
+//
+// Same two-step shape as the on-device Scan Console Art picker
+// (BoxArtPickListThread/BoxArtPickConfirmThread) driven remotely instead:
+// InvBoxartTick notices a fresh request HttpSrv's GET/POST handlers stashed,
+// starts the matching thread, and once it finishes writes the outcome back
+// into HttpSrv for the companion's status polls to read. See the HttpSrv
+// fields' own comment in httpsrv.h for why this can't run inline in
+// httpsrv_poll.
+
+// Thread only: list candidates + download their thumbs (blocking network
+// I/O). Fills plain data members only, same discipline BoxArtPickListThread
+// follows -- config/UI-affecting work waits for InvBoxartTick after Join().
+void MainApplication::InvBoxartSearchThread(void *arg) {
+    auto self = static_cast<MainApplication *>(arg);
+    BoxArtCandidate cands[BOXART_MAX_CANDIDATES];
+    int n = boxart_list_candidates(g_creds.steamgriddb_key,
+                                   self->inv_boxsearch_query.c_str(), cands,
+                                   BOXART_MAX_CANDIDATES);
+    self->inv_boxsearch_results.assign(cands, cands + n);
+    for (int i = 0; i < n; i++) {
+        char path[768];
+        boxart_fetch_thumb(&cands[i], i, path, sizeof(path)); // best-effort;
+        // a slot with no thumb just 404s from GET boxartthumb, same as a
+        // failed thumb falls back to a placeholder in the on-device picker.
+    }
+    self->inv_boxsearch.done = true;
+}
+
+// Thread only: download the chosen candidate's full image and record it
+// under "console:<target>" (blocking network I/O). Deliberately does NOT
+// touch g_cfg/use_boxart/the texture cache/Toast here -- those all belong on
+// the UI thread and happen in InvBoxartTick once this is joined, same split
+// BoxArtPickConfirmThread/BoxArtPickTick already keep for the on-device
+// picker.
+void MainApplication::InvBoxartPickThread(void *arg) {
+    auto self = static_cast<MainApplication *>(arg);
+    bool ok = false;
+    int idx = self->inv_boxpick_index;
+    if (idx >= 0 && idx < (int)self->inv_boxsearch_results.size()) {
+        std::string key = std::string("console:") + self->inv_boxpick_target;
+        char path[768];
+        ok = boxart_fetch_candidate(g_creds.steamgriddb_key, key.c_str(),
+                                    &self->inv_boxsearch_results[(size_t)idx],
+                                    path, sizeof(path));
+    }
+    self->inv_boxpick_ok = ok;
+    self->inv_boxpick.done = true;
+}
+
+// Called every frame from InvServerPoll (UI thread): starts a fresh
+// search/pick request HttpSrv's GET/POST handlers left waiting, and reaps
+// whichever thread has finished since the last frame.
+void MainApplication::InvBoxartTick() {
+    if (this->inv_srv.boxsearch_req_target[0]) {
+        this->inv_boxsearch_target = this->inv_srv.boxsearch_req_target;
+        this->inv_boxsearch_query = this->inv_srv.boxsearch_req_query;
+        this->inv_srv.boxsearch_req_target[0] = '\0';
+        this->inv_srv.boxsearch_req_query[0] = '\0';
+        this->inv_boxsearch.Join(); // reap any prior run first, belt & suspenders
+        if (!this->inv_boxsearch.Start(&MainApplication::InvBoxartSearchThread,
+                                       this)) {
+            InvBoxartSearchThread(this); // no worker available: run inline
+        }
+    }
+    if (this->inv_boxsearch.running && this->inv_boxsearch.done) {
+        this->inv_boxsearch.Join();
+        this->inv_srv.boxsearch_count =
+            (int)this->inv_boxsearch_results.size();
+        for (size_t i = 0;
+            i < this->inv_boxsearch_results.size() && i < BOXART_MAX_CANDIDATES;
+            i++) {
+            this->inv_srv.boxsearch_w[i] = this->inv_boxsearch_results[i].width;
+            this->inv_srv.boxsearch_h[i] = this->inv_boxsearch_results[i].height;
+        }
+        this->inv_srv.boxsearch_running = false;
+        this->inv_srv.boxsearch_done = true;
+    }
+
+    if (this->inv_srv.boxpick_req_target[0]) {
+        this->inv_boxpick_target = this->inv_srv.boxpick_req_target;
+        this->inv_boxpick_index = this->inv_srv.boxpick_req_index;
+        this->inv_srv.boxpick_req_target[0] = '\0';
+        this->inv_boxpick.Join();
+        if (!this->inv_boxpick.Start(&MainApplication::InvBoxartPickThread,
+                                     this)) {
+            InvBoxartPickThread(this);
+        }
+    }
+    if (this->inv_boxpick.running && this->inv_boxpick.done) {
+        this->inv_boxpick.Join();
+        bool ok = this->inv_boxpick_ok;
+        if (ok) {
+            ConsoleGroup *g =
+                config_find_console(&g_cfg, this->inv_boxpick_target.c_str());
+            if (g) {
+                if (!g->use_boxart) {
+                    g->use_boxart = true;
+                    config_save(&g_cfg);
+                }
+                boxart_cache_forget(std::string("console:") +
+                                    this->inv_boxpick_target);
+                // Same reasoning as InvApplyConsoleArt's push path: a screen
+                // already showing this console's icon is now pointing at the
+                // texture just freed above.
+                if (this->screen == Screen::Home) {
+                    this->GotoHome();
+                } else if (this->screen == Screen::Repos &&
+                           this->sel_ci >= 0 &&
+                           this->sel_ci < g_cfg.console_count &&
+                           &g_cfg.consoles[this->sel_ci] == g) {
+                    this->GotoRepos(this->sel_ci);
+                }
+                this->inv_last_gen_ns = 0;
+                const char *full = console_full_name(g->target);
+                char t[160];
+                snprintf(t, sizeof(t), tr(S_INV_ART_SET),
+                         full ? full : g->target);
+                this->Toast(t);
+                xfer_log("push       PC picked console art for %s", g->target);
+            } else {
+                ok = false; // console vanished mid-flight; don't report success
+            }
+        }
+        if (!ok) {
+            xfer_log("FAILED     PC console-art pick for %s",
+                     this->inv_boxpick_target.c_str());
+        }
+        this->inv_srv.boxpick_ok = ok;
+        this->inv_srv.boxpick_running = false;
+        this->inv_srv.boxpick_done = true;
+    }
 }
 
 // A game streamed to the always-on server (app utility › Device Transfer › Send
@@ -6588,7 +6891,10 @@ void MainApplication::AppSetSource(const UpdSource &e) {
     while (n && s[n - 1] == ' ') {
         s[--n] = '\0';
     }
-    UpdSource all[UPD_MAX];
+    UpdSource *all = (UpdSource *)malloc(sizeof(UpdSource) * UPD_MAX);
+    if (!all) {
+        return;
+    }
     int cnt = updman_load(all, UPD_MAX);
     int found = -1;
     for (int i = 0; i < cnt; i++) {
@@ -6614,6 +6920,7 @@ void MainApplication::AppSetSource(const UpdSource &e) {
     if (recorded && updman_save(all, cnt)) {
         this->Toast(tr(S_APPMAN_SOURCE_SAVED));
     }
+    free(all);
 }
 
 // Roll back to one of the stored backups for this app.
@@ -6679,6 +6986,21 @@ void MainApplication::AppRevert(const UpdSource &e) {
 // is shown under the name, and "Check for updates" is an explicit option that
 // kicks off the release check (the caller re-checks this one when it returns
 // true). Update/Install only appear once a check has found a release.
+// Per-entry status the release-check worker resolves, read back by
+// AppUpdatesRender to colour each row (so outdated vs up-to-date look nothing
+// alike). Declared ahead of AppEntryMenu, which also needs these constants to
+// classify an inline check-then-install failure.
+enum {
+    APST_UPDATE = 0, // installed, a newer release is available  (amber pill)
+    APST_UPTODATE,   // installed, already the latest            (green)
+    APST_NOTINST,    // listed but not on the SD card            (grey)
+    APST_NOSRC,      // installed but no update source configured (grey)
+    APST_ERR,        // installed, source set, but unreachable    (red)
+    APST_RATELIMIT,  // GitHub rate limit hit (403/429)           (amber)
+    APST_OFFLINE,    // no network / couldn't reach GitHub at all (red)
+    APST_UNCHECKED,  // installed + sourced, not yet checked here (grey)
+};
+
 bool MainApplication::AppEntryMenu(size_t idx) {
     if (idx >= this->appman_list.size()) {
         return false;
@@ -6727,7 +7049,7 @@ bool MainApplication::AppEntryMenu(size_t idx) {
     bool have_release = !tag.empty() && !url.empty();
 
     std::vector<std::string> opts;
-    std::vector<int> acts; // 0 update/reinstall, 1 install, 2 revert, 3 source, 4 check
+    std::vector<int> acts; // 0 update/reinstall, 1 install, 2 revert, 3 source, 4 check, 5 check+install
 
     // The update source, shown under the app name in the menu header, plus
     // the on-SD path and installed version when installed (the user has to
@@ -6767,6 +7089,13 @@ bool MainApplication::AppEntryMenu(size_t idx) {
             opts.push_back(u);
             acts.push_back(1);
         }
+    } else if (!installed) {
+        // Not installed and nothing checked yet this session, so there's no
+        // cached tag/url to build "Install vX" from -- offer a plain Install
+        // that resolves the release inline instead of making the user run a
+        // check first, back out, and reopen this same menu to see it.
+        opts.push_back(tr(S_APPMAN_INSTALL_CHECK));
+        acts.push_back(5);
     }
     // Always offer an explicit release check (this is the version check that used
     // to run automatically on open).
@@ -6806,23 +7135,50 @@ bool MainApplication::AppEntryMenu(size_t idx) {
         return true; // source changed — re-check this one
     case 4:
         return true; // check for updates — caller runs AppRecheckOne on this one
+    case 5: { // not installed, nothing cached yet: resolve the release inline, then install
+        this->Toast(tr(S_APPMAN_CHECKING));
+        char ctag[64] = "", curl[1024] = "", casset[256] = "";
+        long code = 0;
+        bool ok = update_fetch_latest_asset(e.repo, e.asset, ctag, sizeof(ctag),
+                                            curl, sizeof(curl), casset,
+                                            sizeof(casset), NULL, &code);
+        if (!ok) {
+            // Mirror AppRecheckOne's classification so the row reflects why,
+            // and tell the user directly since they asked to install, not
+            // just to check.
+            int8_t st = (code == 403 || code == 429) ? APST_RATELIMIT
+                        : (code == 0)                 ? APST_OFFLINE
+                                                       : APST_ERR;
+            if (idx < this->appman_state.size()) {
+                this->appman_state[idx] = st;
+            }
+            this->CreateShowDialog(
+                e.name,
+                tr((code == 403 || code == 429) ? S_APPMAN_RATE_LIMITED_MSG
+                   : (code == 0)                ? S_APPMAN_OFFLINE_MSG
+                                                 : S_APPMAN_CHECK_FAIL),
+                {tr(S_OK)}, true, {}, style_dialog);
+            return true; // state changed — caller re-renders the list
+        }
+        this->AppMarkChecked(e.id);
+        this->appman_net_cache[this->appman_kind][e.id] = {ctag, curl, casset};
+        if (idx < this->appman_latest.size()) {
+            this->appman_latest[idx] = ctag;
+        }
+        if (idx < this->appman_url.size()) {
+            this->appman_url[idx] = curl;
+        }
+        if (idx < this->appman_asset.size()) {
+            this->appman_asset[idx] = casset;
+        }
+        std::string fn = casset[0] ? casset : (std::string(e.id) + ".nro");
+        this->UmiStart(e, curl, ctag, std::string("sdmc:/switch/") + fn, "",
+                       true, casset);
+        break;
+    }
     }
     return false;
 }
-
-// Per-entry status the release-check worker resolves, read back by
-// AppUpdatesRender to colour each row (so outdated vs up-to-date look nothing
-// alike).
-enum {
-    APST_UPDATE = 0, // installed, a newer release is available  (amber pill)
-    APST_UPTODATE,   // installed, already the latest            (green)
-    APST_NOTINST,    // listed but not on the SD card            (grey)
-    APST_NOSRC,      // installed but no update source configured (grey)
-    APST_ERR,        // installed, source set, but unreachable    (red)
-    APST_RATELIMIT,  // GitHub rate limit hit (403/429)           (amber)
-    APST_OFFLINE,    // no network / couldn't reach GitHub at all (red)
-    APST_UNCHECKED,  // installed + sourced, not yet checked here (grey)
-};
 
 // ---- last-checked timestamps (persisted, keyed by entry id) ----------------
 // The update list no longer hits GitHub on open, so each row shows when it was
@@ -6893,14 +7249,17 @@ static std::string checked_ago(uint64_t when) {
     return buf;
 }
 
-// The section list, its own Settings screen (reached from Settings › Updates).
-// Opening it kicks off AppChkThread, which (a) rebuilds the entry list — the App
-// section also surfaces every installed .nro no manifest entry claims, so all
-// apps on the card show up — and (b) reads each installed build's version. It no
-// longer hits GitHub on open (that was slow and rate-limit-prone); every row
-// loads with its version + when it was last checked, and the user checks for
-// updates explicitly (X = all, Y = one, or the entry menu). B returns to Updates
-// once the list is built.
+// The section list, its own Settings screen (reached from Settings › App &
+// Emulator Updates). Opening it kicks off AppChkThread, which (a) rebuilds the
+// entry list — the Emulator section keeps not-installed sourced entries so
+// there's something to install; the App section is library-only and drops
+// anything not already on the SD card — and (b) reads each installed build's
+// version. It no longer hits GitHub on open (that was slow and rate-limit-
+// prone); every row loads with its version + when it was last checked, and the
+// user checks for updates explicitly (X = all, Y = one, or the entry menu). A
+// check can resolve a release for a not-installed emulator too, which is what
+// lets the entry menu offer "Install vX" instead of just "Check for updates".
+// B returns to the App & Emulator Updates hub once the list is built.
 void MainApplication::GotoAppUpdates(uint8_t kind) {
     // Rapid re-entry (e.g. after an entry action): reap any in-flight check so we
     // never stack workers or read half-written results.
@@ -6966,8 +7325,8 @@ void MainApplication::AppChkThread(void *arg) {
     auto self = static_cast<MainApplication *>(arg);
     uint8_t kind = self->appman_kind;
 
-    UpdSource all[UPD_MAX];
-    int cnt = updman_load(all, UPD_MAX);
+    UpdSource *all = (UpdSource *)malloc(sizeof(UpdSource) * UPD_MAX);
+    int cnt = all ? updman_load(all, UPD_MAX) : 0;
 
     std::vector<UpdSource> list;
     for (int i = 0; i < cnt; i++) {
@@ -7006,6 +7365,7 @@ void MainApplication::AppChkThread(void *arg) {
             list.push_back(s);
         }
     }
+    free(all);
 
     std::sort(list.begin(), list.end(),
               [](const UpdSource &a, const UpdSource &b) {
@@ -7028,23 +7388,25 @@ void MainApplication::AppChkThread(void *arg) {
     // tag without a new GitHub hit. When the network compare does run, tally how
     // many rows it covers so the progress bar has a real denominator.
     auto &net_cache = self->appman_net_cache[kind];
-    int total = 0;
     for (size_t i = 0; i < n; i++) {
         match_installed(list[i], files, ipath[i], ver[i]);
-        if (ipath[i].empty()) {
-            state[i] = APST_NOTINST;
-        } else if (list[i].repo[0] == '\0') {
-            state[i] = APST_NOSRC;
+        if (list[i].repo[0] == '\0') {
+            state[i] = ipath[i].empty() ? APST_NOTINST : APST_NOSRC;
         } else {
-            state[i] = APST_UNCHECKED;
-            if (net) {
-                total++;
-            } else {
-                auto ci = net_cache.find(list[i].id);
-                if (ci != net_cache.end()) {
-                    latest[i] = ci->second.latest;
-                    rel_url[i] = ci->second.url;
-                    rel_asset[i] = ci->second.asset;
+            // Sourced — checkable whether or not it's installed. A not-
+            // installed emulator can still resolve a release, which is what
+            // lets the entry menu offer "Install vX"; the row itself still
+            // reads Not installed either way (see the display switch below).
+            // Default off the local SD-card scan, NOT "unchecked" — an entry
+            // with no .nro on the card must never render as if it were
+            // installed just because it hasn't been network-checked yet.
+            state[i] = ipath[i].empty() ? APST_NOTINST : APST_UNCHECKED;
+            auto ci = net_cache.find(list[i].id);
+            if (!net && ci != net_cache.end()) {
+                latest[i] = ci->second.latest;
+                rel_url[i] = ci->second.url;
+                rel_asset[i] = ci->second.asset;
+                if (!ipath[i].empty()) {
                     int cmp = ver[i].empty()
                                   ? -1
                                   : version_cmp(ver[i].c_str(), latest[i].c_str());
@@ -7053,18 +7415,61 @@ void MainApplication::AppChkThread(void *arg) {
             }
         }
     }
+
+    // Apps are a library manager, not a store: only show what's already on
+    // the SD card. Emulators keep showing not-installed rows (deliberately —
+    // that's how you discover and install one), so this filter is APP-only.
+    if (kind == UPD_KIND_APP) {
+        std::vector<UpdSource> flist;
+        std::vector<int8_t> fstate;
+        std::vector<std::string> fver, flatest, fipath, frel_url, frel_asset;
+        for (size_t i = 0; i < n; i++) {
+            if (ipath[i].empty()) {
+                continue;
+            }
+            flist.push_back(list[i]);
+            fstate.push_back(state[i]);
+            fver.push_back(ver[i]);
+            fipath.push_back(ipath[i]);
+            flatest.push_back(latest[i]);
+            frel_url.push_back(rel_url[i]);
+            frel_asset.push_back(rel_asset[i]);
+        }
+        list = std::move(flist);
+        state = std::move(fstate);
+        ver = std::move(fver);
+        ipath = std::move(fipath);
+        latest = std::move(flatest);
+        rel_url = std::move(frel_url);
+        rel_asset = std::move(frel_asset);
+        n = list.size();
+    }
+
+    int total = 0;
+    if (net) {
+        // Count what the network pass below will actually visit (any sourced
+        // entry, installed or not) rather than gating on state == UNCHECKED —
+        // a not-installed entry now starts life as NOTINST, not UNCHECKED, but
+        // still gets checked below and must still count toward the total.
+        for (size_t i = 0; i < n; i++) {
+            if (list[i].repo[0] != '\0') {
+                total++;
+            }
+        }
+    }
     self->appchk_total = total;
     self->appchk_idx = 0;
 
     // Second pass (network, only when the user asked to check): compare installed
-    // vs latest for sourced entries. A GitHub rate limit is account-wide, so once
-    // one entry hits it the rest will too — flag it and mark the remainder without
-    // hammering the API. A successful check stamps the entry's last-checked time.
+    // vs latest for sourced entries (installed or not — see above). A GitHub
+    // rate limit is account-wide, so once one entry hits it the rest will too —
+    // flag it and mark the remainder without hammering the API. A successful
+    // check stamps the entry's last-checked time.
     bool rate_limited = false;
     bool stamped = false;
     if (net) {
         for (size_t i = 0; i < n; i++) {
-            if (ipath[i].empty() || list[i].repo[0] == '\0') {
+            if (list[i].repo[0] == '\0') {
                 continue;
             }
             if (self->appchk_cancel) {
@@ -7094,8 +7499,15 @@ void MainApplication::AppChkThread(void *arg) {
                 latest[i] = tag;
                 rel_url[i] = url;
                 rel_asset[i] = asset;
-                int cmp = ver[i].empty() ? -1 : version_cmp(ver[i].c_str(), tag);
-                state[i] = (cmp < 0) ? APST_UPDATE : APST_UPTODATE;
+                if (ipath[i].empty()) {
+                    // Not installed: keep the row reading "Not installed" — the
+                    // release info rides along via appman_latest/url so the
+                    // entry menu's "Install vX" option can offer it.
+                    state[i] = APST_NOTINST;
+                } else {
+                    int cmp = ver[i].empty() ? -1 : version_cmp(ver[i].c_str(), tag);
+                    state[i] = (cmp < 0) ? APST_UPDATE : APST_UPTODATE;
+                }
                 self->appman_checked_at[list[i].id] = (uint64_t)time(NULL);
                 stamped = true;
                 net_cache[list[i].id] = {latest[i], rel_url[i], rel_asset[i]};
@@ -7280,22 +7692,24 @@ void MainApplication::AppRecheckOne(size_t idx) {
     UpdSource &e = this->appman_list[idx];
     // Pick up an edited source: AppSetSource persists to the manifest by id, so
     // reload the entry so a freshly-set repo is used for the check below.
-    UpdSource all[UPD_MAX];
-    int cnt = updman_load(all, UPD_MAX);
+    UpdSource *all = (UpdSource *)malloc(sizeof(UpdSource) * UPD_MAX);
+    int cnt = all ? updman_load(all, UPD_MAX) : 0;
     for (int i = 0; i < cnt; i++) {
         if (strcasecmp(all[i].id, e.id) == 0) {
             e = all[i];
             break;
         }
     }
+    free(all);
     std::string ipath, ver, latest, rel_url, rel_asset;
     match_installed(e, scan_switch_nros(), ipath, ver);
     int8_t st;
-    if (ipath.empty()) {
-        st = APST_NOTINST;
-    } else if (e.repo[0] == '\0') {
-        st = APST_NOSRC;
+    if (e.repo[0] == '\0') {
+        st = ipath.empty() ? APST_NOTINST : APST_NOSRC;
     } else {
+        // Sourced — checkable whether or not it's installed. A not-installed
+        // emulator can still resolve a release here so the entry menu can
+        // offer "Install vX"; the row still reads Not installed either way.
         this->Toast(tr(S_APPMAN_CHECKING));
         char tag[64] = "", url[1024] = "", asset[256] = "";
         long code = 0;
@@ -7310,8 +7724,10 @@ void MainApplication::AppRecheckOne(size_t idx) {
             latest = tag;
             rel_url = url;
             rel_asset = asset;
-            int cmp = ver.empty() ? -1 : version_cmp(ver.c_str(), tag);
-            st = (cmp < 0) ? APST_UPDATE : APST_UPTODATE;
+            st = ipath.empty() ? APST_NOTINST
+                 : (ver.empty() || version_cmp(ver.c_str(), tag) < 0)
+                     ? APST_UPDATE
+                     : APST_UPTODATE;
             this->AppMarkChecked(e.id); // stamp "checked just now"
             this->appman_net_cache[this->appman_kind][e.id] = {latest, rel_url,
                                                                 rel_asset};
@@ -8410,6 +8826,7 @@ void MainApplication::ImportApply() {
     }
     xfer_log("import     applied %d console(s), %d repo(s); previous %d kept for "
              "restore", consoles, repos, SOURCES_BAK_SLOTS);
+    config_sort_az(&g_cfg); // commit_config's internal sort is by slug, not display name
     config_seed_rom_folders(&g_cfg, roms_root(&g_tico));
 
     char done[96];
@@ -8813,6 +9230,7 @@ void MainApplication::RestoreBackup() {
     }
     xfer_log("restore    applied %d console(s), %d repo(s) from backup slot %d",
              consoles, repos, slot[pick]);
+    config_sort_az(&g_cfg); // commit_config's internal sort is by slug, not display name
     config_seed_rom_folders(&g_cfg, roms_root(&g_tico));
 
     char done[96];
@@ -9048,6 +9466,7 @@ static const DatSource DAT_SOURCES[] = {
         {"pc-fx", "NEC - PC-FX", NULL},
         {"atomiswave", "Sammy - Atomiswave", NULL},
         {"neo-geo", "SNK - Neo Geo", NULL},
+        {"vita", "Sony - PlayStation Vita", NULL},
 };
 
 // The Fresh1G1R folder + listing anchor for a console target, or NULL when no
@@ -11417,7 +11836,7 @@ bool MainApplication::ToolsMenu() {
         else if (cr == 1) this->ToolsScanConsoleArt();
         return false;
     }
-    case 8: this->GotoUpdates(); return false;    // Emulator & app updates (Settings)
+    case 8: this->GotoAppEmuUpdates(); return false; // Emulator & app updates (Settings)
     // row 9 (inventory toggle) is handled in-place by SideMenu; never returns here
     case SIDEMENU_SWITCH: return true;            // flip to per-console Options
     default: return false;                        // dismissed (B)
@@ -11509,25 +11928,27 @@ bool MainApplication::ConsoleOptionsMenu(s32 i) {
     bool pinned = prefs_dir_pinned(&g_prefs, g_inst[i].name.c_str());
     int r = this->SideMenu(
         title,
-        {tr(S_INSTALL_FOLDER), tr(S_CONSOLE_INFO), tr(S_RECEIVE_FROM_PC),
-         tr(S_TIDY_CONSOLE), pinned ? tr(S_UNPIN) : tr(S_PIN),
-         tr(S_VERIFY_DAT), tr(S_HAVE_MISSING), tr(S_SCAN_BOX_ART_CONSOLE),
-         tr(S_CONSOLE_ART)},
+        {tr(S_CONSOLE_ART), tr(S_INSTALL_FOLDER), tr(S_CONSOLE_INFO),
+         tr(S_RECEIVE_FROM_PC), tr(S_TIDY_CONSOLE),
+         pinned ? tr(S_UNPIN) : tr(S_PIN), tr(S_VERIFY_DAT),
+         tr(S_HAVE_MISSING), tr(S_SCAN_BOX_ART_CONSOLE)},
         0, "", false, /*from_left=*/false,
         console_display_icon(g_inst[i].name.c_str()), nullptr,
         HidNpadButton_Y); // Y → global Tools panel
-    if (r == 0) { // Install folder (where this console lands)
+    if (r == 0) { // Console Art: default icon vs. SteamGridDB cover
+        this->ConsoleArtMenu(i);
+    } else if (r == 1) { // Install folder (where this console lands)
         this->InstFolderDialog(i);
-    } else if (r == 1) { // Console info (read-only stats)
+    } else if (r == 2) { // Console info (read-only stats)
         this->ConsoleInfoDialog(i);
-    } else if (r == 2) { // Receive from PC (into this console)
+    } else if (r == 3) { // Receive from PC (into this console)
         if (g) {
             this->RomRecvStart((int)(g - g_cfg.consoles));
         }
-    } else if (r == 3) { // Tidy just this console's folder
+    } else if (r == 4) { // Tidy just this console's folder
         this->TidyStart(g ? g->target : g_inst[i].name,
                         inst_entry_path(this->inst_path, g_inst[i]));
-    } else if (r == 4) { // Pin / Unpin
+    } else if (r == 5) { // Pin / Unpin
         prefs_dir_pin_toggle(&g_prefs, g_inst[i].name.c_str());
         prefs_save(&g_prefs);
         std::string nm = g_inst[i].name;
@@ -11538,26 +11959,24 @@ bool MainApplication::ConsoleOptionsMenu(s32 i) {
                 break;
             }
         }
-    } else if (r == 5) { // Verify Files (against the console's DAT)
+    } else if (r == 6) { // Verify Files (against the console's DAT)
         // Verify the folder the console actually installs into: a custom
         // per-console folder (when on) or the default <root>/<target>.
         // g_inst[i].path already resolves this — custom-folder rows are
         // synthesised pointing at it.
         this->VerifyStart(inst_entry_path(this->inst_path, g_inst[i]),
                           g ? g->target : g_inst[i].name, title);
-    } else if (r == 6) { // Missing Games (verify, then open the missing list)
+    } else if (r == 7) { // Missing Games (verify, then open the missing list)
         this->VerifyStart(inst_entry_path(this->inst_path, g_inst[i]),
                           g ? g->target : g_inst[i].name, title, false,
                           /*goto_missing=*/true);
-    } else if (r == 7) { // Scan for Box Art, limited to this console
+    } else if (r == 8) { // Scan for Box Art, limited to this console
         if (g_creds.steamgriddb_key[0]) {
             this->BoxArtScanStart(g ? g->target : g_inst[i].name,
                                   inst_entry_path(this->inst_path, g_inst[i]));
         } else {
             this->ToastErr(tr(S_SCAN_BOX_ART_NEED_KEY));
         }
-    } else if (r == 8) { // Console Art: default icon vs. SteamGridDB cover
-        this->ConsoleArtMenu(i);
     } else if (r == SIDEMENU_SWITCH) {
         return true; // flip to the global Tools panel
     }
@@ -11749,6 +12168,8 @@ void MainApplication::ConsoleArtMenu(s32 i) {
     // dynamic option landed in -- same pattern as InstFolderDialog just above.
     std::vector<std::string> btns;
     int default_idx = -1, boxart_idx = -1;
+    int find_idx = (int)btns.size();
+    btns.push_back(tr(has_art ? S_CONSOLE_ART_CHANGE : S_CONSOLE_ART_FIND));
     if (g->use_boxart) {
         default_idx = (int)btns.size();
         btns.push_back(tr(S_CONSOLE_ART_USE_DEFAULT));
@@ -11756,8 +12177,6 @@ void MainApplication::ConsoleArtMenu(s32 i) {
         boxart_idx = (int)btns.size();
         btns.push_back(tr(S_CONSOLE_ART_USE_BOXART));
     }
-    int find_idx = (int)btns.size();
-    btns.push_back(tr(has_art ? S_CONSOLE_ART_CHANGE : S_CONSOLE_ART_FIND));
     btns.push_back(tr(S_CANCEL)); // last: B / cancel returns this, a no-op
 
     int r = this->CreateShowDialog(title, tr(S_CONSOLE_ART_BODY), btns, true,
@@ -12547,7 +12966,7 @@ void MainApplication::ArchAddSel() {
     char label[64];
     snprintf(label, sizeof(label), "%s", title.c_str()); // repo label caps at 64
     if (g && config_add_repo(g, label, h.identifier)) {
-        config_sort(&g_cfg);
+        config_sort_az(&g_cfg);
         config_save(&g_cfg);
         this->Toast(tr(S_ADDED));
     } else {
@@ -12575,7 +12994,7 @@ void MainApplication::AddRepoChoose(const std::string &console) {
             prompt(tr(S_HINT_ARCHIVE_ID), nullptr, id, sizeof(id))) {
             ConsoleGroup *g = config_add_console(&g_cfg, console.c_str());
             if (g && config_add_repo(g, nm, id)) {
-                config_sort(&g_cfg);
+                config_sort_az(&g_cfg);
                 config_save(&g_cfg);
                 this->Toast(tr(S_ADDED));
             }
@@ -14920,21 +15339,6 @@ void MainApplication::HandleInput(u64 down, u64 held,
     // Pulse the Queue tab when downloads are active and you're looking elsewhere.
     this->layout->SetQueueActivity(qac > 0 &&
                                    this->CurrentTab() != Tab::Queue);
-    // Ambient sliver under the tab bar: the active item's byte progress,
-    // visible from any tab so a running transfer never needs a Queue check
-    // just to see it's alive. Hidden when nothing's actually moving bytes
-    // (queued/paused-only doesn't count) or total is unknown yet.
-    if (qac > 0) {
-        uint64_t now = 0, total = 0;
-        if (queue_active_info(NULL, 0, NULL, &now, &total, NULL, NULL, NULL) &&
-            total > 0) {
-            this->layout->SetQueueProgress((float)((double)now / (double)total));
-        } else {
-            this->layout->SetQueueProgress(-1.0f);
-        }
-    } else {
-        this->layout->SetQueueProgress(-1.0f);
-    }
 
     // Remember the current selection per browseable list so backing out and
     // returning keeps your place.
@@ -15067,6 +15471,9 @@ void MainApplication::HandleInput(u64 down, u64 held,
         if (!this->layout->InCards()) {
             this->layout->ClearMenu(); // drop list rows / empty state once
             this->layout->SetCardsMode(true);
+            // Match the Library/Collections poster grid: 6-wide, taller rows.
+            this->layout->SetCardCols(6);
+            this->layout->SetCardQueueTall(true);
         }
         this->layout->SetQueueCount(n);
         // Throttle the volatile %/speed/eta text rasterization to ~7Hz. It
@@ -15108,7 +15515,12 @@ void MainApplication::HandleInput(u64 down, u64 held,
                 }
             } else if (it->status == Q_DOWNLOADING && it->total) {
                 prog = (float)it->now / (float)it->total;
-                snprintf(c0, sizeof(c0), "%s", human_size(it->total).c_str());
+                // now / total on its own line, matching the Paused state
+                // below -- previously just the total, joined with speed/eta
+                // into one line that no longer fits the narrower queue card.
+                snprintf(c0, sizeof(c0), "%s / %s",
+                         human_size(it->now).c_str(),
+                         human_size(it->total).c_str());
                 if (it->stalled) {
                     // A failed attempt is being retried (backoff or an
                     // immediate credentialed re-attempt) -- no bytes are
@@ -15200,7 +15612,7 @@ void MainApplication::HandleInput(u64 down, u64 held,
             pu::sdl2::Texture qicon =
                 console_display_icon(it->target, &is_art, false);
             this->layout->SetQueueCard(i, it->target, qicon, st, sc, c0, c1,
-                                       c2, it->name, prog,
+                                       c2, queue_display_name(it->name), prog,
                                        it->status == Q_DOWNLOADING ||
                                            it->status == Q_VERIFYING ||
                                            it->status == Q_EXTRACTING,
@@ -15324,7 +15736,8 @@ void MainApplication::HandleInput(u64 down, u64 held,
             // (TableList), so the icon aligns on every row.
             const char *pfx = xfer_verb(it);
             char left[560];
-            snprintf(left, sizeof(left), "[%s] %s", it->target, it->name);
+            snprintf(left, sizeof(left), "[%s] %s", it->target,
+                     queue_display_name(it->name));
             pu::ui::Color c = xfer_color(it);
             pu::ui::Color rc = c;
             // Colour the result column by outcome: orange = replaced, green = new.
@@ -15923,10 +16336,11 @@ void MainApplication::HandleInput(u64 down, u64 held,
             case 4: this->GotoTransfers();   return; // PC Sync (hosts Install from PC)
             case 5: this->GotoAccount();     return;
             case 6: this->GotoUpdates();     return;
-            case 7: this->GotoViewLogs();    return;
-            case 8: this->GotoDiagnostics(); return;
-            case 9: this->GotoHelp();        return; // Getting Started/How-To/Troubleshooting
-            case 10: this->GotoAbout();      return; // About = credits page
+            case 7: this->GotoAppEmuUpdates(); return; // Emulator/App updates hub
+            case 8: this->GotoViewLogs();    return;
+            case 9: this->GotoDiagnostics(); return;
+            case 10: this->GotoHelp();       return; // Getting Started/How-To/Troubleshooting
+            case 11: this->GotoAbout();      return; // About = credits page
             default: break;
             }
         }
@@ -16675,16 +17089,8 @@ void MainApplication::HandleInput(u64 down, u64 held,
             case 1: // Check GitHub for a new HaulNX build, straight away.
                 this->ChkStart(); // background thread; retries won't freeze UI
                 return;
-            case 2: // emulator updates
-                this->appman_sel = 0;
-                this->GotoAppUpdates(UPD_KIND_EMU);
-                return;
-            case 3: // app updates
-                this->appman_sel = 0;
-                this->GotoAppUpdates(UPD_KIND_APP);
-                return;
-            case 4: this->GotoReleaseNotes(); return; // version history
-            case 5: // Check for updates on startup
+            case 2: this->GotoReleaseNotes(); return; // version history
+            case 3: // Check for updates on startup
                 g_prefs.chk_updates = !g_prefs.chk_updates;
                 prefs_save(&g_prefs);
                 break;
@@ -16696,7 +17102,7 @@ void MainApplication::HandleInput(u64 down, u64 held,
                 this->layout->SetSel(sel);
             }
         } else if (down & (HidNpadButton_Left | HidNpadButton_Right)) {
-            if (this->layout->Sel() == 5) {
+            if (this->layout->Sel() == 3) {
                 g_prefs.chk_updates = !g_prefs.chk_updates;
                 prefs_save(&g_prefs);
                 s32 sel = this->layout->Sel();
@@ -16707,14 +17113,35 @@ void MainApplication::HandleInput(u64 down, u64 held,
         break;
     }
 
+    case Screen::AppEmuUpdates: {
+        if (down & HidNpadButton_B) {
+            this->GotoSettings();
+            this->layout->SetSel(7);
+        } else if (down & HidNpadButton_A) {
+            switch (this->layout->Sel()) {
+            case 0: // emulator updates
+                this->appman_sel = 0;
+                this->GotoAppUpdates(UPD_KIND_EMU);
+                return;
+            case 1: // app updates
+                this->appman_sel = 0;
+                this->GotoAppUpdates(UPD_KIND_APP);
+                return;
+            default: break;
+            }
+        }
+        break;
+    }
+
     case Screen::AppUpdates: {
         // Emulator/app list. It loads with versions only (no auto-scan); the user
         // checks for updates explicitly: X checks every entry, Y checks the
         // selected one, A opens that entry's action menu (which also has a "Check
-        // for updates" option). B goes back to Updates.
+        // for updates" option). B goes back to the App & Emulator Updates hub.
         if (down & HidNpadButton_B) {
             this->layout->ClearEmptyState();
-            this->GotoUpdates();
+            this->GotoAppEmuUpdates();
+            this->layout->SetSel(this->appman_kind == UPD_KIND_APP ? 1 : 0);
         } else if (down & HidNpadButton_X) {
             this->AppScanAll(); // check them all against GitHub
         } else if (down & HidNpadButton_Y) {
@@ -16839,7 +17266,12 @@ void MainApplication::HandleInput(u64 down, u64 held,
                 }
                 break;
             case 5: return;                        // USB 3.0 status: read-only
-            case 6: this->ResetDefaults(); return; // factory-reset settings — bottom
+            case 6:                                 // header version toggle
+                g_prefs.show_header_version = !g_prefs.show_header_version;
+                prefs_save(&g_prefs);
+                this->layout->SetHeaderVersion(g_prefs.show_header_version);
+                break;
+            case 7: this->ResetDefaults(); return; // factory-reset settings — bottom
             default: break;
             }
             if (this->screen == Screen::Diagnostics) {
@@ -17945,6 +18377,15 @@ void MainApplication::HandleInput(u64 down, u64 held,
             this->BoxArtPickReturn();
         } else if (down & HidNpadButton_A) {
             this->BoxArtPickConfirm(this->layout->Sel());
+        } else if (down & HidNpadButton_X) {
+            // Re-prompt with the same title/return context (game or console
+            // this pick started from) but seeded with the query that's
+            // already yielded these results -- same path a custom search
+            // from elsewhere uses, just re-entered from inside the picker.
+            this->BoxArtCustomSearch(
+                this->boxart_pick.title, this->boxart_pick.return_screen,
+                this->boxart_pick.return_idx, this->boxart_pick.console_target,
+                this->boxart_pick.query);
         }
         break;
     }
@@ -18080,7 +18521,7 @@ void MainApplication::OnLoad() {
     net_init();
     tico_init(&g_tico);
     config_load(&g_cfg);
-    config_sort(&g_cfg);
+    config_sort_az(&g_cfg);
     creds_load(&g_creds);
     net_set_github_token(g_creds.github_token); // authenticate update checks if set
     net_set_steamgriddb_key(g_creds.steamgriddb_key); // box art scans, if set

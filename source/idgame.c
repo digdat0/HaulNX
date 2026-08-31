@@ -52,6 +52,12 @@ static const ExtMap kExtMap[] = {
     {"vec", "vectrex"},
     {"chf", "channel-f"},
     {"sv", "supervision"},
+    {"vpk", "vita"},
+    {"adf", "amiga"},
+    {"tzx", "zx-spectrum"}, {"z80", "zx-spectrum"},
+    {"ch8", "chip8"},
+    {"p8", "pico8"},
+    {"swf", "flash"},
 };
 
 /* Shared extensions that need a look inside to place: disc images, raw dumps

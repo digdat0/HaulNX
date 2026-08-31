@@ -252,7 +252,13 @@ static bool console_is_new(const char *name) {
         /* experimental — Wii U, playable only via the unofficial Cemu Switch
          * port; off by default so it doesn't imply first-class on-device
          * support */
-        "wiiu"};
+        "wiiu",
+        /* playable only via an unofficial emulator port (uae4all2, Vapor
+         * Spec, etc.) rather than first-party/well-established Switch
+         * homebrew; off by default for the same reason as wiiu above.
+         * ("vita" was here too until 2026-08-30, when it got a proper
+         * console icon and was moved to the default-shown set below.) */
+        "amiga", "zx-spectrum", "chip8", "pico8", "tamagotchi", "flash"};
     for (size_t i = 0; i < sizeof(added) / sizeof(added[0]); i++) {
         if (strcasecmp(name, added[i]) == 0) {
             return true;
@@ -850,6 +856,7 @@ void prefs_load(Prefs *p) {
     p->convert_import = true; /* apply the post-import converter when present */
     strcpy(p->region_order, "WUEJ"); /* World, USA, Europe, Japan */
     p->mtp_enabled = true;   /* USB file transfer available by default */
+    p->show_header_version = false; /* header shows the wordmark only by default */
     p->box_art_enabled = true; /* show cached covers in the list by default */
     p->box_art_auto_fetch = true; /* auto-fetch art for new arrivals by default */
     p->sd_full_access = false; /* whole-SD-card access off by default */
@@ -981,6 +988,10 @@ void prefs_load(Prefs *p) {
         if (idx >= 0) {
             p->mtp_enabled = json_bool(js, tok, idx);
         }
+        idx = json_obj_get(js, tok, 0, "showHeaderVersion");
+        if (idx >= 0) {
+            p->show_header_version = json_bool(js, tok, idx);
+        }
         idx = json_obj_get(js, tok, 0, "boxArtEnabled");
         if (idx >= 0) {
             p->box_art_enabled = json_bool(js, tok, idx);
@@ -1095,6 +1106,8 @@ bool prefs_save(const Prefs *p) {
     fputs(",\n  \"regionOrder\": ", f);
     json_write_escaped(f, p->region_order);
     fprintf(f, ",\n  \"mtpEnabled\": %s", p->mtp_enabled ? "true" : "false");
+    fprintf(f, ",\n  \"showHeaderVersion\": %s",
+            p->show_header_version ? "true" : "false");
     fprintf(f, ",\n  \"boxArtEnabled\": %s", p->box_art_enabled ? "true" : "false");
     fprintf(f, ",\n  \"boxArtAutoFetch\": %s", p->box_art_auto_fetch ? "true" : "false");
     fprintf(f, ",\n  \"sdFullAccess\": %s", p->sd_full_access ? "true" : "false");

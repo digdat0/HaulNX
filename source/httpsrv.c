@@ -1,5 +1,6 @@
 #include "httpsrv.h"
 
+#include "boxart.h" /* boxart_lookup: GET consoleart streams a console's cached cover */
 #include "config.h" /* SOURCES_PATH: the file this page uploads and exports */
 #include "fsutil.h" /* fs_log_rotate / fs_mkdir_p for the lifecycle trace */
 #include "jsonutil.h" /* json_write_escaped: GET fs_list's directory listing */
@@ -914,8 +915,18 @@ static const char *route_pval(const HttpSrv *s, const char *p, size_t pl,
         strncmp(q + ll, "?p=", 3) != 0) {
         return NULL;
     }
-    *vlen = rem - ll - 3;
-    return q + ll + 3;
+    const char *v = q + ll + 3;
+    size_t vrem = rem - ll - 3;
+    /* Stop at a literal '&' so a caller can tack on extra query params after
+     * p= (e.g. the desktop's Console Art preview appending "&_=<ts>" to
+     * cache-bust the <img>) without it becoming part of the decoded value --
+     * previously this ran to the end of the path unconditionally, so that
+     * cache-buster silently became part of the console-art cache key and the
+     * lookup always missed. encodeURIComponent always escapes a literal '&'
+     * inside the value itself to %26, so this can't truncate real data. */
+    const char *amp = memchr(v, '&', vrem);
+    *vlen = amp ? (size_t)(amp - v) : vrem;
+    return v;
 }
 
 /* Match "/<token>/<leaf>" exactly, no query string -- for a POST action that
@@ -1083,6 +1094,157 @@ static int respond_simple(HttpSrv *s, int fd, const char *head) {
         if (!send_file(fd, UPDSRC_PATH, "application/json", NULL)) {
             send_resp(fd, "404 Not Found", "text/plain", "no update sources");
         }
+    } else if (s->mode == HTTPSRV_MODE_INVENTORY &&
+               (fval = route_pval(s, p, pl, "consoleart", &fvlen)) != NULL) {
+        /* Pull one console's current cover art: "/<token>/consoleart?p=<target>",
+         * `target` being the short console key (e.g. "switch"), not a path --
+         * resolved through boxart_lookup's "console:<target>" cache key, same
+         * one the on-device Console Art picker keys under. Unlike `file`/
+         * `fs_get` this can never be pointed at an arbitrary file: a target
+         * with no cached cover (or that isn't a real console at all) is just a
+         * 404. The desktop companion's Console Art dialog uses this both to
+         * preview what's currently set and to save a local copy. */
+        char target[64];
+        pct_decode(fval, fvlen, target, sizeof(target));
+        char key[80], path[768];
+        snprintf(key, sizeof(key), "console:%s", target);
+        FILE *src = boxart_lookup(key, path, sizeof(path)) ? fopen(path, "rb")
+                                                            : NULL;
+        long sz = -1;
+        if (src) {
+            fseek(src, 0, SEEK_END);
+            sz = ftell(src);
+            fseek(src, 0, SEEK_SET);
+        }
+        if (!src || sz < 0) {
+            if (src) {
+                fclose(src);
+            }
+            send_resp(fd, "404 Not Found", "text/plain", "no cover art");
+        } else {
+            char head[256];
+            int hn = snprintf(head, sizeof(head),
+                              "HTTP/1.1 200 OK\r\n"
+                              "Content-Type: image/png\r\n"
+                              "Content-Length: %ld\r\n"
+                              "Access-Control-Allow-Origin: *\r\n"
+                              "Connection: close\r\n\r\n",
+                              sz);
+            if (!head_ok(hn, sizeof(head)) || !send_all(fd, head, (size_t)hn)) {
+                fclose(src);
+                client_reset(s);
+                return 0;
+            }
+            s->src = src;
+            s->src_left = (unsigned long long)sz;
+            return 0; /* body streams next poll; keep the connection (no reset) */
+        }
+    } else if (s->mode == HTTPSRV_MODE_INVENTORY &&
+               (fval = route_pval(s, p, pl, "boxartsearch", &fvlen)) != NULL) {
+        /* Kick off a companion box-art search: "/<token>/boxartsearch?p=
+         * <target_enc>:<query_enc>", both halves percent-encoded by the
+         * caller so a literal ':' can only be the separator (encodeURI-
+         * Component always escapes ':' to %3A). This just stashes the
+         * decoded request for MainApplication::InvBoxartTick to pick up on
+         * its next frame -- a SteamGridDB round trip is blocking network
+         * I/O and httpsrv_poll runs on the UI thread, so it can never run
+         * inline here (see the HttpSrv fields' own comment). Always
+         * answered immediately; the companion polls boxartsearch_status
+         * for the outcome. */
+        const char *sep = memchr(fval, ':', fvlen);
+        size_t tenc_len = sep ? (size_t)(sep - fval) : fvlen;
+        char target[64] = {0}, query[256] = {0};
+        pct_decode(fval, tenc_len, target, sizeof(target));
+        if (sep) {
+            pct_decode(sep + 1, fvlen - tenc_len - 1, query, sizeof(query));
+        }
+        if (target[0] && query[0]) {
+            snprintf(s->boxsearch_req_target, sizeof(s->boxsearch_req_target),
+                     "%s", target);
+            snprintf(s->boxsearch_req_query, sizeof(s->boxsearch_req_query),
+                     "%s", query);
+            s->boxsearch_running = true;
+            s->boxsearch_done = false;
+            send_resp(fd, "200 OK", "text/plain", "queued");
+        } else {
+            send_resp(fd, "400 Bad Request", "text/plain",
+                      "need target and query");
+        }
+    } else if (s->mode == HTTPSRV_MODE_INVENTORY &&
+               route_leaf(s, p, pl, "boxartsearch_status")) {
+        /* Poll target for the search above: candidate count + each one's
+         * reported size, so the companion can lay out a grid (and tell a
+         * poster-shaped grid from a square icon) before ever downloading a
+         * thumb. */
+        char json[BOXART_MAX_CANDIDATES * 40 + 128];
+        int o = snprintf(json, sizeof(json),
+                         "{\"running\":%s,\"done\":%s,\"count\":%d,\"results\":[",
+                         s->boxsearch_running ? "true" : "false",
+                         s->boxsearch_done ? "true" : "false",
+                         s->boxsearch_count);
+        for (int i = 0; i < s->boxsearch_count && i < BOXART_MAX_CANDIDATES;
+            i++) {
+            o += snprintf(json + o, sizeof(json) - (size_t)o,
+                          "%s{\"i\":%d,\"w\":%d,\"h\":%d}", i ? "," : "", i,
+                          s->boxsearch_w[i], s->boxsearch_h[i]);
+        }
+        snprintf(json + o, sizeof(json) - (size_t)o, "]}");
+        send_resp(fd, "200 OK", "application/json", json);
+    } else if (s->mode == HTTPSRV_MODE_INVENTORY &&
+               (fval = route_pval(s, p, pl, "boxartthumb", &fvlen)) != NULL) {
+        /* One search result's cached thumbnail: "/<token>/boxartthumb?p=<i>".
+         * The file always lives at boxart_fetch_thumb's own fixed
+         * BOXART_TMP_DIR/<i>.png -- no path needs to travel through
+         * HttpSrv, this just opens it directly, same streamed-GET pattern
+         * as consoleart above. 404 for an out-of-range or not-yet-
+         * downloaded slot. */
+        char idxs[16];
+        pct_decode(fval, fvlen, idxs, sizeof(idxs));
+        int idx = atoi(idxs);
+        char path[768];
+        FILE *src = NULL;
+        if (idx >= 0 && idx < BOXART_MAX_CANDIDATES) {
+            snprintf(path, sizeof(path), "%s/%d.png", BOXART_TMP_DIR, idx);
+            src = fopen(path, "rb");
+        }
+        long sz = -1;
+        if (src) {
+            fseek(src, 0, SEEK_END);
+            sz = ftell(src);
+            fseek(src, 0, SEEK_SET);
+        }
+        if (!src || sz < 0) {
+            if (src) {
+                fclose(src);
+            }
+            send_resp(fd, "404 Not Found", "text/plain", "no thumb");
+        } else {
+            char head[256];
+            int hn = snprintf(head, sizeof(head),
+                              "HTTP/1.1 200 OK\r\n"
+                              "Content-Type: image/png\r\n"
+                              "Content-Length: %ld\r\n"
+                              "Access-Control-Allow-Origin: *\r\n"
+                              "Connection: close\r\n\r\n",
+                              sz);
+            if (!head_ok(hn, sizeof(head)) || !send_all(fd, head, (size_t)hn)) {
+                fclose(src);
+                client_reset(s);
+                return 0;
+            }
+            s->src = src;
+            s->src_left = (unsigned long long)sz;
+            return 0;
+        }
+    } else if (s->mode == HTTPSRV_MODE_INVENTORY &&
+               route_leaf(s, p, pl, "boxartpick_status")) {
+        /* Poll target for the POST .../boxartpick commit below. */
+        char json[128];
+        snprintf(json, sizeof(json), "{\"running\":%s,\"done\":%s,\"ok\":%s}",
+                 s->boxpick_running ? "true" : "false",
+                 s->boxpick_done ? "true" : "false",
+                 s->boxpick_ok ? "true" : "false");
+        send_resp(fd, "200 OK", "application/json", json);
     } else if (s->mode == HTTPSRV_MODE_INVENTORY &&
                (fval = route_pval(s, p, pl, "file", &fvlen)) != NULL) {
         /* Pull one game to the PC: "/<token>/file?p=<abs path>", confined by
@@ -1758,6 +1920,48 @@ static int client_step(HttpSrv *s) {
                 client_reset(s);
                 return 0;
             }
+            /* Commit a companion box-art search result: "POST /<token>/
+             * boxartpick?p=<target_enc>:<index>" (no body) -- same encoded-
+             * colon-separated shape as GET boxartsearch above. Just stashes
+             * the request for InvBoxartTick, which does the actual
+             * SteamGridDB image download off-thread; the caller polls
+             * boxartpick_status for the outcome. target isn't validated
+             * against the configured consoles here (that check, like every
+             * other console-target push, happens once on the UI thread —
+             * see InvBoxartTick), so an unknown target is silently ignored
+             * rather than 404ing here. */
+            size_t pklen = 0;
+            const char *pkval = route_pval(s, p, pl, "boxartpick", &pklen);
+            if (pkval) {
+                make_blocking(fd);
+                const char *sep2 = memchr(pkval, ':', pklen);
+                if (!host_ok(s, s->head)) {
+                    send_resp(fd, "403 Forbidden", "text/plain", "wrong host");
+                } else if (!sep2) {
+                    send_resp(fd, "400 Bad Request", "text/plain",
+                              "need target and index");
+                } else {
+                    char target[64] = {0}, idxs[16] = {0};
+                    pct_decode(pkval, (size_t)(sep2 - pkval), target,
+                               sizeof(target));
+                    pct_decode(sep2 + 1, (size_t)((pkval + pklen) - (sep2 + 1)),
+                               idxs, sizeof(idxs));
+                    int idx = atoi(idxs);
+                    if (target[0] && idx >= 0) {
+                        snprintf(s->boxpick_req_target,
+                                 sizeof(s->boxpick_req_target), "%s", target);
+                        s->boxpick_req_index = idx;
+                        s->boxpick_running = true;
+                        s->boxpick_done = false;
+                        send_resp(fd, "200 OK", "text/plain", "queued");
+                    } else {
+                        send_resp(fd, "400 Bad Request", "text/plain",
+                                  "bad target/index");
+                    }
+                }
+                client_reset(s);
+                return 0;
+            }
             /* The SD Card tab's three bodyless write actions — delete
              * (recursive: files and whole folders alike, matching what
              * Explorer-over-MTP already does), new folder, and move/rename —
@@ -2003,7 +2207,21 @@ static int client_step(HttpSrv *s) {
              * the caller can read its header and file it by console — never route
              * it to the streamed-to-inbox path even though it has an X-Filename. */
             s->recv_dat = (hdr_val(s->head, "x-dat:") != NULL);
-            if (!s->recv_dat && hdr_val(s->head, "x-filename:") && !mp) {
+            /* A console-art push (companion's Console Art button) carries
+             * X-Art-Target and must buffer for the same reason a DAT does: the
+             * caller writes it into the box-art cache under that console's key
+             * rather than filing it as a game. */
+            s->recv_art_target[0] = '\0';
+            {
+                const char *art = hdr_val(s->head, "x-art-target:");
+                char an3[64];
+                if (art && sanitize_filename(art, an3, sizeof(an3))) {
+                    snprintf(s->recv_art_target, sizeof(s->recv_art_target), "%s",
+                            an3);
+                }
+            }
+            if (!s->recv_dat && !s->recv_art_target[0] &&
+                hdr_val(s->head, "x-filename:") && !mp) {
                 stream_to_disk = true;
             } else {
                 /* A buffered push (collection or .nro) doesn't stream to a

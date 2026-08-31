@@ -35,7 +35,8 @@ class CardGrid : public pu::ui::elm::Element {
         bool queue = false;
         std::string status;
         pu::ui::Color st_clr{255, 255, 255, 255};
-        std::string chip;   // size · speed · eta joined into one pill
+        std::string chip;   // top pill line: size (now/total while active)
+        std::string chip2;  // bottom pill line: speed · eta joined
         std::string file;   // full filename (diff gate for the split below)
         std::string f1, f2; // wrapped filename lines (diff keys)
         float prog = -1.0f; // perimeter progress bar; -1 = none
@@ -62,12 +63,13 @@ class CardGrid : public pu::ui::elm::Element {
         s32 t1w, t1h, t2w, t2h, sw, sh;
         // queue-mode textures
         pu::sdl2::Texture st_tex = nullptr;
-        pu::sdl2::Texture ch_tex = nullptr;
+        pu::sdl2::Texture ch_tex = nullptr;  // pill line 1: size
+        pu::sdl2::Texture ch2_tex = nullptr; // pill line 2: speed · eta
         pu::sdl2::Texture f_tex = nullptr;  // filename line 1
         pu::sdl2::Texture f2_tex = nullptr; // filename line 2 (wrap)
         pu::sdl2::Texture qp_tex = nullptr; // queue-position badge
-        s32 stw = 0, sth = 0, chw = 0, chh = 0, fw = 0, fh = 0, f2w = 0,
-            f2h = 0, qpw = 0, qph = 0;
+        s32 stw = 0, sth = 0, chw = 0, chh = 0, ch2w = 0, ch2h = 0, fw = 0,
+            fh = 0, f2w = 0, f2h = 0, qpw = 0, qph = 0;
     };
 
     s32 x, y, w, h;
@@ -145,7 +147,16 @@ class CardGrid : public pu::ui::elm::Element {
     // branch), keeps two full rows on screen with the rest reachable by
     // scrolling down.
     static constexpr s32 PosterRowH = 400;
-    s32 CardH() const { return this->poster ? PosterRowH : CardHNormal; }
+    // Queue cards (SetQueueCard) opt into the same tall row height as poster
+    // mode, at the same 6-wide column count, so the grid reads as one
+    // consistent card size across Library/Collections/Queue -- see
+    // SetQueueTall. Kept as its own flag rather than reusing `poster` since
+    // queue cards render via their own dedicated path (Card::queue) and don't
+    // want poster mode's box-art/marquee-title behavior, just its row height.
+    bool queue_tall = false;
+    s32 CardH() const {
+        return (this->poster || this->queue_tall) ? PosterRowH : CardHNormal;
+    }
     // Slow left-right "reveal" scroll for a poster title too long to fit the
     // card: pause at the start, glide to show the tail, pause, glide back.
     // Shared across every overflowing title (one global phase) rather than
@@ -230,6 +241,9 @@ class CardGrid : public pu::ui::elm::Element {
             }
             if (c.ch_tex) {
                 pu::ui::render::DeleteTexture(c.ch_tex);
+            }
+            if (c.ch2_tex) {
+                pu::ui::render::DeleteTexture(c.ch2_tex);
             }
             if (c.f_tex) {
                 pu::ui::render::DeleteTexture(c.f_tex);
@@ -669,6 +683,16 @@ class CardGrid : public pu::ui::elm::Element {
         }
     }
 
+    // Queue cards: same tall row height as poster mode, without poster's
+    // box-art/marquee behavior. See queue_tall.
+    void SetQueueTall(const bool on) {
+        if (this->queue_tall != on) {
+            this->queue_tall = on;
+            this->dirty = true;
+            this->tiles_dirty = true;
+        }
+    }
+
     // True if queue card i could be on screen (one row of margin). Lets the
     // caller skip building off-screen cards' text every frame — the queue tick
     // otherwise formats every item (incl. completed/off-screen) per frame.
@@ -696,13 +720,14 @@ class CardGrid : public pu::ui::elm::Element {
         this->sel = 0;
         this->scroll_row = 0;
         this->single = false;
-        // Every screen but Installed's game list wants the plain 4-wide
-        // grid; resetting here means only that one screen has to opt back
-        // into SetCols/SetPoster each time it rebuilds, instead of every
-        // other card screen having to opt out.
-        if (this->Cols != 4 || this->poster) {
+        // Every screen but Installed's game list (and Queue) wants the plain
+        // 4-wide grid; resetting here means only those screens have to opt
+        // back into SetCols/SetPoster/SetQueueTall each time they rebuild,
+        // instead of every other card screen having to opt out.
+        if (this->Cols != 4 || this->poster || this->queue_tall) {
             this->Cols = 4;
             this->poster = false;
+            this->queue_tall = false;
             this->tiles_dirty = true;
         }
         // The fade re-renders the whole grid for ~8 frames, which stutters
@@ -804,15 +829,19 @@ class CardGrid : public pu::ui::elm::Element {
             cd.st_clr = st_clr;
             this->UpdText(ce.st_tex, ce.stw, ce.sth, cd.status, status,
                           st_font, st_clr, (u32)(cw / 2 - 20), recolor);
-            // size / speed / eta join into one pill, like the list view's chip.
-            std::string chip = size;
-            if (!speed.empty()) {
-                chip += (chip.empty() ? "" : " · ") + speed;
-            }
+            // Two-line pill: size (now/total while a transfer is active) on
+            // its own line, speed · eta joined on the line below. Used to be
+            // one "size · speed · eta" line, but that didn't fit once queue
+            // cards went narrower to match the poster grid's 6-wide cards —
+            // the extra row height freed up by going taller at the same time
+            // is exactly what the second line uses.
+            this->UpdText(ce.ch_tex, ce.chw, ce.chh, cd.chip, size, txt_font,
+                          this->sub_clr, (u32)(cw - 48));
+            std::string chip2 = speed;
             if (!eta.empty()) {
-                chip += (chip.empty() ? "" : " · ") + eta;
+                chip2 += (chip2.empty() ? "" : " · ") + eta;
             }
-            this->UpdText(ce.ch_tex, ce.chw, ce.chh, cd.chip, chip,
+            this->UpdText(ce.ch2_tex, ce.ch2w, ce.ch2h, cd.chip2, chip2,
                           txt_font, this->sub_clr, (u32)(cw - 48));
         }
         // Queue-position badge ("#2") for waiting cards.
@@ -1024,13 +1053,25 @@ class CardGrid : public pu::ui::elm::Element {
                 }
             }
             if (qc.ch_tex) {
-                s32 sx = cx + (scw - qc.chw) / 2;
-                const s32 padx = 14, pady = 5;
+                // Two-line pill: size on top, speed · eta below -- each line
+                // centred independently since they're rarely the same width.
+                const s32 padx = 14, pady = 5, gap = 14;
+                s32 blockw = qc.chw;
+                if (qc.ch2_tex && qc.ch2w > blockw) {
+                    blockw = qc.ch2w;
+                }
+                s32 blockh = qc.chh + (qc.ch2_tex ? gap + qc.ch2h : 0);
+                s32 by0 = cy + chip_y;
                 drawer->RenderRoundedRectangleFill(
-                    this->pill_clr, sx - padx, cy + chip_y - pady,
-                    qc.chw + 2 * padx, qc.chh + 2 * pady,
+                    this->pill_clr, cx + (scw - blockw) / 2 - padx,
+                    by0 - pady, blockw + 2 * padx, blockh + 2 * pady,
                     (qc.chh + 2 * pady) / 2);
-                drawer->RenderTexture(qc.ch_tex, sx, cy + chip_y);
+                drawer->RenderTexture(qc.ch_tex, cx + (scw - qc.chw) / 2, by0);
+                if (qc.ch2_tex) {
+                    drawer->RenderTexture(qc.ch2_tex,
+                                          cx + (scw - qc.ch2w) / 2,
+                                          by0 + qc.chh + gap);
+                }
             }
             if (cd.prog >= 0.0f) {
                 this->DrawRing(drawer, cx, cy, scw, sch, rad, 5, 8, cd.prog,
@@ -1170,13 +1211,20 @@ class CardGrid : public pu::ui::elm::Element {
                                               cx + cw - 20 - qc.stw, cy + 16);
                     }
                     // Icon in the exact browse-card spot: same size, same
-                    // grow-upward and green glow bloom on selection.
+                    // grow-upward and green glow bloom on selection. Tall
+                    // queue cards push it well down from the top edge (was
+                    // flush at 10px, which read as crowded once the row grew
+                    // to poster height) -- the freed space above then lets
+                    // the filename/chip block below sit with tighter, less
+                    // scattered gaps instead of one big empty band before the
+                    // chip and another after it.
+                    const s32 icon_top = this->queue_tall ? 70 : 10;
                     if (cd.icon) {
                         s32 isz = IconPx;
                         if (selected) {
                             isz += (10 * this->sel_alpha) / 255;
                             s32 gcx = cx + cw / 2;
-                            s32 gcy = cy + 10 + IconPx / 2;
+                            s32 gcy = cy + icon_top + IconPx / 2;
                             for (s32 g = 0; g < 4; g++) {
                                 auto gc = this->glow_clr;
                                 gc.a = (u8)((14 + 5 * g) * this->sel_alpha /
@@ -1201,7 +1249,7 @@ class CardGrid : public pu::ui::elm::Element {
                         // instead of stretching -- covers are commonly
                         // portrait (taller than wide), and a hardcoded square
                         // stretch squashed them.
-                        s32 slot_top = cy + 10 - (isz - IconPx);
+                        s32 slot_top = cy + icon_top - (isz - IconPx);
                         // The app-logo texture (HaulNX self-update card) and
                         // real box art both lack baked-in padding, but the
                         // logo is a simple square mark that reads fine much
@@ -1240,10 +1288,15 @@ class CardGrid : public pu::ui::elm::Element {
                         drawer->RenderTexture(
                             cd.icon, cx + (cw - draw_w) / 2, draw_y, o);
                     }
-                    // Filename under the icon, up to two wrapped lines, with
-                    // clear air above the pill below it.
+                    // Filename under the icon, up to two wrapped lines, sitting
+                    // close under it -- tall cards' icon moved down (icon_top
+                    // above) already carved out the row's extra height, so
+                    // this gap stays tight rather than stacking more air here
+                    // too.
                     if (qc.f_tex) {
-                        s32 fy = qc.f2_tex ? cy + 152 : cy + 166;
+                        s32 fy = this->queue_tall
+                                     ? (qc.f2_tex ? cy + 232 : cy + 246)
+                                     : (qc.f2_tex ? cy + 152 : cy + 166);
                         drawer->RenderTexture(qc.f_tex, cx + (cw - qc.fw) / 2,
                                               fy);
                         if (qc.f2_tex) {
@@ -1252,27 +1305,50 @@ class CardGrid : public pu::ui::elm::Element {
                                                   fy + qc.fh + 2);
                         }
                     }
-                    // size · speed · eta as one pill along the bottom.
+                    // Pill: size on top, speed · eta below it when present --
+                    // two lines now that queue cards are narrower (6-wide,
+                    // matching the poster grid); previously one "size · speed
+                    // · eta" line, which no longer fit at this width. chip_y
+                    // is unchanged from the original tall layout, but the
+                    // filename above now sits lower (see icon_top), so the
+                    // gap above this pill shrank along with it instead of
+                    // needing a separate adjustment here.
+                    const s32 chip_y = this->queue_tall ? cy + 300 : cy + 222;
                     if (qc.ch_tex) {
-                        s32 sx = cx + (cw - qc.chw) / 2;
-                        const s32 padx = 12, pady = 4;
+                        // Wider gap between the two pill lines than a normal
+                        // text line-gap (4px elsewhere) so "size" and "speed ·
+                        // eta" read as two distinct facts, not a wrapped
+                        // paragraph -- also what pulls line 2's bottom margin
+                        // in from the tall card's edge.
+                        const s32 padx = 12, pady = 4, gap = 14;
+                        s32 blockw = qc.chw;
+                        if (qc.ch2_tex && qc.ch2w > blockw) {
+                            blockw = qc.ch2w;
+                        }
+                        s32 blockh = qc.chh + (qc.ch2_tex ? gap + qc.ch2h : 0);
                         drawer->RenderRoundedRectangleFill(
-                            this->pill_clr, sx - padx, cy + 222 - pady,
-                            qc.chw + 2 * padx, qc.chh + 2 * pady,
-                            (qc.chh + 2 * pady) / 2);
-                        drawer->RenderTexture(qc.ch_tex, sx, cy + 222);
+                            this->pill_clr, cx + (cw - blockw) / 2 - padx,
+                            chip_y - pady, blockw + 2 * padx,
+                            blockh + 2 * pady, (qc.chh + 2 * pady) / 2);
+                        drawer->RenderTexture(qc.ch_tex,
+                                              cx + (cw - qc.chw) / 2, chip_y);
+                        if (qc.ch2_tex) {
+                            drawer->RenderTexture(
+                                qc.ch2_tex, cx + (cw - qc.ch2w) / 2,
+                                chip_y + qc.chh + gap);
+                        }
                     }
                     // Queue-position badge, tucked into the bottom-left
-                    // corner on the chip line (waiting cards' chips are
-                    // short, so the centred pill never reaches it).
+                    // corner level with the chip's top line (waiting cards
+                    // have no chip content, so it never collides with one).
                     if (qc.qp_tex) {
                         const s32 padx = 8, pady = 3;
                         drawer->RenderRoundedRectangleFill(
-                            this->pill_clr, cx + 14, cy + 222 - pady,
+                            this->pill_clr, cx + 14, chip_y - pady,
                             qc.qpw + 2 * padx, qc.qph + 2 * pady,
                             (qc.qph + 2 * pady) / 2);
                         drawer->RenderTexture(qc.qp_tex, cx + 14 + padx,
-                                              cy + 222);
+                                              chip_y);
                     }
                     if (cd.prog >= 0.0f) {
                         this->DrawRing(drawer, cx, cy, cw, ch, CardRadius,

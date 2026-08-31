@@ -59,6 +59,52 @@ int updman_parse_buf(const char *buf, size_t len, UpdSource *out, int max) {
     return parse_sources(buf, len, out, max);
 }
 
+/* Merge the bundled romfs manifest into an already-loaded on-disk one: a
+ * bundled id absent locally is appended, and a local row whose repo is still
+ * blank gets repo/asset filled from the bundled row. A local row with its own
+ * repo already set is never touched -- shipping corrected/expanded defaults
+ * in a later HaulNX release must not clobber a user's own configuration.
+ * Returns true if anything changed (caller should persist). */
+static bool reconcile_bundled(UpdSource *out, int *count, int max) {
+    size_t blen = 0;
+    char *bjs = json_read_file("romfs:/update_sources.json", &blen);
+    if (!bjs) {
+        return false;
+    }
+    UpdSource *bundled = (UpdSource *)malloc(sizeof(UpdSource) * UPD_MAX);
+    if (!bundled) {
+        free(bjs);
+        return false;
+    }
+    int bn = parse_sources(bjs, blen, bundled, UPD_MAX);
+    free(bjs);
+
+    bool changed = false;
+    for (int i = 0; i < bn; i++) {
+        int found = -1;
+        for (int j = 0; j < *count; j++) {
+            if (strcasecmp(out[j].id, bundled[i].id) == 0) {
+                found = j;
+                break;
+            }
+        }
+        if (found < 0) {
+            if (*count >= max) {
+                continue;
+            }
+            out[*count] = bundled[i];
+            (*count)++;
+            changed = true;
+        } else if (!out[found].repo[0] && bundled[i].repo[0]) {
+            snprintf(out[found].repo, sizeof(out[found].repo), "%s", bundled[i].repo);
+            snprintf(out[found].asset, sizeof(out[found].asset), "%s", bundled[i].asset);
+            changed = true;
+        }
+    }
+    free(bundled);
+    return changed;
+}
+
 int updman_load(UpdSource *out, int max) {
     if (!out || max <= 0) {
         return 0;
@@ -78,9 +124,17 @@ int updman_load(UpdSource *out, int max) {
             fwrite(js, 1, len, f);
             fclose(f);
         }
+        int n = parse_sources(js, len, out, max);
+        free(js);
+        return n;
     }
     int n = parse_sources(js, len, out, max);
     free(js);
+    /* Returning user: pick up any ids/repos added or filled in since their
+     * on-disk copy was seeded, without disturbing their own edits. */
+    if (reconcile_bundled(out, &n, max)) {
+        updman_save(out, n);
+    }
     return n;
 }
 
