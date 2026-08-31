@@ -1642,9 +1642,23 @@ static void inst_dir_stats(const std::string &path, int *count,
     // without changing mtime was already the one gap the old comment noted
     // ("a same-size rename leaves a stale-but-correct size"), so this trades
     // nothing new away.
+    int cached_count = (it != g_inst_stat.end())
+                     ? (g_prefs.group_sets ? it->second.games : it->second.imm)
+                     : -1;
     if (it != g_inst_stat.end() && it->second.mtime == mt &&
-        (!g_prefs.group_sets || it->second.games >= 0)) {
-        *count = g_prefs.group_sets ? it->second.games : it->second.imm;
+        (!g_prefs.group_sets || it->second.games >= 0) &&
+        // A cached zero is trusted only after a live recheck: a folder
+        // seeded empty at first visit (e.g. a console folder created at
+        // startup with nothing in it yet) gets cached that way, and a later
+        // download landing inside it doesn't reliably bump the directory's
+        // own mtime on every write path here -- observed on hardware as a
+        // console showing 0 apps in Library while the same folder's count
+        // elsewhere (recomputed fresh, uncached) was correct. Re-reading an
+        // empty directory costs one cheap readdir, so always paying it when
+        // the cache claims "empty" is free insurance against a folder that
+        // looks like it lost its games.
+        cached_count != 0) {
+        *count = cached_count;
         *size = it->second.size;
         if (raw_out) *raw_out = it->second.imm;
         return;
@@ -3447,8 +3461,20 @@ void MainApplication::GotoHome() {
         for (const auto &row : rows) {
             int rc = g_cfg.consoles[row.idx].repo_count;
             char rdir[1200];
-            snprintf(rdir, sizeof(rdir), "%s/%s",
-                     roms_root(&g_tico), g_cfg.consoles[row.idx].target);
+            const char *custom = install_folder_for(g_cfg.consoles[row.idx].target);
+            if (custom[0]) {
+                // A console redirected to a custom install folder keeps its
+                // games there, not under the default ROM root — counting the
+                // default path here would always read an empty (or stale)
+                // folder and show 0 apps even though Library sees the real
+                // content, since GotoInstalled's root listing already
+                // resolves this same override (see the custom-folder rows
+                // built there).
+                snprintf(rdir, sizeof(rdir), "%s", custom);
+            } else {
+                snprintf(rdir, sizeof(rdir), "%s/%s",
+                         roms_root(&g_tico), g_cfg.consoles[row.idx].target);
+            }
             // Games rather than files, to agree with the Library chips. Home
             // re-renders on every tab switch (including a plain L/R cycle),
             // so this is cached by folder mtime and only re-walks a console
@@ -5364,7 +5390,23 @@ void MainApplication::InvJsonStepConsole() {
     std::vector<DirEnt> dents = list_dir(dir);
     for (const auto &e : dents) {
         if (e.is_dir) {
-            continue; // list the games, not any nested folders
+            // Some formats ship a game as a folder tree rather than a flat
+            // file (PS Vita's NoNpDRM dumps, arbitrary internal layout) --
+            // list it as one entry with "dir": true and its recursive size
+            // so the companion can see, push, and delete it as a single
+            // game, same as the Installed browser already does for a
+            // top-level folder. Not folded into "sets" below: that's for
+            // multi-file games sitting loose in this same folder (cue+bin),
+            // and a directory is already one atomic unit on its own.
+            int gcount = 0;
+            uint64_t gbytes = 0;
+            inst_dir_stats(dir + "/" + e.name, &gcount, &gbytes);
+            fputs(first ? "\n        {\"name\": " : ",\n        {\"name\": ", f);
+            first = false;
+            json_write_escaped(f, e.name.c_str());
+            fprintf(f, ", \"size\": %llu, \"dir\": true}",
+                    (unsigned long long)gbytes);
+            continue;
         }
         fputs(first ? "\n        {\"name\": " : ",\n        {\"name\": ", f);
         first = false;
@@ -12616,10 +12658,16 @@ void MainApplication::GotoInstalled(const std::string &path) {
                                    ? console_full_name(e.name.c_str())
                                    : nullptr;
             bool ic_is_art = false;
-            pu::sdl2::Texture ic = (path == roms_root(&g_tico))
-                                       ? console_display_icon(e.name.c_str(),
-                                                              &ic_is_art)
-                                       : nullptr;
+            // At the root, `e.name` IS the console id, so its own icon
+            // applies directly. A subfolder inside a console (e.g. a
+            // folder-bundled game, PS Vita's .vpk + data-folder layout)
+            // isn't a console itself -- it has no icon of its own to look
+            // up, so it falls back to the *owning* console's icon (`cons`,
+            // resolved above) the same way a loose game file with no cover
+            // of its own does just below, rather than going iconless.
+            pu::sdl2::Texture ic = console_display_icon(
+                (path == roms_root(&g_tico)) ? e.name.c_str() : cons.c_str(),
+                &ic_is_art);
             if (cards) {
                 // Card: full name title (wrappable) + size/app count beneath.
                 this->layout->AddCard(full ? full : e.name.c_str(), card_sub,
@@ -12667,13 +12715,21 @@ void MainApplication::GotoInstalled(const std::string &path) {
         pu::sdl2::Texture ic2 = nullptr;
         bool has_cover = boxart_row_icon(t, &ic2);
         if (cards) {
-            // Poster card: the real cover if it's already decoded, else the
-            // console icon centred as a placeholder (CardGrid's Card::art
-            // picks stretch-fill vs centred-natural-size between the two).
+            // Poster card: the real cover if it's already decoded, else
+            // whatever console_display_icon falls back to -- which is
+            // itself real box art (fill-width, CardGrid's Card::art) when
+            // the console opted into a custom cover, not just the stock
+            // badge. Losing that distinction here (the old `ic2 != nullptr`
+            // art flag ignored the fallback entirely) meant a game with no
+            // cover of its own rendered the console's own art through the
+            // small centred-icon path instead of matching how that same
+            // art fills the console's own card at the Library root.
+            bool fallback_is_art = false;
+            pu::sdl2::Texture fallback =
+                ic2 ? nullptr : console_display_icon(cons.c_str(), &fallback_is_art);
             s32 idx = this->layout->RowCount();
-            this->layout->AddCard(e.name, sub,
-                                  ic2 ? ic2 : console_display_icon(cons.c_str()),
-                                  false, false, ic2 != nullptr);
+            this->layout->AddCard(e.name, sub, ic2 ? ic2 : fallback, false,
+                                  false, ic2 != nullptr || fallback_is_art);
             if (has_cover && !ic2) this->boxart_pending.push_back({idx, t});
         } else {
             s32 row_idx = this->layout->RowCount();
