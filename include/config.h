@@ -353,6 +353,14 @@ const char *config_console_folder(SourcesConfig *cfg, const char *target);
  * existing one), or NULL if full. */
 ConsoleGroup *config_add_console(SourcesConfig *cfg, const char *name);
 
+/* Browse/Installed visibility `name` would get if seeded fresh right now (the
+ * same console_hidden_by_default()/console_is_new() rules seed_console_groups
+ * uses). Lets Settings -> Manage consoles' "Restore to default" bulk action
+ * reset a console without duplicating those rules outside config.c. Either
+ * out pointer may be NULL. */
+void config_console_default_vis(const char *name, bool *shown,
+                                bool *shown_installed);
+
 /* Remove the console group at index idx (and its repos). Returns true if removed. */
 bool config_remove_console(SourcesConfig *cfg, int idx);
 

@@ -1675,6 +1675,35 @@ static void inst_dir_stats(const std::string &path, int *count,
     *count = games >= 0 ? games : imm;
     *size = sz;
 }
+// Same idea as inst_home_count_peek: the last count/size this folder resolved
+// to, straight from the (disk-persisted, see inst_stat_load) cache -- no
+// stat() call. GotoInstalled's root view used to call inst_dir_stats() (a
+// stat() per console folder as its "cheap check", even on a hit) directly
+// while building the console list, once per shown console on every visit to
+// the Library tab. Since g_inst_stat survives across launches, this hits on
+// every visit after the very first one ever for a given folder; the caller
+// queues a miss (or any peek, to catch a change made since the app opened)
+// onto InstRootCountsPoll to revalidate for real, off the screen-build path.
+static bool inst_dir_stats_peek(const std::string &path, int *count,
+                                uint64_t *size) {
+    auto it = g_inst_stat.find(path);
+    if (it == g_inst_stat.end() ||
+        (g_prefs.group_sets && it->second.games < 0)) {
+        return false;
+    }
+    int cached_count = g_prefs.group_sets ? it->second.games : it->second.imm;
+    // Mirror inst_dir_stats's own "cached zero" carve-out: a folder cached
+    // empty is only trusted after a live recheck there (a fresh download can
+    // land without reliably bumping the directory's mtime — see its
+    // comment), so treat it as a miss here too rather than have the peek
+    // path silently reintroduce the stuck-at-zero bug that fix closed.
+    if (cached_count == 0) {
+        return false;
+    }
+    *count = cached_count;
+    *size = it->second.size;
+    return true;
+}
 
 // Home-tab console chips need a rough game/file count for every shown
 // console on every visit — including a plain L/R tab cycle, not just an
@@ -1711,6 +1740,26 @@ static int inst_home_count(const std::string &path) {
     int n = grouped ? inst_group_row_count(path) : count_dir_entries(path);
     g_home_count_cache[path] = {mt, grouped, n};
     return n;
+}
+// Whatever count this folder last resolved to, with no stat() of its own --
+// GotoHome's per-console loop used to call inst_home_count() (one stat() per
+// shown console, every tab switch, even a plain L/R cycle) directly at build
+// time. With every-console-shown setups (e.g. all ~60 stock consoles visible
+// with only a handful holding games) that's dozens of FS IPC round trips
+// blocking the screen build on every single visit -- the actual cost behind
+// "switching to Home/Installed feels slow" reports, confirmed unrelated to
+// icons or card-vs-list view since both paths share this same per-console
+// loop. Returns false on a cold cache (nothing computed yet this session --
+// g_home_count_cache, unlike g_inst_stat, isn't persisted to disk) so the
+// caller can paint without a count chip and queue the row for
+// HomeCountsPoll to fill in a frame or two later, off the tab-switch path.
+static bool inst_home_count_peek(const std::string &path, int *n) {
+    auto it = g_home_count_cache.find(path);
+    if (it == g_home_count_cache.end() || it->second.grouped != g_prefs.group_sets) {
+        return false;
+    }
+    *n = it->second.n;
+    return true;
 }
 
 static std::vector<DirEnt> list_dir(const std::string &path) {
@@ -2517,6 +2566,9 @@ void MainLayout::SetCardCols(s32 n) { this->grid->SetCols(n); }
 void MainLayout::SetCardPoster(bool on) { this->grid->SetPoster(on); }
 void MainLayout::SetCardIcon(s32 i, pu::sdl2::Texture icon) {
     this->grid->SetCardIcon(i, icon);
+}
+void MainLayout::SetCardSubtitle(s32 i, const std::string &subtitle) {
+    this->grid->SetCardSubtitle(i, subtitle);
 }
 s32 MainLayout::CardFirstVisible() { return this->grid->FirstVisibleCard(); }
 s32 MainLayout::CardVisibleCount() { return this->grid->VisibleCardCount(); }
@@ -3458,6 +3510,17 @@ void MainApplication::GotoHome() {
                       return strcasecmp(a.label.c_str(), b.label.c_str()) < 0;
                   });
         g_home_map.clear();
+        // Stale indices from whatever Home build was showing before —
+        // HomeCountsPoll must not resolve against the list being rebuilt.
+        this->home_count_pending.clear();
+        // Set now rather than after the loop (the older pattern, still used
+        // below for the empty-list case) so RowCount() inside the loop
+        // already reads the grid, not the still-empty list — HomeCountsPoll
+        // needs each card's real future index the same way BoxArtIconsPoll's
+        // queue does at GotoInstalled's poster loop (see its own comment).
+        if (cards && !rows.empty()) {
+            this->layout->SetCardsMode(true);
+        }
         for (const auto &row : rows) {
             int rc = g_cfg.consoles[row.idx].repo_count;
             char rdir[1200];
@@ -3475,20 +3538,25 @@ void MainApplication::GotoHome() {
                 snprintf(rdir, sizeof(rdir), "%s/%s",
                          roms_root(&g_tico), g_cfg.consoles[row.idx].target);
             }
-            // Games rather than files, to agree with the Library chips. Home
-            // re-renders on every tab switch (including a plain L/R cycle),
-            // so this is cached by folder mtime and only re-walks a console
-            // folder when it actually changed — see inst_home_count.
-            int fc = inst_home_count(rdir);
             char cnt[96];
             char rc_str[32], fc_str[32];
             snprintf(rc_str, sizeof(rc_str), tr(S_N_REPOS), rc);
-            if (fc > 0) {
+            // Games rather than files, to agree with the Library chips. Home
+            // re-renders on every tab switch (including a plain L/R cycle);
+            // an all-consoles-shown setup pays a stat() per shown console on
+            // every single one of those if resolved right here (see
+            // inst_home_count_peek), so a cache miss shows the repo count
+            // alone for now and queues the row for HomeCountsPoll to fill in
+            // a frame or two later instead of blocking this build.
+            int fc = 0;
+            bool have_fc = inst_home_count_peek(rdir, &fc);
+            if (have_fc && fc > 0) {
                 snprintf(fc_str, sizeof(fc_str), tr(S_N_APPS), fc);
                 snprintf(cnt, sizeof(cnt), "%s · %s", rc_str, fc_str);
             } else {
                 snprintf(cnt, sizeof(cnt), "%s", rc_str);
             }
+            s32 row_idx = this->layout->RowCount();
             if (cards) {
                 // Card: full name as the (wrappable) title; counts beneath.
                 const char *cname = g_cfg.consoles[row.idx].console;
@@ -3502,6 +3570,9 @@ void MainApplication::GotoHome() {
                     row.label, cnt, g_theme->row_text, count_color(), -1.0f,
                     console_display_icon(g_cfg.consoles[row.idx].console), "",
                     false, true, row.pinned);
+            }
+            if (!have_fc) {
+                this->home_count_pending.push_back({row_idx, rdir, rc_str});
             }
             g_home_map.push_back(row.idx);
         }
@@ -11519,6 +11590,64 @@ void MainApplication::GotoManage() {
     }
 }
 
+// Y on Manage consoles: bulk-set every console's visibility in one shot
+// instead of cycling each row by hand. "Restore to default" re-derives each
+// console's as-shipped state from config_console_default_vis() rather than a
+// single fixed value, since niche/post-launch consoles ship hidden while the
+// original launch set ships shown (see console_hidden_by_default/
+// console_is_new in config.c).
+void MainApplication::ManageConsolesBulkMenu() {
+    enum {
+        ACT_HIDE_ALL,
+        ACT_SHOW_ALL,
+        ACT_SHOW_LIBRARY_ONLY,
+        ACT_SHOW_ADD_ONLY,
+        ACT_RESTORE_DEFAULT,
+        ACT_CANCEL
+    };
+    std::vector<std::string> opts = {
+        tr(S_MANAGE_HIDE_ALL),          tr(S_MANAGE_SHOW_ALL),
+        tr(S_MANAGE_SHOW_LIBRARY_ONLY), tr(S_MANAGE_SHOW_ADD_ONLY),
+        tr(S_MANAGE_RESTORE_DEFAULT),   tr(S_CANCEL),
+    };
+    int r = this->CreateShowDialog(tr(S_MANAGE_OPTIONS), "", opts, false, {},
+                                   style_dialog);
+    if (r < 0 || r == ACT_CANCEL) return;
+
+    for (int i = 0; i < g_cfg.console_count; i++) {
+        ConsoleGroup &g = g_cfg.consoles[i];
+        switch (r) {
+        case ACT_HIDE_ALL:
+            g.shown = false;
+            g.shown_installed = false;
+            break;
+        case ACT_SHOW_ALL:
+            g.shown = true;
+            g.shown_installed = true;
+            break;
+        case ACT_SHOW_LIBRARY_ONLY:
+            g.shown = false;
+            g.shown_installed = true;
+            break;
+        case ACT_SHOW_ADD_ONLY:
+            g.shown = true;
+            g.shown_installed = false;
+            break;
+        case ACT_RESTORE_DEFAULT:
+            config_console_default_vis(g.console, &g.shown, &g.shown_installed);
+            break;
+        default:
+            break;
+        }
+    }
+    config_save(&g_cfg);
+    int n = g_cfg.console_count;
+    this->GotoManage();
+    char msg[96];
+    snprintf(msg, sizeof(msg), tr(S_MANAGE_BULK_DONE), n);
+    this->Toast(msg);
+}
+
 void MainApplication::GotoCreds() {
     this->screen = Screen::Creds;
     this->layout->SetTitle(tr(S_TITLE_CREDS));
@@ -11972,8 +12101,8 @@ bool MainApplication::ConsoleOptionsMenu(s32 i) {
         title,
         {tr(S_CONSOLE_ART), tr(S_INSTALL_FOLDER), tr(S_CONSOLE_INFO),
          tr(S_RECEIVE_FROM_PC), tr(S_TIDY_CONSOLE),
-         pinned ? tr(S_UNPIN) : tr(S_PIN), tr(S_VERIFY_DAT),
-         tr(S_HAVE_MISSING), tr(S_SCAN_BOX_ART_CONSOLE)},
+         pinned ? tr(S_UNPIN) : tr(S_PIN), tr(S_HIDE_FROM_PAGE),
+         tr(S_VERIFY_DAT), tr(S_HAVE_MISSING), tr(S_SCAN_BOX_ART_CONSOLE)},
         0, "", false, /*from_left=*/false,
         console_display_icon(g_inst[i].name.c_str()), nullptr,
         HidNpadButton_Y); // Y → global Tools panel
@@ -12001,18 +12130,28 @@ bool MainApplication::ConsoleOptionsMenu(s32 i) {
                 break;
             }
         }
-    } else if (r == 6) { // Verify Files (against the console's DAT)
+    } else if (r == 6) { // Hide from this page (Library/Installed only --
+                         // shown, the Collections/Browse side, is untouched;
+                         // if that's already off too this naturally lands
+                         // on console_vis_state's VIS_HIDDEN).
+        if (g) {
+            g->shown_installed = false;
+            config_save(&g_cfg);
+        }
+        this->GotoInstalled(this->inst_path);
+        this->layout->SetSel(i);
+    } else if (r == 7) { // Verify Files (against the console's DAT)
         // Verify the folder the console actually installs into: a custom
         // per-console folder (when on) or the default <root>/<target>.
         // g_inst[i].path already resolves this — custom-folder rows are
         // synthesised pointing at it.
         this->VerifyStart(inst_entry_path(this->inst_path, g_inst[i]),
                           g ? g->target : g_inst[i].name, title);
-    } else if (r == 7) { // Missing Games (verify, then open the missing list)
+    } else if (r == 8) { // Missing Games (verify, then open the missing list)
         this->VerifyStart(inst_entry_path(this->inst_path, g_inst[i]),
                           g ? g->target : g_inst[i].name, title, false,
                           /*goto_missing=*/true);
-    } else if (r == 8) { // Scan for Box Art, limited to this console
+    } else if (r == 9) { // Scan for Box Art, limited to this console
         if (g_creds.steamgriddb_key[0]) {
             this->BoxArtScanStart(g ? g->target : g_inst[i].name,
                                   inst_entry_path(this->inst_path, g_inst[i]));
@@ -12448,6 +12587,7 @@ void MainApplication::GotoInstalled(const std::string &path) {
     // Stale row indices from whatever folder was open before — BoxArtIconsPoll
     // must not resolve against the list being rebuilt below.
     this->boxart_pending.clear();
+    this->inst_count_pending.clear(); // ditto for InstRootCountsPoll
     inst_stat_load(); // warm the folder-size cache from disk (once per session)
     g_inst = list_dir(path);
     bool is_root = (path == roms_root(&g_tico));
@@ -12635,21 +12775,29 @@ void MainApplication::GotoInstalled(const std::string &path) {
         if (e.is_dir) {
             int n = 0;
             uint64_t bytes = 0;
-            inst_dir_stats(inst_entry_path(path, e), &n, &bytes);
-            char cnt[32];
-            snprintf(cnt, sizeof(cnt), tr(S_N_APPS), n);
+            std::string dir_path = inst_entry_path(path, e);
             // Chip text with the folder's total size: cards lead with the
             // size ("1.2 GB · 12 apps"), rows append it ("12 apps · 1.2 GB"),
-            // both dot-joined like the Browse tab's chips.
-            char card_sub[64], row_sub[64];
-            if (bytes > 0) {
-                snprintf(card_sub, sizeof(card_sub), "%s · %s",
-                         human_size(bytes).c_str(), cnt);
-                snprintf(row_sub, sizeof(row_sub), "%s · %s", cnt,
-                         human_size(bytes).c_str());
-            } else {
-                snprintf(card_sub, sizeof(card_sub), "%s", cnt);
-                snprintf(row_sub, sizeof(row_sub), "%s", cnt);
+            // both dot-joined like the Browse tab's chips. A peek miss (see
+            // inst_dir_stats_peek) leaves both blank for now instead of
+            // paying a stat() right here -- an all-consoles-shown Library
+            // root would otherwise sweep one per shown console on every
+            // single visit to this screen; InstRootCountsPoll fills the chip
+            // in a frame or two after the row is actually on screen.
+            bool have_stats = inst_dir_stats_peek(dir_path, &n, &bytes);
+            char card_sub[64] = "", row_sub[64] = "";
+            if (have_stats) {
+                char cnt[32];
+                snprintf(cnt, sizeof(cnt), tr(S_N_APPS), n);
+                if (bytes > 0) {
+                    snprintf(card_sub, sizeof(card_sub), "%s · %s",
+                             human_size(bytes).c_str(), cnt);
+                    snprintf(row_sub, sizeof(row_sub), "%s · %s", cnt,
+                             human_size(bytes).c_str());
+                } else {
+                    snprintf(card_sub, sizeof(card_sub), "%s", cnt);
+                    snprintf(row_sub, sizeof(row_sub), "%s", cnt);
+                }
             }
             std::string label;
             bool pinned = path == roms_root(&g_tico) &&
@@ -12668,10 +12816,14 @@ void MainApplication::GotoInstalled(const std::string &path) {
             pu::sdl2::Texture ic = console_display_icon(
                 (path == roms_root(&g_tico)) ? e.name.c_str() : cons.c_str(),
                 &ic_is_art);
+            s32 dir_row_idx = this->layout->RowCount();
             if (cards) {
                 // Card: full name title (wrappable) + size/app count beneath.
                 this->layout->AddCard(full ? full : e.name.c_str(), card_sub,
                                       ic, pinned, false, ic_is_art);
+                if (!have_stats) {
+                    this->inst_count_pending.push_back({dir_row_idx, dir_path, ""});
+                }
                 continue;
             }
             if (full) {
@@ -12681,6 +12833,9 @@ void MainApplication::GotoInstalled(const std::string &path) {
                 label = clbl;
             } else {
                 label += e.name;
+            }
+            if (!have_stats) {
+                this->inst_count_pending.push_back({dir_row_idx, dir_path, ""});
             }
             {
                 this->layout->AddRow2(label, row_sub, g_theme->row_text,
@@ -14358,6 +14513,95 @@ void MainApplication::BoxArtIconsPoll() {
     }
 }
 
+// Same lazy-resolve pattern as BoxArtIconsPoll, for the "N apps" chip
+// GotoHome's grouped view defers when inst_home_count_peek misses a cold
+// cache entry (see its comment) -- resolves a handful of the currently-
+// visible pending rows per frame via the real, stat()-gated inst_home_count,
+// and patches the row/card's count text in place. A stat() is far cheaper
+// than a PNG decode, hence the larger per-frame budget than BoxArtIconsPoll.
+void MainApplication::HomeCountsPoll() {
+    if (this->home_count_pending.empty() || this->screen != Screen::Home) {
+        return;
+    }
+    static const int kMaxPerFrame = 8;
+    const bool cards = this->layout->InCards();
+    s32 top = cards ? this->layout->CardFirstVisible() : this->layout->ScrollTop();
+    s32 bottom = top + (cards ? this->layout->CardVisibleCount()
+                              : this->layout->RowsVisible());
+    int resolved = 0;
+    for (size_t i = 0; i < this->home_count_pending.size() && resolved < kMaxPerFrame;) {
+        s32 idx = this->home_count_pending[i].idx;
+        if (idx < top || idx >= bottom) {
+            i++; // not on screen yet -- leave queued, check the next one
+            continue;
+        }
+        int fc = inst_home_count(this->home_count_pending[i].path);
+        std::string cnt = this->home_count_pending[i].prefix;
+        if (fc > 0) {
+            char fc_str[32];
+            snprintf(fc_str, sizeof(fc_str), tr(S_N_APPS), fc);
+            cnt += std::string(" · ") + fc_str;
+        }
+        if (cards) {
+            this->layout->SetCardSubtitle(idx, cnt);
+        } else {
+            this->layout->SetRowRight(idx, cnt, count_color());
+        }
+        this->home_count_pending.erase(this->home_count_pending.begin() + i);
+        resolved++;
+        // don't advance i -- the erase shifted the next element into place
+    }
+}
+
+// Installed-tab counterpart of HomeCountsPoll: GotoInstalled's root view
+// (console folders) defers the "N apps · size" chip the same way when
+// inst_dir_stats_peek misses -- see its comment for why a synchronous
+// stat() per shown console made switching to the Library tab slow on an
+// all-consoles-shown setup. Resolves via the real inst_dir_stats, which
+// on a genuine cache miss also pays the recursive size walk -- still
+// spread one folder at a time across frames rather than all at once.
+void MainApplication::InstRootCountsPoll() {
+    if (this->inst_count_pending.empty() || this->screen != Screen::Installed) {
+        return;
+    }
+    static const int kMaxPerFrame = 4; // a cold miss here can recurse a whole folder
+    const bool cards = this->layout->InCards();
+    s32 top = cards ? this->layout->CardFirstVisible() : this->layout->ScrollTop();
+    s32 bottom = top + (cards ? this->layout->CardVisibleCount()
+                              : this->layout->RowsVisible());
+    int resolved = 0;
+    for (size_t i = 0; i < this->inst_count_pending.size() && resolved < kMaxPerFrame;) {
+        s32 idx = this->inst_count_pending[i].idx;
+        if (idx < top || idx >= bottom) {
+            i++; // not on screen yet -- leave queued, check the next one
+            continue;
+        }
+        int n = 0;
+        uint64_t bytes = 0;
+        inst_dir_stats(this->inst_count_pending[i].path, &n, &bytes);
+        char cnt[32], sub[64];
+        snprintf(cnt, sizeof(cnt), tr(S_N_APPS), n);
+        if (bytes > 0) {
+            snprintf(sub, sizeof(sub), "%s · %s", cnt, human_size(bytes).c_str());
+        } else {
+            snprintf(sub, sizeof(sub), "%s", cnt);
+        }
+        if (cards) {
+            // Cards lead with size ("1.2 GB · 12 apps"); rows append it —
+            // matching GotoInstalled's own card_sub/row_sub split.
+            std::string card_sub = bytes > 0
+                                       ? human_size(bytes) + " · " + cnt
+                                       : std::string(cnt);
+            this->layout->SetCardSubtitle(idx, card_sub);
+        } else {
+            this->layout->SetRowRight(idx, sub, count_color());
+        }
+        this->inst_count_pending.erase(this->inst_count_pending.begin() + i);
+        resolved++;
+        // don't advance i -- the erase shifted the next element into place
+    }
+}
+
 // ---- auto-fetch box art for newly landed games -----------------------------
 // Appearance -> "Auto-Fetch New Art" (g_prefs.box_art_auto_fetch, default on).
 // Drains g_boxart_auto_pending (fed by boxart_auto_on_landed, a worker-thread
@@ -14945,6 +15189,10 @@ void MainApplication::HandleInput(u64 down, u64 held,
     // Lazily decode box art for rows that just scrolled into view — see
     // BoxArtIconsPoll for why this isn't done at list-build time.
     this->BoxArtIconsPoll();
+    // Same lazy-resolve treatment for the per-console "N apps" chip on
+    // Home/Installed's root views — see HomeCountsPoll/InstRootCountsPoll.
+    this->HomeCountsPoll();
+    this->InstRootCountsPoll();
     // Silently fetch art for anything that landed since the last frame — see
     // BoxArtAutoPoll.
     this->BoxArtAutoPoll();
@@ -16005,11 +16253,21 @@ void MainApplication::HandleInput(u64 down, u64 held,
                 int r = this->SideMenu(
                     full ? full : g->target,
                     {tr(S_ADD_REPO), g->pinned ? tr(S_UNPIN) : tr(S_PIN),
-                     tr(S_CANCEL)});
+                     tr(S_HIDE_FROM_PAGE), tr(S_CANCEL)},
+                    0, "", false, false, console_display_icon(g->target));
                 if (r == 0) { // Add repo
                     this->GotoPicker(Pending::AddRepo);
                 } else if (r == 1) { // Pin / Unpin the console
                     g->pinned = !g->pinned;
+                    config_save(&g_cfg);
+                    this->GotoHome();
+                    this->layout->SetSel(0);
+                } else if (r == 2) { // Hide from this page (Collections/Browse
+                                     // only -- shown_installed, the Library
+                                     // side, is untouched; if that's already
+                                     // off too this naturally lands on
+                                     // console_vis_state's VIS_HIDDEN).
+                    g->shown = false;
                     config_save(&g_cfg);
                     this->GotoHome();
                     this->layout->SetSel(0);
@@ -18142,6 +18400,8 @@ void MainApplication::HandleInput(u64 down, u64 held,
                 this->layout->SetRowRight(i, console_vis_label(st),
                                           console_vis_color(st));
             }
+        } else if (down & HidNpadButton_Y) {
+            this->ManageConsolesBulkMenu();
         }
         break;
     }

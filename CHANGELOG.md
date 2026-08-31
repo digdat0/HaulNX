@@ -7,6 +7,55 @@ Notes for each release. `release.sh` pulls the section matching the version in
 `VERSION` and attaches it to the GitHub release. Add a `## <version>` section
 here before running a release.
 
+## 2.2.15
+
+**Quality of Life + New Icons**
+
+- All 60 console icons have been redrawn/refreshed for better visual
+  consistency across the set, including the newest additions (Amiga, ZX
+  Spectrum, CHIP-8, PICO-8, Tamagotchi, Adobe Flash). Applies everywhere an
+  icon shows up: Browse, Library, Collections, cards, and the desktop
+  companion.
+- Switching to the Library or Collections tab used to run a `stat()` (or a
+  full folder walk, for the app/size chip) on every single shown console,
+  every single time — on an all-consoles-shown setup that's dozens of
+  filesystem round trips blocking the screen before it could even draw.
+  Both tabs now paint immediately from cache and fill in each console's
+  count chip a moment later in the background, so navigation is fast even
+  with every console visible.
+- Fixed a card-view slowdown where switching to card view would re-render
+  every card's title and subtitle up front, even ones never scrolled into
+  view. Cards now render their text the first time they're actually shown,
+  same optimization the list view already had.
+- New bulk visibility tools on Settings > Manage consoles (Y button): **Hide
+  all**, **Show all (Add + Library)**, **Show all — Library only**, **Show
+  all — Add only**, and **Restore to default**, instead of having to cycle
+  each console's visibility by hand one at a time.
+- New **"Hide from this page"** option in each console's X > Options menu, on
+  both the Library and Collections tabs. Hide it from one tab, the other, or
+  both — hiding from both is the same as fully hiding it in Settings >
+  Manage consoles. The Collections tab's Options menu now also shows the
+  console's icon in its header, matching the Library tab's Options menu.
+- **Sammy Atomiswave** (and **Naomi**) showed an empty folder on the Library
+  tab by default despite being hidden from Browse/Collections since launch —
+  an oversight now fixed. Only affects newly-added consoles; your existing
+  settings are untouched.
+- Fixed a folder cached as "0 apps" after being seeded empty (e.g. a console
+  folder created at first launch) sometimes never picking up games added to
+  it later, when the write path didn't reliably bump the folder's own
+  modified time.
+- Fixed PS Vita's folder-bundled games (`.vpk` + data folder) showing no icon
+  and being skipped from the on-device inventory JSON; they now get an icon
+  and are listed as a single entry with the correct total size.
+- Fixed a console redirected to a custom install folder always showing 0
+  apps on the Collections tab instead of its real game count.
+- Fixed a game card falling back to its console's icon not inheriting that
+  icon's custom-cover-art sizing, so it rendered small instead of full-size
+  like the console's own card.
+- Fixed uae4all2's update-source asset match (was grabbing `builder.zip`
+  instead of the real `*_switch.zip` build) and added the Yokoi Game & Watch
+  emulator as a new update source.
+
 ## 2.2.0
 
 **7 new console folders (Amiga, ZX Spectrum, CHIP-8, PICO-8, Tamagotchi, Adobe Flash, PS Vita); console cover art is ~9x smaller and much faster; several box-art bugs fixed.**

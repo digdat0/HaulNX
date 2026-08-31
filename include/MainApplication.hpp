@@ -620,6 +620,9 @@ class MainLayout : public pu::ui::Layout {
     // Update one card's icon in place (no rebuild). Poster-mode counterpart
     // of SetRowIcon, for BoxArtIconsPoll's lazy resolve.
     void SetCardIcon(s32 i, pu::sdl2::Texture icon);
+    // Update one card's subtitle in place (no rebuild). Card-view counterpart
+    // of SetRowRight, for HomeCountsPoll/InstRootCountsPoll's lazy resolve.
+    void SetCardSubtitle(s32 i, const std::string &subtitle);
     // First visible card index / how many slots the visible rows span - the
     // grid's counterpart of ScrollTop()/RowsVisible() above.
     s32 CardFirstVisible();
@@ -1344,6 +1347,7 @@ class MainApplication : public pu::ui::Application {
     void GotoPicker(Pending what);
     void GotoLog();
     void GotoManage();
+    void ManageConsolesBulkMenu(); // Y: hide/show-all/restore-default on Manage consoles
     void GotoCreds();
     void GotoDlPrefs();
     void GotoRomPicker(const std::string &path);
@@ -1903,6 +1907,27 @@ class MainApplication : public pu::ui::Application {
     // list build cheap: no row pays a PNG decode until it's actually visible.
     std::vector<std::pair<s32, std::string>> boxart_pending;
     void BoxArtIconsPoll();
+
+    // Same lazy-resolve pattern as boxart_pending, for the "N apps" chip on
+    // console rows/cards instead of a cover texture: {row index, folder path,
+    // pre-formatted prefix (Home's repo count; empty for Installed's root)}.
+    // GotoHome/GotoInstalled queue a row here whenever the folder's count
+    // isn't already warm in memory (inst_home_count_peek/inst_dir_stats_peek
+    // -- no stat() at build time), painting without the count chip in the
+    // meantime; the pollers below resolve a few per frame, visible ones
+    // first, and patch the row/card in place once known. See
+    // inst_home_count_peek's comment for why this exists: on an all-consoles-
+    // shown setup, the old synchronous per-console stat() swept the whole
+    // list on every tab switch.
+    struct PendingFolderCount {
+        s32 idx;
+        std::string path;
+        std::string prefix; // Home only; Installed root leaves this empty
+    };
+    std::vector<PendingFolderCount> home_count_pending;
+    std::vector<PendingFolderCount> inst_count_pending;
+    void HomeCountsPoll();
+    void InstRootCountsPoll();
 
     // Auto-fetch for newly landed games (queue_on_landed, queue.h; Appearance
     // -> "Auto-Fetch New Art", g_prefs.box_art_auto_fetch, default on). A

@@ -61,6 +61,11 @@ class CardGrid : public pu::ui::elm::Element {
         pu::sdl2::Texture t2_tex; // title line 2 (word-wrapped overflow)
         pu::sdl2::Texture sub_tex;
         s32 t1w, t1h, t2w, t2h, sw, sh;
+        // Set once BuildCell has actually rasterized this cell's text. A
+        // freshly (re)sized cache starts every cell unbuilt regardless of
+        // aggregate-init order, since this has its own default -- see
+        // RebuildCache/BuildCell.
+        bool built = false;
         // queue-mode textures
         pu::sdl2::Texture st_tex = nullptr;
         pu::sdl2::Texture ch_tex = nullptr;  // pill line 1: size
@@ -383,56 +388,66 @@ class CardGrid : public pu::ui::elm::Element {
         l2 = rest;
     }
 
+    // Only re-sizes the cache to match `cards` -- no text is rasterized here
+    // any more (see BuildCell). This used to render every card's title and
+    // subtitle up front, the moment ANY card changed: switching to a Home/
+    // Installed-root screen with ~60 console cards paid ~60 TTF renders
+    // (title + subtitle each) synchronously before the first frame could even
+    // draw, regardless of how many of those cards were ever scrolled into
+    // view. TableList's own RebuildCache already only ever touches its
+    // visible window for exactly this reason (see its comment) -- this
+    // mirrors that by deferring the actual render to OnRender, the first time
+    // each card is actually about to be drawn.
     void RebuildCache() {
         this->FreeCache();
-        const u32 max_tw = (u32)(this->CardW() - 30);
-        for (auto &cd : this->cards) {
-            Cell c{nullptr, nullptr, nullptr, 0, 0, 0, 0, 0, 0};
-            if (cd.queue) {
-                // Queue cards render via SetQueueCard's diff path; the empty
-                // cell makes it rebuild everything on the next update.
-                this->cache.push_back(c);
-                continue;
-            }
-            if (this->poster) {
-                // Poster cards keep the title to one line, small (font_tiny,
-                // smaller than the list/root cards' font_sub - the art above
-                // already carries most of the "which game is this" load, and
-                // six-wide cards don't leave room for a wrapped two-line
-                // title). Rendered at *full* width (no max_w) rather than
-                // ellipsized: OnRender clips it to the card and, when it's
-                // too long to fit, marquees it so the whole name is still
-                // reachable instead of being permanently cut off.
-                c.t1_tex = pu::ui::render::RenderText(this->font_tiny, cd.title,
-                                                      this->title_clr);
-                c.t1w = pu::ui::render::GetTextureWidth(c.t1_tex);
-                c.t1h = pu::ui::render::GetTextureHeight(c.t1_tex);
-            } else {
-                std::string l1, l2;
-                this->SplitTitle(cd.title, this->font_title, (s32)max_tw, l1,
-                                 l2);
-                c.t1_tex = pu::ui::render::RenderText(this->font_title, l1,
-                                                      this->title_clr, max_tw);
-                c.t1w = pu::ui::render::GetTextureWidth(c.t1_tex);
-                c.t1h = pu::ui::render::GetTextureHeight(c.t1_tex);
-                if (!l2.empty()) {
-                    c.t2_tex = pu::ui::render::RenderText(this->font_title, l2,
-                                                          this->title_clr,
-                                                          max_tw);
-                    c.t2w = pu::ui::render::GetTextureWidth(c.t2_tex);
-                    c.t2h = pu::ui::render::GetTextureHeight(c.t2_tex);
-                }
-            }
-            if (!cd.subtitle.empty()) {
-                c.sub_tex = pu::ui::render::RenderText(
-                    this->poster ? this->font_tiny : this->font_sub,
-                    cd.subtitle, this->sub_clr, max_tw);
-                c.sw = pu::ui::render::GetTextureWidth(c.sub_tex);
-                c.sh = pu::ui::render::GetTextureHeight(c.sub_tex);
-            }
-            this->cache.push_back(c);
-        }
+        this->cache.assign(this->cards.size(), Cell{});
         this->dirty = false;
+    }
+
+    // Rasterize one card's title/subtitle text on first draw (OnRender calls
+    // this when a non-queue card's cell isn't built yet). Queue cards never
+    // reach here -- they render via SetQueueCard's own diff-updated path,
+    // gated on visibility there the same way, and OnRender's queue branch
+    // returns before this would be called.
+    void BuildCell(const s32 idx) {
+        Cell &c = this->cache[idx];
+        const Card &cd = this->cards[idx];
+        const u32 max_tw = (u32)(this->CardW() - 30);
+        if (this->poster) {
+            // Poster cards keep the title to one line, small (font_tiny,
+            // smaller than the list/root cards' font_sub - the art above
+            // already carries most of the "which game is this" load, and
+            // six-wide cards don't leave room for a wrapped two-line title).
+            // Rendered at *full* width (no max_w) rather than ellipsized:
+            // OnRender clips it to the card and, when it's too long to fit,
+            // marquees it so the whole name is still reachable instead of
+            // being permanently cut off.
+            c.t1_tex = pu::ui::render::RenderText(this->font_tiny, cd.title,
+                                                  this->title_clr);
+            c.t1w = pu::ui::render::GetTextureWidth(c.t1_tex);
+            c.t1h = pu::ui::render::GetTextureHeight(c.t1_tex);
+        } else {
+            std::string l1, l2;
+            this->SplitTitle(cd.title, this->font_title, (s32)max_tw, l1, l2);
+            c.t1_tex = pu::ui::render::RenderText(this->font_title, l1,
+                                                  this->title_clr, max_tw);
+            c.t1w = pu::ui::render::GetTextureWidth(c.t1_tex);
+            c.t1h = pu::ui::render::GetTextureHeight(c.t1_tex);
+            if (!l2.empty()) {
+                c.t2_tex = pu::ui::render::RenderText(this->font_title, l2,
+                                                      this->title_clr, max_tw);
+                c.t2w = pu::ui::render::GetTextureWidth(c.t2_tex);
+                c.t2h = pu::ui::render::GetTextureHeight(c.t2_tex);
+            }
+        }
+        if (!cd.subtitle.empty()) {
+            c.sub_tex = pu::ui::render::RenderText(
+                this->poster ? this->font_tiny : this->font_sub, cd.subtitle,
+                this->sub_clr, max_tw);
+            c.sw = pu::ui::render::GetTextureWidth(c.sub_tex);
+            c.sh = pu::ui::render::GetTextureHeight(c.sub_tex);
+        }
+        c.built = true;
     }
 
     // Download/unzip progress traced around a rounded card outline clockwise
@@ -891,6 +906,39 @@ class CardGrid : public pu::ui::elm::Element {
         }
         this->cards[i].icon = icon;
         this->cards[i].art = art;
+    }
+    // Lazy folder-count resolve (see HomeCountsPoll/InstRootCountsPoll),
+    // mirroring SetCardIcon: patch one card's subtitle in place. Unlike this
+    // ->dirty (which forces RebuildCache to re-rasterize every card's title
+    // and subtitle), re-rendering just this cell's cached texture keeps the
+    // whole point of deferring the count off the build path -- filling one
+    // card back in shouldn't pay for every other card on screen too.
+    void SetCardSubtitle(const s32 i, const std::string &subtitle) {
+        if (i < 0 || i >= (s32)this->cards.size()) {
+            return;
+        }
+        this->cards[i].subtitle = subtitle;
+        if (i >= (s32)this->cache.size() || !this->cache[i].built) {
+            // Not drawn yet (still off-screen, or the very first frame after
+            // a rebuild hasn't reached it) -- BuildCell will rasterize this
+            // subtitle correctly the first time it's actually shown, so
+            // there's nothing to patch here.
+            return;
+        }
+        Cell &c = this->cache[i];
+        if (c.sub_tex) {
+            pu::ui::render::DeleteTexture(c.sub_tex);
+            c.sub_tex = nullptr;
+        }
+        c.sw = c.sh = 0;
+        if (!subtitle.empty()) {
+            const u32 max_tw = (u32)(this->CardW() - 30);
+            c.sub_tex = pu::ui::render::RenderText(
+                this->poster ? this->font_tiny : this->font_sub, subtitle,
+                this->sub_clr, max_tw);
+            c.sw = pu::ui::render::GetTextureWidth(c.sub_tex);
+            c.sh = pu::ui::render::GetTextureHeight(c.sub_tex);
+        }
     }
     // First card index on screen, and how many slots the visible rows span
     // (may run past the last real card) - the same "is this on screen yet"
@@ -1358,6 +1406,12 @@ class CardGrid : public pu::ui::elm::Element {
                     continue;
                 }
                 Cell &ce = this->cache[idx];
+                if (!ce.built) {
+                    // First time this card is actually about to be drawn --
+                    // see RebuildCache/BuildCell for why this isn't done for
+                    // every card up front.
+                    this->BuildCell(idx);
+                }
                 if (this->poster) {
                     // Poster card: box art (or a centred fallback icon) fills
                     // the top, title + size sit in the band below it. Real

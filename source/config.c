@@ -204,8 +204,14 @@ static void seed_console_groups(SourcesConfig *cfg) {
         sset(g->target, sizeof(g->target), name);
         g->shown = !console_hidden_by_default(name);
         /* New (post-launch) consoles default off on Installed too; the original
-         * launch set keeps its prior "shown on Installed" default. */
-        g->shown_installed = !console_is_new(name);
+         * launch set keeps its prior "shown on Installed" default -- except
+         * atomiswave/naomi, hidden from Browse since launch (niche arcade
+         * systems) but left visible on Installed by an oversight: a fresh
+         * install showed an empty "Sammy Atomiswave" folder in the Library
+         * tab the user never opted into. console_hidden_by_default() already
+         * covers exactly "console_is_new() plus atomiswave/naomi", so this is
+         * the same rule shown uses above, not a separate one to keep in sync. */
+        g->shown_installed = !console_hidden_by_default(name);
     }
 }
 
@@ -280,6 +286,13 @@ static bool console_hidden_by_default(const char *name) {
     return console_is_new(name);
 }
 
+void config_console_default_vis(const char *name, bool *shown,
+                                bool *shown_installed) {
+    if (shown) *shown = !console_hidden_by_default(name);
+    /* Same rule as seed_console_groups' shown_installed -- see its comment. */
+    if (shown_installed) *shown_installed = !console_hidden_by_default(name);
+}
+
 ConsoleGroup *config_add_console(SourcesConfig *cfg, const char *name) {
     if (!name || !name[0]) {
         return NULL;
@@ -296,7 +309,8 @@ ConsoleGroup *config_add_console(SourcesConfig *cfg, const char *name) {
     sset(g->console, sizeof(g->console), name);
     sset(g->target, sizeof(g->target), name);
     g->shown = !console_hidden_by_default(name);
-    g->shown_installed = !console_is_new(name);
+    /* Same rule as seed_console_groups' shown_installed -- see its comment. */
+    g->shown_installed = !console_hidden_by_default(name);
     return g;
 }
 

@@ -220,6 +220,16 @@ enum {
     S_VIS_BROWSE,    /* Browse only */
     S_VIS_INSTALLED, /* Installed only */
     S_VIS_HIDDEN,    /* neither tab */
+    S_MANAGE_OPTIONS,          /* title of the Y-button bulk options menu */
+    S_MANAGE_HIDE_ALL,
+    S_MANAGE_SHOW_ALL,
+    S_MANAGE_SHOW_LIBRARY_ONLY,
+    S_MANAGE_SHOW_ADD_ONLY,
+    S_MANAGE_RESTORE_DEFAULT,
+    S_MANAGE_BULK_DONE,        /* toast after a bulk action, "Updated %d consoles" */
+    S_HIDE_FROM_PAGE, /* per-console Options menu entry (Library + Collections):
+                        * hides the console from whichever of those two tabs the
+                        * menu was opened from, independently of the other. */
 
     /* ---- credentials ---- */
     S_TITLE_CREDS,
