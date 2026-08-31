@@ -9,8 +9,13 @@ here before running a release.
 
 ## 2.2.0
 
-**Console cover art is ~9x smaller and much faster; several box-art bugs fixed; new PS Vita icon.**
+**7 new console folders (Amiga, ZX Spectrum, CHIP-8, PICO-8, Tamagotchi, Adobe Flash, PS Vita); console cover art is ~9x smaller and much faster; several box-art bugs fixed.**
 
+- Added 6 new console folders, playable via unofficial/homebrew emulator
+  ports rather than first-party Switch support: **Commodore Amiga**,
+  **Sinclair ZX Spectrum**, **CHIP-8**, **PICO-8**, **Tamagotchi**, and
+  **Adobe Flash Games**. Like other niche/experimental systems, they ship
+  hidden — turn them on in Settings > Manage consoles.
 - Custom console cover art pushed from the desktop companion is now sent as a
   200×300 JPEG instead of a 600×900 PNG. This fixes slow tab navigation and
   missing/broken cover art that could show up once several consoles had

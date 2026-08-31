@@ -162,7 +162,13 @@ HaulNX's folder names.
 | Wii U | Cemu | [guide](https://github.com/digdat0/HaulNX/wiki/Emulator-Cemu) — brand new, expect rough edges |
 | Arcade / Neo Geo | MAME, pFBN | [MAME](https://github.com/digdat0/HaulNX/wiki/Emulator-MAME) · [pFBN](https://github.com/digdat0/HaulNX/wiki/Emulator-pFBN) |
 | SNES / NES standalones | pSNES / pNES | [guide](https://github.com/digdat0/HaulNX/wiki/Emulator-pSNES-pNES) |
-| GameCube, Wii | — | [not realistically playable](https://github.com/digdat0/HaulNX/wiki/Emulator-Experimental) — the folders exist for organization |
+| Commodore Amiga | UAE4ALL2 | [guide](https://github.com/digdat0/HaulNX/wiki/Emulator-UAE4ALL2) — unofficial port, hidden by default |
+| ZX Spectrum | Vapor Spec | [guide](https://github.com/digdat0/HaulNX/wiki/Emulator-VaporSpec) — unofficial port, hidden by default |
+| CHIP-8 | RetroArch (CHIP-8/Emux core) | [guide](https://github.com/digdat0/HaulNX/wiki/Emulator-CHIP-8) — hidden by default |
+| PICO-8 | PICO-8 (Switch export) | [guide](https://github.com/digdat0/HaulNX/wiki/Emulator-PICO-8) — needs a PICO-8 license; hidden by default |
+| Tamagotchi | TamaLIB-based port | [guide](https://github.com/digdat0/HaulNX/wiki/Emulator-Tamagotchi) — unofficial port, hidden by default |
+| Adobe Flash Games | Ruffle-based port | [guide](https://github.com/digdat0/HaulNX/wiki/Emulator-Flash) — unofficial/experimental, hidden by default |
+| GameCube, Wii, PS Vita | — | [not realistically playable](https://github.com/digdat0/HaulNX/wiki/Emulator-Experimental) — the folders exist for organization |
 
 The wiki also covers the cross-cutting things:
 **[BIOS files](https://github.com/digdat0/HaulNX/wiki/Reference-BIOS-Files)** (which
