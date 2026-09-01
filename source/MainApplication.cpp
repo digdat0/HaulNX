@@ -4609,6 +4609,64 @@ void MainApplication::PushListToPc() {
     this->Toast(tr(S_APPMAN_PUSH_SENT));
 }
 
+// Ground truth for whether this is a USB 3.0 (SuperSpeed) situation right
+// now. Prefers the live negotiated link speed of an active MTP session
+// (mtp::GetLinkSpeed()) -- unambiguous once a host has actually enumerated us.
+//
+// With nothing connected to measure, the obvious fallback is the console's
+// "Enable USB 3.0" system setting -- but that's *not* what most users actually
+// have. The common setup is Atmosphere's usb30_force_enable (system_settings.ini),
+// which never touches the settings.db flags at all: it works by patching the
+// `usb` sysmodule's own binary at boot to just negotiate SuperSpeed
+// unconditionally (see Atmosphere-NX/Atmosphere PR #1391), so
+// setsysGetUsb30DeviceEnableFlag legitimately reads back "disabled" even
+// though USB 3.0 is genuinely forced on -- which is exactly the mismatch this
+// was reported against. Atmosphere exposes that ini flag for homebrew to read
+// as an extended spl: config item, SplConfigItem_ExosphereForceEnableUsb30
+// (65010, Atmosphere-specific and so not in libnx's public enum -- hence the
+// raw cast); check that first and only fall back to the real system-setting
+// flag (for stock/other-CFW setups, or a user who used the native System
+// Settings toggle instead of the ini) if it's absent.
+//
+// Neither of those can change without a reboot, so the fallback half is read
+// once and cached; the live half is re-checked every call. Returns 0 =
+// unknown, 1 = disabled (or High/Full/Low speed), 2 = enabled/Super. Takes
+// the caller's own mtp::Poll() result rather than polling again itself --
+// UsbMtpTick already polls it once per frame for every screen (see the
+// header comment on that function), so a second IPC round trip here would be
+// pure waste on top of it.
+static int usb3_link_state(mtp::Status mtp_status) {
+    // -1 = not yet resolved -- retried on every call until one of the two
+    // sources actually answers. Only a genuine 1/2 result gets cached: that's
+    // the only case "can't change without a reboot" applies to. Caching a
+    // same-call failure of BOTH IPC calls (e.g. a transient session-limit hit
+    // early in boot) used to freeze the row at "Unknown" for the rest of the
+    // app's life with no way to recover; retrying costs nothing since a
+    // resolved answer stops retrying on the very next call.
+    static int setting = -1;
+    if (setting < 0) {
+        u64 force = 0;
+        if (R_SUCCEEDED(splInitialize())) {
+            Result rc = splGetConfig((SplConfigItem)65010, std::addressof(force));
+            splExit();
+            if (R_SUCCEEDED(rc) && force) {
+                setting = 2;
+            }
+        }
+        if (setting < 0 && R_SUCCEEDED(setsysInitialize())) {
+            bool en = false;
+            if (R_SUCCEEDED(setsysGetUsb30DeviceEnableFlag(std::addressof(en)))) {
+                setting = en ? 2 : 1;
+            }
+            setsysExit();
+        }
+    }
+    if (mtp_status == mtp::Status_Connected) {
+        return mtp::GetLinkSpeed() == UsbDeviceSpeed_Super ? 2 : 1;
+    }
+    return setting < 0 ? 0 : setting;
+}
+
 // Diagnostics: a network self-test, a speed test, the one extraction benchmark
 // toggle (dev-only; the other two knobs moved to Downloads), and a factory
 // reset. The log bundle export and the logs themselves live under the Logs
@@ -4639,15 +4697,13 @@ void MainApplication::GotoDiagnostics() {
     this->layout->AddRow2(settings_label(tr(S_MTP_ENABLED)),
                           mtp ? tr(S_ON) : tr(S_OFF), g_theme->row_text,
                           onoff_color(mtp));      // 4 USB file transfer toggle
-    // 5: read-only OS status — whether "USB 3.0" is enabled in System Settings.
-    // One-shot query (setsys isn't kept open); shows Unknown if it can't be read.
-    const char *usb3 = tr(S_UNKNOWN);
-    if (R_SUCCEEDED(setsysInitialize())) {
-        bool en = false;
-        if (R_SUCCEEDED(setsysGetUsb30EnableFlag(&en))) {
-            usb3 = en ? tr(S_ENABLED) : tr(S_DISABLED);
-        }
-        setsysExit();
+    // 5: read-only USB 3.0 status — see usb3_link_state() for why this isn't
+    // just the system setting.
+    const char *usb3;
+    switch (usb3_link_state(mtp::Poll())) {
+        case 2:  usb3 = tr(S_ENABLED);  break;
+        case 1:  usb3 = tr(S_DISABLED); break;
+        default: usb3 = tr(S_UNKNOWN);  break;
     }
     this->layout->AddRow2(tr(S_USB3_STATUS), usb3, g_theme->row_text,
                           g_theme->rom_info_clr); // 5 read-only info row
@@ -5339,20 +5395,14 @@ void MainApplication::InvJsonBegin() {
     this->inv_json_f = f;
     uint64_t freeb = fs_free_bytes("sdmc:/");
     uint64_t totalb = fs_total_bytes("sdmc:/");
-    // The USB-3 enable flag only changes via a System Settings toggle (which
-    // needs a reboot), so read it once instead of opening a setsys session on
-    // every regen. Safe as a static: this and the rest of the inv_json_* build
-    // run only on the UI thread (see the header comment).
-    static const char *usb3 = NULL;
-    if (!usb3) {
-        usb3 = "unknown";
-        if (R_SUCCEEDED(setsysInitialize())) {
-            bool en = false;
-            if (R_SUCCEEDED(setsysGetUsb30EnableFlag(&en))) {
-                usb3 = en ? "enabled" : "disabled";
-            }
-            setsysExit();
-        }
+    // See usb3_link_state(): live MTP link speed when connected (this can
+    // change between regens, unlike the system setting), else the cached
+    // device-mode USB-3 setting.
+    const char *usb3;
+    switch (usb3_link_state(mtp::Poll())) {
+        case 2:  usb3 = "enabled";  break;
+        case 1:  usb3 = "disabled"; break;
+        default: usb3 = "unknown";  break;
     }
 
     fputs("{\n  \"app_version\": ", f);
@@ -5430,9 +5480,18 @@ void MainApplication::InvJsonStepConsole() {
     // companion push) -- doesn't imply it's actively shown (see use_boxart),
     // just that GET /consoleart won't 404. Cheap: a linear scan of an
     // in-memory index already loaded for the on-device Library/Options menus.
-    char art_key[280];
+    char art_key[280], art_path[768];
     snprintf(art_key, sizeof(art_key), "console:%s", c.target);
-    bool has_art = boxart_lookup(art_key, NULL, 0);
+    bool has_art = boxart_lookup(art_key, art_path, sizeof(art_path));
+    // mtime of the cached cover, so the companion can skip re-pulling
+    // GET /consoleart art it already has cached locally by the same
+    // timestamp -- 0 when there's no cover (has_art false) or the stat
+    // races a delete, either way treated as "always re-check" by callers.
+    struct stat art_st;
+    unsigned long long art_mtime =
+        (has_art && stat(art_path, &art_st) == 0)
+            ? (unsigned long long)art_st.st_mtime
+            : 0;
 
     if (!this->inv_json_first_console) {
         fputc(',', f);
@@ -5449,11 +5508,11 @@ void MainApplication::InvJsonStepConsole() {
             "      \"has_dat\": %s,\n      \"dat_bytes\": %llu,\n"
             "      \"repo_count\": %d,\n      \"active_repos\": %d,\n"
             "      \"shown\": %s,\n      \"shown_installed\": %s,\n"
-            "      \"has_art\": %s,\n",
+            "      \"has_art\": %s,\n      \"art_mtime\": %llu,\n",
             count, (unsigned long long)bytes, has_dat ? "true" : "false",
             (unsigned long long)dat_size, c.repo_count, active,
             c.shown ? "true" : "false", c.shown_installed ? "true" : "false",
-            has_art ? "true" : "false");
+            has_art ? "true" : "false", art_mtime);
     fputs("      \"files\": [", f);
     bool first = true;
     // Read once, reused below for "sets" too -- one listing per console,
@@ -6658,6 +6717,21 @@ static std::vector<NroFile> list_backups(const std::string &id) {
     return v;
 }
 
+// Whether `name` is safe to use as a bare destination file name -- i.e. it
+// names a file, not a path. update_fetch_latest_asset (update.c) copies a
+// GitHub release asset's "name" field verbatim with no filtering of its own,
+// so a compromised or malicious update source could in principle publish an
+// asset name containing a path separator or a ".." segment; UmiTick uses this
+// to decide whether to trust that name for the installed file's new name
+// rather than assuming an external API's field is already a safe filename.
+static bool is_safe_asset_name(const std::string &name) {
+    if (name.empty() || name == "." || name == "..") {
+        return false;
+    }
+    return name.find('/') == std::string::npos &&
+          name.find('\\') == std::string::npos;
+}
+
 // Copy the current build into BACKUPS_DIR/<id>/<ver>.nro, then keep only the two
 // most recent. Best-effort: a backup problem never blocks the update itself.
 static void backup_keep2(const std::string &id, const std::string &cur_path,
@@ -6681,6 +6755,54 @@ static void backup_keep2(const std::string &id, const std::string &cur_path,
     for (size_t i = 2; i < baks.size(); i++) {
         remove(baks[i].path.c_str());
     }
+}
+
+// Load the shared manifest into a malloc'd UpdSource[UPD_MAX] array (caller
+// frees it via free()). Centralizes the malloc+updman_load pairing that
+// update_manifest_detect, AppSetSource, AppChkThread, and AppRecheckOne each
+// used to repeat with slightly different null-checking discipline. *out_cnt
+// is 0 (and the return NULL) if the allocation itself failed.
+static UpdSource *updman_load_all(int *out_cnt) {
+    UpdSource *all = (UpdSource *)malloc(sizeof(UpdSource) * UPD_MAX);
+    *out_cnt = all ? updman_load(all, UPD_MAX) : 0;
+    return all;
+}
+
+// Index of the row whose id case-insensitively matches `id` in arr[0..cnt), or -1.
+static int updman_find(const UpdSource *arr, int cnt, const char *id) {
+    for (int i = 0; i < cnt; i++) {
+        if (strcasecmp(arr[i].id, id) == 0) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+// Repoint a manifest row's detect string after UmiTick renamed the installed
+// file (see its "desired_name" handling) -- a release that bakes its version
+// into the file name (e.g. "myapp_v1.2.3.nro") means each update's asset name
+// differs from the last, so the file gets renamed to match instead of an old
+// name being force-fed new content forever. detect_match/match_installed key
+// entirely off this string, so without updating it here the very next scan
+// would stop recognizing the renamed file as this row and spawn a duplicate
+// "unmanaged" entry under the new name instead. Best-effort: a manifest
+// hiccup here never blocks the update itself, which has already landed.
+static void update_manifest_detect(const std::string &id,
+                                   const std::string &new_name) {
+    if (id.empty() || new_name.empty()) {
+        return;
+    }
+    int cnt = 0;
+    UpdSource *all = updman_load_all(&cnt);
+    if (!all) {
+        return;
+    }
+    int i = updman_find(all, cnt, id.c_str());
+    if (i >= 0) {
+        snprintf(all[i].detect, sizeof(all[i].detect), "%s", new_name.c_str());
+        updman_save(all, cnt);
+    }
+    free(all);
 }
 
 } // namespace
@@ -6800,6 +6922,22 @@ void MainApplication::GotoBackups() {
     this->layout->SetSubtitle(sub);
 }
 
+// Per-entry status the release-check worker resolves, read back by
+// AppUpdatesRender to colour each row (so outdated vs up-to-date look nothing
+// alike). Declared ahead of UmiTick (which stamps APST_UPTODATE straight onto
+// a just-finished update, see below) and AppEntryMenu, which also needs these
+// constants to classify an inline check-then-install failure.
+enum {
+    APST_UPDATE = 0, // installed, a newer release is available  (amber pill)
+    APST_UPTODATE,   // installed, already the latest            (green)
+    APST_NOTINST,    // listed but not on the SD card            (grey)
+    APST_NOSRC,      // installed but no update source configured (grey)
+    APST_ERR,        // installed, source set, but unreachable    (red)
+    APST_RATELIMIT,  // GitHub rate limit hit (403/429)           (amber)
+    APST_OFFLINE,    // no network / couldn't reach GitHub at all (red)
+    APST_UNCHECKED,  // installed + sourced, not yet checked here (grey)
+};
+
 // Worker: download the chosen release .nro to a temp file. Mirrors UpdThread.
 // `ud`/`arg` is a UmiJob* (not `this`) so concurrent jobs never touch each
 // other's state -- see the UmiJob comment in MainApplication.hpp.
@@ -6898,6 +7036,11 @@ void MainApplication::UmiTick(int j) {
     // to that same sdmc path, a flat .nro to sdmc:/switch/. exdir is cleaned up
     // on every exit path below.
     std::string exdir;
+    // The name the release itself wants the installed file to carry — the
+    // .nro's own name inside an archive, or the downloaded asset's name for a
+    // plain .nro. Empty means "keep dest's existing name" (the ordinary case:
+    // almost every app ships the same asset/file name release after release).
+    std::string desired_name;
     if (job.zip) {
         exdir = std::string(DL_TMP_DIR) + "/appupd_x" + std::to_string(j);
         fs_rm_rf(exdir.c_str()); // clear any stale extraction
@@ -6914,6 +7057,11 @@ void MainApplication::UmiTick(int j) {
             return;
         }
         part = nro_path; // install the extracted .nro
+        size_t rs = rel.find_last_of('/');
+        std::string zip_name = (rs == std::string::npos) ? rel : rel.substr(rs + 1);
+        if (is_safe_asset_name(zip_name)) {
+            desired_name = zip_name;
+        }
         if (job.fresh) {
             std::string low = rel;
             for (char &c : low) {
@@ -6931,6 +7079,8 @@ void MainApplication::UmiTick(int j) {
             dest = (cut != std::string::npos) ? ("sdmc:/" + rel.substr(cut))
                                               : ("sdmc:/switch/" + rel);
         }
+    } else if (is_safe_asset_name(job.asset)) {
+        desired_name = job.asset;
     }
     if (!looks_like_nro(part.c_str())) {
         remove(part.c_str());
@@ -6943,8 +7093,28 @@ void MainApplication::UmiTick(int j) {
         job.xslot = -1;
         return;
     }
-    if (!job.fresh && fs_exists(dest.c_str())) {
-        backup_keep2(job.id, dest, job.bakver);
+    // An update (never a fresh install, which already names its own dest
+    // above) whose release names its file differently than what's currently
+    // installed -- most commonly a release that bakes its version into the
+    // file name, so every release's name differs from the last. Follow it:
+    // install under the new name in the same folder instead of force-feeding
+    // new content into the stale old file name, then drop the old file below
+    // once the new one has safely landed.
+    std::string old_dest = dest;
+    bool renaming = false;
+    if (!job.fresh && !desired_name.empty()) {
+        size_t slash = dest.find_last_of('/');
+        std::string cur_name =
+            (slash == std::string::npos) ? dest : dest.substr(slash + 1);
+        if (strcasecmp(cur_name.c_str(), desired_name.c_str()) != 0) {
+            dest = (slash == std::string::npos)
+                       ? desired_name
+                       : dest.substr(0, slash + 1) + desired_name;
+            renaming = true;
+        }
+    }
+    if (!job.fresh && fs_exists(old_dest.c_str())) {
+        backup_keep2(job.id, old_dest, job.bakver);
     }
     if (job.fresh) {
         fs_ensure_parent(dest.c_str());
@@ -6977,6 +7147,12 @@ void MainApplication::UmiTick(int j) {
     if (restore) {
         remove(bak.c_str());
     }
+    if (renaming) {
+        remove(old_dest.c_str()); // superseded by dest under the new name
+        update_manifest_detect(job.id, desired_name);
+        xfer_log("renamed    %s -> %s (release file name changed)",
+                 old_dest.c_str(), dest.c_str());
+    }
     if (!exdir.empty()) {
         fs_rm_rf(exdir.c_str()); // drop the rest of the unpacked archive
     }
@@ -6984,6 +7160,56 @@ void MainApplication::UmiTick(int j) {
                        : "updated    %s -> %s (%s)",
              job.name.c_str(), job.tag.c_str(), dest.c_str());
     this->inv_last_gen_ns = 0; // the installed set changed
+    // BeginXfer already jumped to the Queue tab before this download+swap
+    // finished, so the App Updates screen's cached row for this entry (if
+    // it's the one showing) was last refreshed *before* the update -- still
+    // pointing at the just-replaced path (and, once installing here can
+    // rename the file, a path that no longer exists). Patch it in place from
+    // what was just done rather than leaving it stale until an explicit
+    // re-check; also keep the in-memory UpdSource's detect string in step
+    // with the manifest rewrite above, or a same-session re-check would use
+    // the old detect and stop finding the (now renamed) file at all.
+    //
+    // Skip entirely while AppChkThread is running: it's a real background
+    // thread (see BgTask::Start) that owns appman_list/appman_ipath/
+    // appman_ver/appman_state until it publishes via std::move on completion
+    // (every other touch point gates on appchk.running the same way, e.g.
+    // GotoAppUpdates/AppScanAll/AppUpdatesRender) -- patching them here
+    // without that gate would be an unsynchronized concurrent read/write on
+    // the same vectors. Not worth Join()ing for either: that thread can be
+    // mid network I/O, and blocking the UI tick on it just to show this one
+    // row a few seconds early isn't a good trade -- the thread's own publish
+    // will carry this update's result anyway once match_installed rescans
+    // the (now renamed) file.
+    if (!this->appchk.running) {
+        for (size_t k = 0; k < this->appman_list.size(); k++) {
+            if (strcasecmp(this->appman_list[k].id, job.id.c_str()) != 0) {
+                continue;
+            }
+            if (renaming) {
+                snprintf(this->appman_list[k].detect,
+                         sizeof(this->appman_list[k].detect), "%s",
+                         desired_name.c_str());
+            }
+            if (k < this->appman_ipath.size()) {
+                this->appman_ipath[k] = dest;
+            }
+            if (k < this->appman_ver.size()) {
+                char verbuf[24];
+                this->appman_ver[k] = (nro_file_version(dest.c_str(), verbuf,
+                                                        sizeof(verbuf)) && verbuf[0])
+                                          ? verbuf
+                                          : job.tag;
+            }
+            if (k < this->appman_state.size()) {
+                this->appman_state[k] = APST_UPTODATE; // we just installed the checked tag
+            }
+            break;
+        }
+        if (this->screen == Screen::AppUpdates) {
+            this->AppUpdatesRender();
+        }
+    }
     queue_ext_finish(job.xslot, true, NULL);
     job.xslot = -1;
 }
@@ -7004,18 +7230,12 @@ void MainApplication::AppSetSource(const UpdSource &e) {
     while (n && s[n - 1] == ' ') {
         s[--n] = '\0';
     }
-    UpdSource *all = (UpdSource *)malloc(sizeof(UpdSource) * UPD_MAX);
+    int cnt = 0;
+    UpdSource *all = updman_load_all(&cnt);
     if (!all) {
         return;
     }
-    int cnt = updman_load(all, UPD_MAX);
-    int found = -1;
-    for (int i = 0; i < cnt; i++) {
-        if (strcasecmp(all[i].id, e.id) == 0) {
-            found = i;
-            break;
-        }
-    }
+    int found = updman_find(all, cnt, e.id);
     bool recorded = false;
     if (found >= 0) {
         snprintf(all[found].repo, sizeof(all[found].repo), "%s", s);
@@ -7099,21 +7319,6 @@ void MainApplication::AppRevert(const UpdSource &e) {
 // is shown under the name, and "Check for updates" is an explicit option that
 // kicks off the release check (the caller re-checks this one when it returns
 // true). Update/Install only appear once a check has found a release.
-// Per-entry status the release-check worker resolves, read back by
-// AppUpdatesRender to colour each row (so outdated vs up-to-date look nothing
-// alike). Declared ahead of AppEntryMenu, which also needs these constants to
-// classify an inline check-then-install failure.
-enum {
-    APST_UPDATE = 0, // installed, a newer release is available  (amber pill)
-    APST_UPTODATE,   // installed, already the latest            (green)
-    APST_NOTINST,    // listed but not on the SD card            (grey)
-    APST_NOSRC,      // installed but no update source configured (grey)
-    APST_ERR,        // installed, source set, but unreachable    (red)
-    APST_RATELIMIT,  // GitHub rate limit hit (403/429)           (amber)
-    APST_OFFLINE,    // no network / couldn't reach GitHub at all (red)
-    APST_UNCHECKED,  // installed + sourced, not yet checked here (grey)
-};
-
 bool MainApplication::AppEntryMenu(size_t idx) {
     if (idx >= this->appman_list.size()) {
         return false;
@@ -7235,7 +7440,8 @@ bool MainApplication::AppEntryMenu(size_t idx) {
     case 1: { // fresh install into sdmc:/switch
         // For a plain .nro this names the destination; for a .zip it's just a
         // placeholder — UmiTick derives the real path from the archive layout.
-        std::string fn = !asset.empty() ? asset : (std::string(e.id) + ".nro");
+        std::string fn = is_safe_asset_name(asset) ? asset
+                                                    : (std::string(e.id) + ".nro");
         this->UmiStart(e, url, tag, std::string("sdmc:/switch/") + fn, "", true,
                        asset);
         break;
@@ -7284,7 +7490,8 @@ bool MainApplication::AppEntryMenu(size_t idx) {
         if (idx < this->appman_asset.size()) {
             this->appman_asset[idx] = casset;
         }
-        std::string fn = casset[0] ? casset : (std::string(e.id) + ".nro");
+        std::string fn = is_safe_asset_name(casset) ? std::string(casset)
+                                                    : (std::string(e.id) + ".nro");
         this->UmiStart(e, curl, ctag, std::string("sdmc:/switch/") + fn, "",
                        true, casset);
         break;
@@ -7438,8 +7645,8 @@ void MainApplication::AppChkThread(void *arg) {
     auto self = static_cast<MainApplication *>(arg);
     uint8_t kind = self->appman_kind;
 
-    UpdSource *all = (UpdSource *)malloc(sizeof(UpdSource) * UPD_MAX);
-    int cnt = all ? updman_load(all, UPD_MAX) : 0;
+    int cnt = 0;
+    UpdSource *all = updman_load_all(&cnt);
 
     std::vector<UpdSource> list;
     for (int i = 0; i < cnt; i++) {
@@ -7805,13 +8012,11 @@ void MainApplication::AppRecheckOne(size_t idx) {
     UpdSource &e = this->appman_list[idx];
     // Pick up an edited source: AppSetSource persists to the manifest by id, so
     // reload the entry so a freshly-set repo is used for the check below.
-    UpdSource *all = (UpdSource *)malloc(sizeof(UpdSource) * UPD_MAX);
-    int cnt = all ? updman_load(all, UPD_MAX) : 0;
-    for (int i = 0; i < cnt; i++) {
-        if (strcasecmp(all[i].id, e.id) == 0) {
-            e = all[i];
-            break;
-        }
+    int cnt = 0;
+    UpdSource *all = updman_load_all(&cnt);
+    int i = all ? updman_find(all, cnt, e.id) : -1;
+    if (i >= 0) {
+        e = all[i];
     }
     free(all);
     std::string ipath, ver, latest, rel_url, rel_asset;
@@ -8362,6 +8567,34 @@ void MainApplication::UsbMtpTick() {
     // for a controller, then leave exactly as a manual exit would.
     mtp::Status s = mtp::Poll();
     this->usb_status = s; // drives CompanionConnected() for USB companions
+    // The Diagnostics screen's USB 3.0 row is otherwise a one-shot query taken
+    // when the screen is entered (see GotoDiagnostics) -- sitting on it while
+    // a cable gets plugged in, or a host finishes negotiating, would show a
+    // stale value forever since nothing else re-renders that row. UsbMtpTick
+    // already runs on every screen every frame (see its header comment), so
+    // riding it here keeps the row live without a dedicated tick for a screen
+    // that otherwise has none.
+    if (this->screen == Screen::Diagnostics) {
+        // usb3_link_state() can do a real usbDsGetSpeed IPC round trip while
+        // connected -- only worth paying for right when the link state just
+        // changed (the value it reports is otherwise stable for the life of
+        // a connection) or about once a second otherwise, not on every single
+        // one of this tick's ~60 calls per second.
+        static mtp::Status s_last = mtp::Status_Down;
+        static time_t s_last_check = 0;
+        time_t now = time(nullptr);
+        if (s != s_last || now - s_last_check >= 1) {
+            s_last = s;
+            s_last_check = now;
+            const char *usb3;
+            switch (usb3_link_state(s)) {
+                case 2:  usb3 = tr(S_ENABLED);  break;
+                case 1:  usb3 = tr(S_DISABLED); break;
+                default: usb3 = tr(S_UNKNOWN);  break;
+            }
+            this->layout->SetRowRight(5, usb3, g_theme->rom_info_clr);
+        }
+    }
     if (s == mtp::Status_Connected) this->usb_seen_conn = true;
     else if (this->usb_seen_conn) {
         // Host went away. The background instance (inventory server) stays up so a

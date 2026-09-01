@@ -63,6 +63,14 @@ namespace mtp {
     // Current link state; call once per frame while the screen is open.
     Status Poll();
 
+    // Actual negotiated USB speed of the live session (Status_Connected),
+    // straight from usbDs -- the ground truth for "is this a USB 3.0 link
+    // right now", independent of the console's "Enable USB 3.0" system
+    // setting (that setting only controls whether a SuperSpeed configuration
+    // is *offered*; whether the host actually negotiated it is this). Returns
+    // UsbDeviceSpeed_None when not connected.
+    UsbDeviceSpeed GetLinkSpeed();
+
     // Tear down USB device mode. Safe to call when already stopped.
     void Stop();
 

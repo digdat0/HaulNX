@@ -140,6 +140,13 @@ static bool net_is_up_fresh(void) {
  * runs, so it's reference-counted: the first worker to enter a heavy phase turns
  * it on, the last to leave turns it off. */
 static Mutex g_boost_mtx;
+
+/* Serializes queue_write_status_json -- it's callable from both the UI thread
+ * (httpsrv's /queue_status.json route) and the MTP responder's own worker
+ * thread (its queue_status.json root object), and the function fills a
+ * shared static buffer (see its own comment) before writing it out. Without
+ * this, two concurrent callers race on that buffer and on the output file. */
+static Mutex g_qstat_mtx;
 static int g_boost_refs = 0;
 
 static void boost_acquire(void) {
@@ -1203,6 +1210,7 @@ void queue_init(const char *roms_root, int max_dl) {
     mutexInit(&g_mtx);
     mutexInit(&g_net_mtx);
     mutexInit(&g_boost_mtx);
+    mutexInit(&g_qstat_mtx);
     queue_load(); /* restore any downloads pending from a previous session */
     g_run = true;
     queue_set_max_dl(max_dl);
@@ -2023,9 +2031,14 @@ static const char *qstatus_str(QStatus s) {
 
 void queue_write_status_json(const char *path) {
     static QueueView qv[QUEUE_MAX]; /* too big for the stack, see MainApplication.cpp's own qv */
+    /* Callable from the UI thread and the MTP worker thread (see g_qstat_mtx's
+     * comment) -- held across the snapshot AND the write, since qv[] is this
+     * function's shared scratch space, not just the file. */
+    mutexLock(&g_qstat_mtx);
     int n = queue_snapshot(qv, QUEUE_MAX);
     FILE *f = fopen(path, "wb");
     if (!f) {
+        mutexUnlock(&g_qstat_mtx);
         return;
     }
     fputs("{\"items\":[", f);
@@ -2051,4 +2064,5 @@ void queue_write_status_json(const char *path) {
     }
     fputs("]}", f);
     fclose(f);
+    mutexUnlock(&g_qstat_mtx);
 }

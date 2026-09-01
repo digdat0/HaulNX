@@ -13,6 +13,7 @@
 #include <fcntl.h>
 #include <stdarg.h>
 #include <netinet/in.h>
+#include <time.h> /* gmtime_r: fmt_http_date (GET consoleart's Last-Modified) */
 #include <netinet/tcp.h> /* TCP_NODELAY */
 #include <stdio.h>
 #include <stdlib.h>
@@ -508,6 +509,21 @@ static bool sanitize_app_path(const char *in, char *out, size_t out_sz) {
         return false;
     }
     return o > 4 && strcasecmp(out + o - 4, ".nro") == 0;
+}
+
+/* Format `t` as an RFC 1123 HTTP-date ("Wed, 21 Oct 2015 07:28:00 GMT") for
+ * Last-Modified / conditional-GET support (see GET consoleart). `out` must be
+ * at least 30 bytes. Fixed-width lookup tables rather than strftime's
+ * locale-dependent names, so this never depends on the current locale. */
+static void fmt_http_date(time_t t, char *out, size_t out_sz) {
+    static const char *wd[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
+    static const char *mo[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                               "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+    struct tm tmv;
+    gmtime_r(&t, &tmv);
+    snprintf(out, out_sz, "%s, %02d %s %04d %02d:%02d:%02d GMT",
+            wd[tmv.tm_wday % 7], tmv.tm_mday, mo[tmv.tm_mon % 12],
+            tmv.tm_year + 1900, tmv.tm_hour, tmv.tm_min, tmv.tm_sec);
 }
 
 /* Send a file from romfs/SD as a complete response. With `dl_name` set the
@@ -1108,36 +1124,70 @@ static int respond_simple(HttpSrv *s, int fd, const char *head) {
         pct_decode(fval, fvlen, target, sizeof(target));
         char key[80], path[768];
         snprintf(key, sizeof(key), "console:%s", target);
-        FILE *src = boxart_lookup(key, path, sizeof(path)) ? fopen(path, "rb")
-                                                            : NULL;
-        long sz = -1;
-        if (src) {
-            fseek(src, 0, SEEK_END);
-            sz = ftell(src);
-            fseek(src, 0, SEEK_SET);
-        }
-        if (!src || sz < 0) {
-            if (src) {
-                fclose(src);
-            }
+        struct stat cst;
+        bool have = boxart_lookup(key, path, sizeof(path)) &&
+                    stat(path, &cst) == 0;
+        if (!have) {
             send_resp(fd, "404 Not Found", "text/plain", "no cover art");
         } else {
-            char head[256];
-            int hn = snprintf(head, sizeof(head),
-                              "HTTP/1.1 200 OK\r\n"
-                              "Content-Type: image/png\r\n"
-                              "Content-Length: %ld\r\n"
-                              "Access-Control-Allow-Origin: *\r\n"
-                              "Connection: close\r\n\r\n",
-                              sz);
-            if (!head_ok(hn, sizeof(head)) || !send_all(fd, head, (size_t)hn)) {
-                fclose(src);
+            char lastmod[40];
+            fmt_http_date(cst.st_mtime, lastmod, sizeof(lastmod));
+            /* Conditional GET: inventory.json's per-console art_mtime lets the
+             * companion skip this request entirely for unchanged art, but a
+             * plain <img> tag (or any client that doesn't read that field)
+             * instead revalidates via If-Modified-Since -- honor it so a
+             * repeat render never re-streams bytes it already has. Same
+             * exact format on both ends (we format Last-Modified below and
+             * the client just echoes it back), so a straight prefix compare
+             * is enough without parsing the date back out. */
+            const char *ims = hdr_val(s->head, "if-modified-since:");
+            if (ims && strncmp(ims, lastmod, strlen(lastmod)) == 0) {
+                char head[192];
+                int hn = snprintf(head, sizeof(head),
+                                  "HTTP/1.1 304 Not Modified\r\n"
+                                  "Cache-Control: max-age=300\r\n"
+                                  "Last-Modified: %s\r\n"
+                                  "Access-Control-Allow-Origin: *\r\n"
+                                  "Connection: close\r\n\r\n",
+                                  lastmod);
+                if (head_ok(hn, sizeof(head))) {
+                    send_all(fd, head, (size_t)hn);
+                }
                 client_reset(s);
                 return 0;
             }
-            s->src = src;
-            s->src_left = (unsigned long long)sz;
-            return 0; /* body streams next poll; keep the connection (no reset) */
+            FILE *src = fopen(path, "rb");
+            long sz = -1;
+            if (src) {
+                fseek(src, 0, SEEK_END);
+                sz = ftell(src);
+                fseek(src, 0, SEEK_SET);
+            }
+            if (!src || sz < 0) {
+                if (src) {
+                    fclose(src);
+                }
+                send_resp(fd, "404 Not Found", "text/plain", "no cover art");
+            } else {
+                char head[320];
+                int hn = snprintf(head, sizeof(head),
+                                  "HTTP/1.1 200 OK\r\n"
+                                  "Content-Type: image/png\r\n"
+                                  "Content-Length: %ld\r\n"
+                                  "Cache-Control: max-age=300\r\n"
+                                  "Last-Modified: %s\r\n"
+                                  "Access-Control-Allow-Origin: *\r\n"
+                                  "Connection: close\r\n\r\n",
+                                  sz, lastmod);
+                if (!head_ok(hn, sizeof(head)) || !send_all(fd, head, (size_t)hn)) {
+                    fclose(src);
+                    client_reset(s);
+                    return 0;
+                }
+                s->src = src;
+                s->src_left = (unsigned long long)sz;
+                return 0; /* body streams next poll; keep the connection (no reset) */
+            }
         }
     } else if (s->mode == HTTPSRV_MODE_INVENTORY &&
                (fval = route_pval(s, p, pl, "boxartsearch", &fvlen)) != NULL) {

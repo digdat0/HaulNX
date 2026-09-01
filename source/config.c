@@ -3,12 +3,23 @@
 #include "fsutil.h"
 #include "version.h"
 
+#include <switch.h>
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
 
 /* ---- diagnostics bundle ------------------------------------------------ */
+
+/* Serializes diag_bundle_write -- it's callable from both the UI thread
+ * (Diagnostics screen export, httpsrv's /debug_bundle.txt route) and the MTP
+ * responder's own worker thread (its debug_bundle.txt root object). Without
+ * this, two concurrent fopen(path,"wb") writers can interleave and leave the
+ * bundle truncated or with spliced content. Zero-initialized statically is a
+ * valid unlocked Mutex (see mutexInit's own doc comment) -- no explicit init
+ * call needed. */
+static Mutex g_diag_mtx;
 
 /* Copy one log's whole contents into the bundle, headed by a "==== label
  * (path) ====" marker so it's easy to find in a pasted report. Missing is not
@@ -30,9 +41,11 @@ static void bundle_append(FILE *out, const char *label, const char *path) {
 }
 
 bool diag_bundle_write(void) {
+    mutexLock(&g_diag_mtx);
     fs_mkdir_p(LOGS_DIR);
     FILE *out = fopen(DIAG_BUNDLE_PATH, "wb");
     if (!out) {
+        mutexUnlock(&g_diag_mtx);
         return false;
     }
     fprintf(out, "HaulNX v%s debug bundle\n\n", APP_VERSION_STR);
@@ -42,7 +55,9 @@ bool diag_bundle_write(void) {
     bundle_append(out, "downloads", DLLOG_PATH);
     bundle_append(out, "extract-bench", EXBENCH_PATH);
     bundle_append(out, "queue-state", QUEUE_STATE_PATH);
-    return fclose(out) == 0;
+    bool ok = fclose(out) == 0;
+    mutexUnlock(&g_diag_mtx);
+    return ok;
 }
 
 /* Bounded string copy. A plain byte loop (not snprintf) so the compiler doesn't

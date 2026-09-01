@@ -37,6 +37,8 @@
 #include <extract.h>
 #include <config.h>
 #include <updman.h>
+#include <boxart.h> /* boxart_lookup: root "art_<target>.png" objects below */
+#include <queue.h> /* queue_write_status_json: root "queue_status.json" object below */
 
 #include <cstdarg>
 #include <cstdio>
@@ -525,6 +527,100 @@ namespace mtp {
                     out.push_back(AddOrFind(c, PtpRootParentObject, UPDSRC_PATH,
                                             "update_sources.json", false,
                                             static_cast<u64>(ust.st_size), ust.st_mtime));
+
+                /* The rolling debug-log bundle (Settings > Diagnostics), so a
+                 * USB companion can pull the same file GET /debug_bundle.txt
+                 * serves over Wi-Fi -- see diag_bundle_write's own comment.
+                 * Unlike the Wi-Fi route (one regen per deliberate GET),
+                 * reaching this branch at all doesn't mean the host actually
+                 * wants the bundle -- top()/file_in() re-enumerate the whole
+                 * root on EVERY USB read (console-folder browsing, downloads,
+                 * every micro-op), so calling the Wi-Fi side's "cheap, do it
+                 * every time" logic here would mean re-concatenating every log
+                 * file on the SD card many times a second during something as
+                 * ordinary as browsing a console folder. Throttled instead: at
+                 * most once every few seconds, still fresh enough for a
+                 * deliberate pull. The object itself is still (re-)listed
+                 * every time off whatever's already on disk, so a lookup never
+                 * intermittently 404s just because this call landed inside a
+                 * throttle window. */
+                static time_t s_diag_last = 0;
+                time_t diag_now = time(nullptr);
+                if (diag_now - s_diag_last >= 3) {
+                    diag_bundle_write();
+                    s_diag_last = diag_now;
+                }
+                struct stat dst;
+                if (stat(DIAG_BUNDLE_PATH, &dst) == 0)
+                    out.push_back(AddOrFind(c, PtpRootParentObject, DIAG_BUNDLE_PATH,
+                                            "debug_bundle.txt", false,
+                                            static_cast<u64>(dst.st_size), dst.st_mtime));
+
+                /* The live Queue tab snapshot (active/recent transfers), so a
+                 * USB companion's Downloads tab can show the Switch's own
+                 * queue alongside its PC-side one -- same file GET
+                 * /queue_status.json serves over Wi-Fi. queue_write_status_json
+                 * is just an in-memory snapshot plus a small JSON write (much
+                 * cheaper than the debug bundle's log concatenation), but this
+                 * branch still runs on every USB micro-op, so it gets the same
+                 * throttle rather than writing the SD card that often -- a
+                 * shorter one since a live-feeling queue view is the whole
+                 * point here. */
+                static time_t s_qstat_last = 0;
+                time_t qstat_now = time(nullptr);
+                if (qstat_now - s_qstat_last >= 1) {
+                    queue_write_status_json(QUEUE_STATUS_PATH);
+                    s_qstat_last = qstat_now;
+                }
+                struct stat qst;
+                if (stat(QUEUE_STATUS_PATH, &qst) == 0)
+                    out.push_back(AddOrFind(c, PtpRootParentObject, QUEUE_STATUS_PATH,
+                                            "queue_status.json", false,
+                                            static_cast<u64>(qst.st_size), qst.st_mtime));
+
+                /* Each console's current cover art (Console Art / companion
+                 * push), so a USB companion can preview and cache it the same
+                 * way GET /consoleart serves it over Wi-Fi -- boxart_lookup
+                 * resolves the same "console:<target>" cache key either way.
+                 * Named "art_<target>.png" so the companion can ask for one
+                 * console's art directly instead of listing the whole root to
+                 * find it; the reported mtime is what lets it skip re-pulling
+                 * art that hasn't changed since the last sync.
+                 *
+                 * Unlike the two objects above, this loop's cost scales with
+                 * the library's console count (a boxart_lookup + stat() per
+                 * console) -- on a 50+ console library that's 50+ blocking
+                 * syscalls on this thread, on every USB micro-op, since this
+                 * whole branch runs that often (see the header comment on
+                 * this function). Cache the resolved list the same way the
+                 * objects above cache their own expensive part, so ordinary
+                 * browsing only pays this cost once every couple of seconds
+                 * instead of on every listing. */
+                struct ArtEnt { char path[768]; char name[96]; u64 size; time_t mtime; };
+                static std::vector<ArtEnt> s_art_cache;
+                static time_t s_art_last = 0;
+                time_t art_now = time(nullptr);
+                if (art_now - s_art_last >= 2 || s_art_cache.empty()) {
+                    s_art_cache.clear();
+                    for (int i = 0; i < c->nfolders; i++) {
+                        char key[80], path[768];
+                        snprintf(key, sizeof(key), "console:%s", c->folders[i].name);
+                        if (!boxart_lookup(key, path, sizeof(path))) continue;
+                        struct stat ast;
+                        if (stat(path, &ast) != 0) continue;
+                        ArtEnt e{};
+                        snprintf(e.path, sizeof(e.path), "%s", path);
+                        snprintf(e.name, sizeof(e.name), "art_%s.png", c->folders[i].name);
+                        e.size = static_cast<u64>(ast.st_size);
+                        e.mtime = ast.st_mtime;
+                        s_art_cache.push_back(e);
+                    }
+                    s_art_last = art_now;
+                }
+                for (const auto &e : s_art_cache) {
+                    out.push_back(AddOrFind(c, PtpRootParentObject, e.path, e.name,
+                                            false, e.size, e.mtime));
+                }
                 return PtpResponseCode_Ok;
             }
 

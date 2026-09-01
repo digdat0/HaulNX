@@ -49,6 +49,13 @@ namespace mtp {
             void Finalize();
 
             bool GetConfigured() const;
+            /* Actual negotiated link speed of the live session (High vs Super),
+             * as opposed to the console's "Enable USB 3.0" system setting --
+             * that setting only gates whether the console *offers* a SuperSpeed
+             * configuration at all (see InitializeModern's dual descriptor);
+             * whether the host+cable+port actually negotiated it is usbDs's own
+             * runtime state. UsbDeviceSpeed_None if not configured. */
+            UsbDeviceSpeed GetSpeed() const;
             Event *GetCompletionEvent(UsbSessionEndpoint ep) const;
             Result TransferAsync(UsbSessionEndpoint ep, void *buffer, u32 size, u32 *out_urb_id);
             Result GetTransferResult(UsbSessionEndpoint ep, u32 urb_id, u32 *out_transferred_size);

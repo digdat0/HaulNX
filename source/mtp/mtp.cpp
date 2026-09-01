@@ -317,6 +317,14 @@ namespace mtp {
         return g_session.GetConfigured() ? Status_Connected : Status_Waiting;
     }
 
+    UsbDeviceSpeed GetLinkSpeed() {
+        if (!g_up || !g_session.GetConfigured()) {
+            return UsbDeviceSpeed_None;
+        }
+
+        return g_session.GetSpeed();
+    }
+
     void Stop() {
         if (!g_up) {
             return;

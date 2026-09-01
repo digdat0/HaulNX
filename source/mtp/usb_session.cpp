@@ -291,6 +291,16 @@ namespace mtp {
         return usb_state == UsbState_Configured;
     }
 
+    UsbDeviceSpeed UsbSession::GetSpeed() const {
+        UsbDeviceSpeed speed = UsbDeviceSpeed_None;
+
+        if (R_FAILED(usbDsGetSpeed(std::addressof(speed)))) {
+            return UsbDeviceSpeed_None;
+        }
+
+        return speed;
+    }
+
     Event *UsbSession::GetCompletionEvent(UsbSessionEndpoint ep) const {
         return std::addressof(m_endpoints[ep]->CompletionEvent);
     }
