@@ -7,6 +7,39 @@ Notes for each release. `release.sh` pulls the section matching the version in
 `VERSION` and attaches it to the GitHub release. Add a `## <version>` section
 here before running a release.
 
+## 2.2.22
+
+**Accurate USB 3.0 status, the Switch's own Queue tab visible over USB too, and no more re-copying cover art on every sync.**
+
+- Fixed the USB 3.0 status on Settings > Diagnostics reading "Disabled" even
+  with Atmosphere's USB 3.0 option enabled — that option works by patching
+  the USB driver directly rather than the system setting the app was
+  reading, so it never agreed with reality. Now checks the real Atmosphere
+  setting first, then the console's own USB setting, and while a cable's
+  actually connected, the true negotiated link speed — live, so it updates
+  in place instead of only reflecting whatever was true when you opened the
+  screen.
+- The desktop companion's Downloads tab now shows the Switch's own Queue tab
+  (repo downloads, anything sent to it directly) over a USB connection too —
+  previously only visible over Wi-Fi.
+- Console cover art no longer gets re-sent every single sync. The Switch now
+  reports each console's art timestamp, so the desktop app only re-pulls art
+  that's actually changed and keeps a local cache — noticeably less USB/Wi-Fi
+  traffic on every connect.
+- New small "Syncing with Switch" indicator in the desktop app for when a
+  request is genuinely queued behind another one, instead of unrelated parts
+  of the app appearing to lag while art or other data loads.
+- The desktop app's "Load collection from the Switch?" prompt now only
+  appears when there's an actual difference to review, not on every load.
+- Fixed an app whose release file name changes every version (e.g. one that
+  bakes its version number into the filename) getting the new version's
+  content written under the old, stale filename instead of renamed to match.
+- A full review of everything above turned up and fixed a few deeper issues:
+  two on-device files that could get written by two things at once under
+  heavy USB+Wi-Fi use, a missing safety check on file names coming from an
+  app update source, and some unnecessary background work trimmed for
+  smoother performance.
+
 ## 2.2.15
 
 **Quality of Life + New Icons**
