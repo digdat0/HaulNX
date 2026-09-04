@@ -39,10 +39,33 @@ acquire, organize, verify, and maintain.
 
 ## Features
 
+**Installed library**
+- Browse what you have by console, sorted by name or size with pinned folders on top,
+  with an **on-device badge** so you can see at a glance what's already installed
+- **Search installed games** across every ROM folder; open a result to jump to it
+- Multi-select to delete, or rename in place
+
+**Keep emulators & apps updated**
+- **Settings → Emulator & app updates** scans everything under `sdmc:/switch`, checks
+  each against its **GitHub release**, and installs or updates it in place — with
+  per-app backups so you can revert
+- Update sources live in one shared manifest you can edit on the console **or** from
+  the desktop companion, and sync either direction over USB or Wi-Fi
+
+**Custom install folders**
+- The library lives at `sdmc:/roms/<console>/` by default, but you can **move it
+  anywhere** (Settings → Storage → ROM Download Folder) or send **individual consoles
+  to their own folders** (Settings → Storage → Install folders → *Custom per
+  console*). Handy when one emulator insists on its own directory, or you keep a system
+  on a separate card. Full walkthrough on the
+  **[Custom Folders](https://github.com/digdat0/HaulNX/wiki/Reference-Custom-Folders)**
+  wiki page.
+
 **Get ROMs into the library**
-- **Download from archive.org** — collections grouped by console, with **global
-  search** across every cached repo (results tagged with their console and marked `*`
-  if you already have the file), bulk-mark with **Y** and queue with **A**
+- **Have a personal archive of your own backed-up collection on archive.org?** —
+  collections grouped by console, with **global search** across every cached repo
+  (results tagged with their console and marked `*` if you already have the file),
+  bulk-mark with **Y** and queue with **A**
 - **Send from your PC** — push files straight to the console over a **USB cable** or
   over **Wi-Fi** (no cable), from the [desktop companion](#the-desktop-companion).
   Incoming files land in an inbox and are auto-sorted to the right console
@@ -74,28 +97,6 @@ acquire, organize, verify, and maintain.
 - **Reduce to 1G1R** — flag clone/region duplicates down to one game per title
 - **Per-file options** (**X** in the library) — rename in place, sort, delete, or
   **move a game to another console folder**
-
-**Installed library**
-- Browse what you have by console, sorted by name or size with pinned folders on top,
-  with an **on-device badge** so you can see at a glance what's already installed
-- **Search installed games** across every ROM folder; open a result to jump to it
-- Multi-select to delete, or rename in place
-
-**Keep emulators & apps updated**
-- **Settings → Emulator & app updates** scans everything under `sdmc:/switch`, checks
-  each against its **GitHub release**, and installs or updates it in place — with
-  per-app backups so you can revert
-- Update sources live in one shared manifest you can edit on the console **or** from
-  the desktop companion, and sync either direction over USB or Wi-Fi
-
-**Custom install folders**
-- The library lives at `sdmc:/roms/<console>/` by default, but you can **move it
-  anywhere** (Settings → Storage → ROM Download Folder) or send **individual consoles
-  to their own folders** (Settings → Storage → Install folders → *Custom per
-  console*). Handy when one emulator insists on its own directory, or you keep a system
-  on a separate card. Full walkthrough on the
-  **[Custom Folders](https://github.com/digdat0/HaulNX/wiki/Reference-Custom-Folders)**
-  wiki page.
 
 **Also** — an optional card view with fetched **box art** (SteamGridDB, optional API
 key), full touch control, 25 languages, light and dark themes with a **customizable
