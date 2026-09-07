@@ -683,12 +683,13 @@ class MainApplication : public pu::ui::Application {
         Cache,     // metadata cache management
         Transfers, // settings submenu: import/export/restore/update over Wi-Fi
         Sources,   // settings submenu: manage consoles/repos + file-type filter
-        Storage,   // settings submenu: SD space, ROM folder, temp + caches
-        InstallFolders, // Storage sub-screen: per-console custom install folders
+        Storage,   // settings submenu: SD space, temp + caches
+        Folders,   // top-level Folders tab: ROM root, install-folder mode, and
+                   // (expanded inline below the toggle, no separate sub-screen)
+                   // per-console custom install folders
         Backups,   // Storage sub-screen: emulator/app rollback backups (view/delete)
         Account,   // settings submenu: archive.org creds + startup net check
         Updates,   // settings submenu: HaulNX build check now + auto-check toggle
-        AppEmuUpdates, // settings submenu: emulator/app update management hub
         Diagnostics, // settings submenu: logs, self-test, tuning, reset
         About,     // settings submenu: getting started, release notes, credits
         SpeedTest, // Diagnostics sub-screen: live download/upload meters
@@ -711,7 +712,9 @@ class MainApplication : public pu::ui::Application {
         UsbMtp,       // embedded MTP: connect the console to a PC over USB
         Dats,         // Storage sub-screen: DAT files + auto-download (Fresh1G1R)
         RegionOrder,  // Dats sub-screen: 1G1R keep-preference region order
-        AppUpdates,   // Updates sub-screen: emulator/app list (check/update/revert)
+        AppUpdates,   // emulator/app list (check/update/revert); the Emulators
+                      // tab's root when appman_kind is UPD_KIND_EMU, a Settings
+                      // sub-screen ("App Updates") when it's UPD_KIND_APP
         LargestFiles, // Storage sub-screen: whole-library files, biggest first
         BoxArtResults, // Tools/Console-Options "Scan for Box Art" outcome, one row per title
         DataFiles,    // settings submenu: hosts DAT files + metadata cache
@@ -727,10 +730,14 @@ class MainApplication : public pu::ui::Application {
     };
     enum class Pending { None, AddRepo, Manual, SortAssign };
     // Tab positions, left to right. The library is the front door of the app, so
-    // Installed sits at 0 (labelled "Library") and Browse at 1 (labelled "Add");
-    // Queue/Settings keep 2/3 so the notification-dot positions are unchanged.
-    // Enum member names still describe the screen each tab opens.
-    enum class Tab { Installed = 0, Browse = 1, Queue = 2, Settings = 3 };
+    // Installed sits at 0 (labelled "Library") and Browse at 1 (labelled "Add").
+    // Emulators and Folders were promoted out of Settings to their own tabs and
+    // sit just before Settings, which stays last. Emulators opens straight to
+    // the emulator list (GotoAppUpdates(UPD_KIND_EMU)) -- app updates stayed
+    // back in Settings, since apps aren't a library-wide concern the way
+    // emulators (which every console folder depends on) are. Enum member names
+    // still describe the screen each tab opens.
+    enum class Tab { Installed = 0, Browse = 1, Queue = 2, Emulators = 3, Folders = 4, Settings = 5 };
 
   private:
     MainLayout::Ref layout;
@@ -763,7 +770,13 @@ class MainApplication : public pu::ui::Application {
                              // being chosen (returns to that console's screen)
     bool picker_from_installed = false; // true when the per-console picker was
                              // opened from the Installed tab (so it returns
-                             // there instead of the Storage folder list)
+                             // there instead of the Folders tab)
+    bool picker_nro_mode = false; // Screen::RomPicker is browsing for an .nro
+                             // file (Add emulator manually) rather than picking
+                             // a folder -- see GotoRomPicker/AppAddManual
+    bool folders_expanded = false; // Folders tab: per-console folder rows are
+                             // expanded inline below the toggle row (see
+                             // GotoFolders) instead of a separate sub-screen
     Screen log_origin;       // screen to return to from the log viewer
     // Which file the shared text-log viewer is showing, and its labels.
     std::string log_view_path;
@@ -861,6 +874,31 @@ class MainApplication : public pu::ui::Application {
     static const int UMI_MAX = 4; // concurrent emulator/app installs
     UmiJob umi_jobs[UMI_MAX];
 
+    // One in-flight "revert from backup" copy (AppRevert/AppRevertThread/
+    // AppRevertTick). A single slot, not a pool like UmiJob's -- revert is a
+    // one-at-a-time modal action, never launched in bulk the way installs
+    // can be. Off-thread because fs_copy_file_progress can take real time
+    // for a large NRO; this used to run inline on the UI thread with zero
+    // feedback, freezing the app with no visual sign anything was happening
+    // (an install/update at least has a download's progress bar first --
+    // revert has no such warmup, so 100% of its wait was silent).
+    struct RevertJob {
+        BgTask task;
+        std::atomic<bool> ok{false};
+        std::atomic<u64> now{0};
+        std::atomic<u64> total{0};
+        std::string src;   // backup file being restored
+        std::string dest;  // final on-device .nro path
+        std::string bak;   // transient safety copy of what's being replaced
+        bool restore_bak = false; // worker-thread-only until Join(): did we actually move dest aside?
+        std::string id;    // manifest id (backup_keep2's folder + appman lookup)
+        std::string cur_ver; // installed version being replaced (backup_keep2's filename)
+        std::string name;  // display name (queue item / toast)
+        std::string label; // chosen backup's display label (toast wording)
+        int xslot = -1;    // Queue-tab external item tracking this job
+    };
+    RevertJob revert_job;
+
     // Background update *check* (release-list fetch), so "Check for updates"
     // doesn't freeze the UI during retries. Shows the attempt number (1/3).
     BgTask chk;
@@ -926,6 +964,26 @@ class MainApplication : public pu::ui::Application {
         std::string asset;  // release asset filename
     };
     std::map<std::string, AppManCachedCheck> appman_net_cache[2]; // [UPD_KIND_EMU/APP]
+
+    // ids UmiTick just successfully installed/updated this session, not yet
+    // invalidated by a real network re-check. AppChkThread's local-only pass
+    // (see appman_net_cache's comment above) is SUPPOSED to self-correct a
+    // just-updated entry from its own fresh disk re-read, but that depends on
+    // the installed file's own version string round-tripping cleanly through
+    // version_cmp against the cached "latest" tag -- a mismatch there (a
+    // release whose NACP version string doesn't match its GitHub tag's
+    // format, or wasn't bumped at all) can leave the row reporting "Update
+    // available" against a file that was, in fact, just swapped to that exact
+    // release. Rather than rely on that string comparison always agreeing
+    // with reality, UmiTick stamps the id here directly on success -- ground
+    // truth from "we just did the swap ourselves" -- and AppChkThread's local
+    // pass honors it outright (state = APST_UPTODATE) instead of
+    // recomputing. Cleared the moment any REAL network check runs for that id
+    // (AppChkThread's network pass, AppRecheckOne), so a genuinely newer
+    // release later still surfaces correctly -- this only ever short-circuits
+    // the gap between "we just installed X" and "we last confirmed what's
+    // actually latest on GitHub".
+    std::set<std::string> appman_just_updated;
 
     // Background network self-test (Diagnostics -> Network self-test): checks
     // the LAN address and reaches archive.org off the UI thread so a slow or
@@ -1133,7 +1191,18 @@ class MainApplication : public pu::ui::Application {
     std::string pxt_path;      // archive path, already moved into its console folder
     std::string pxt_dir;       // that folder (extraction destination)
     std::string pxt_name;      // display name, for the completion log line
-    std::string pxt_target;    // console key, for the completion log line
+    std::string pxt_target;    // console key, for the completion log line (kind 0 only)
+    // What PushExtractTick does with a finished extraction, since the same
+    // worker now backs three different pushes that all just need "unzip
+    // off-thread" but finish differently. 0 = a console game archive (default;
+    // pxt_target names the console) -- see InvApplyFile's folder-push branch.
+    // 1 = an SD Card tab folder push (see InvApplyFile's recv_fs_extract
+    // branch) -- pxt_target is empty, pxt_dir is the final destination as-is.
+    // 2 = a DAT bulk push (see InvApplyDatBulk) -- pxt_dir is a throwaway
+    // staging folder; PushExtractTick runs dat_stage over every file inside
+    // it and files each into DATS_DIR by its own header, then removes the
+    // staging folder.
+    int pxt_kind = 0;
     std::atomic<bool> pxt_cancel{false};
     bool imp_open = false;
     bool usb_open = false; // true while the embedded-MTP connect screen is up
@@ -1359,14 +1428,14 @@ class MainApplication : public pu::ui::Application {
     // New settings hierarchy: one screen per concern (see GotoSettings).
     void GotoSources();
     void GotoStorage();
-    void GotoInstallFolders();
+    void GotoFolders(); // Folders tab root: ROM root, install-folder mode, and
+                        // (expanded inline) per-console folders
     void GotoInboxFiles(); // Storage sub-screen: view/select/delete Inbox files
     void GotoBackups(); // Storage sub-screen: view/delete rollback backups
     // Rows on Screen::Backups: full path + display label, one per stored build.
     std::vector<std::pair<std::string, std::string>> backup_rows;
     void GotoAccount();
     void GotoUpdates();
-    void GotoAppEmuUpdates(); // Settings section: hosts Emulator/App updates rows
     void PushListToPc();          // console-initiated sources/list push (Updates)
     bool CompanionConnected() const; // a companion polled inventory.json within 15s
     void GotoDiagnostics();
@@ -1456,6 +1525,7 @@ class MainApplication : public pu::ui::Application {
     static bool PushExtractProgress(void *ud, const char *entry, int done,
                                     uint64_t bytes_read); // its cancel hook
     void PushExtractTick();    // per-frame: reap the extract worker when done
+    void PushExtractApplyDatBulk(); // pxt_kind==2: file every extracted DAT, then clean up
     void InvApplyNro(char *body, size_t len); // stage an .nro pushed to the inv server
     void InvApplyDat(char *body, size_t len); // file a DAT pushed to the inv server (no modal)
     // set a console's cover art from a companion push (X-Art-Target, no modal)
@@ -1515,7 +1585,12 @@ class MainApplication : public pu::ui::Application {
     void AppMarkChecked(const std::string &id); // stamp+persist an entry's check time
     std::string AppCheckedLabel(const std::string &id); // "checked 5m ago" / ""
     void AppSetSource(const UpdSource &e); // swkbd-edit the entry's GitHub repo
-    void AppRevert(const UpdSource &e);  // roll back to a stored backup build
+    void AppAddManual(); // Emulators tab: browse for an .nro not in the bundled
+                          // catalogue, then set its GitHub repo
+    void AppRevert(const UpdSource &e);  // roll back to a stored backup build (kicks off revert_job)
+    static void AppRevertThread(void *arg); // arg is &revert_job: backup_keep2 + swap, off-thread
+    static bool AppRevertProgress(void *ud, u64 now, u64 total); // ud is &revert_job
+    void AppRevertTick(); // per-frame: mirror progress into the Queue item, reap on completion
     // Background install kicked off from the manager: download the release .nro,
     // then (on the main thread, in UmiTick) validate, back up the current build,
     // and swap it in. Mirrored into a Queue-tab item by PollXfers. Picks the

@@ -72,6 +72,18 @@ ROMFS		:=	romfs
 #---------------------------------------------------------------------------------
 ARCH	:=	-march=armv8-a+crc+crypto -mtune=cortex-a57 -mtp=soft -fPIE
 
+# HAULNX_LITE=1 compiles out the ROM-acquisition/downloader feature entirely
+# (archive.c's search/download engine plus every UI entry point that reaches
+# it -- Search/Downloads/ArchiveSearch screens, dl_sources.json, download-source
+# credentials). Built for app-store submissions that reject any "download a
+# ROM from the internet" capability -- see the `lite` target below. Library
+# management, Verify/Tidy/DAT/1G1R, USB/Wi-Fi/MTP transfer, box art, and
+# on-device app/emulator self-updates (a separate system -- GitHub release
+# binaries, not ROM files) are all unaffected.
+ifeq ($(HAULNX_LITE),1)
+DEFINES += -DHAULNX_LITE
+endif
+
 CFLAGS	:=	-g -Wall -Werror -O2 -ffunction-sections \
 			$(ARCH) $(DEFINES)
 
@@ -180,7 +192,7 @@ ifneq ($(ROMFS),)
 	export NROFLAGS += --romfsdir=$(CURDIR)/$(ROMFS)
 endif
 
-.PHONY: $(BUILD) clean all plutonium version_header i18n_strings dist
+.PHONY: $(BUILD) clean all plutonium version_header i18n_strings dist lite
 
 #---------------------------------------------------------------------------------
 # Local-only: every plain `make` also drops a copy onto the Ryujinx sdcard
@@ -235,6 +247,19 @@ endif
 # machine; upload it as-is, no rename needed.
 dist:
 	@$(MAKE) --no-print-directory PUBLIC_BUILD=1 TARGET=HaulNX BUILD=build-public
+
+# Store-submission build: HaulNX Lite. Same PUBLIC_BUILD hygiene as `dist`
+# (no source/ext, separate build dir/output) plus HAULNX_LITE=1 -- see the
+# HAULNX_LITE comment above. Produces HaulNX-Lite.nro. Baked-in APP_VERSION
+# gets an "l" suffix (e.g. "2.2.30l") so the .nacp/hbmenu version is
+# distinguishable from the same-VERSION full build -- the VERSION file itself
+# is untouched (shared with every other build). APP_VERSION on the command
+# line overrides the child make's own `:=` read of VERSION, per normal Make
+# variable-precedence rules.
+lite:
+	@$(MAKE) --no-print-directory PUBLIC_BUILD=1 HAULNX_LITE=1 \
+		TARGET=HaulNX-Lite BUILD=build-lite APP_TITLE="HaulNX Lite" \
+		APP_VERSION="$(APP_VERSION)l"
 
 #---------------------------------------------------------------------------------
 else

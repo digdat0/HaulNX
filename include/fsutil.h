@@ -30,6 +30,18 @@ bool fs_move(const char *src, const char *dst);
  * transfer buffer is heap, so two threads may copy at once. */
 bool fs_copy_file(const char *src, const char *dst);
 
+/* Same as fs_copy_file, with an optional progress callback (may be NULL, in
+ * which case this is identical to fs_copy_file) -- `progress`, if given, is
+ * called after each chunk with bytes copied so far and the source's total
+ * size (0 if it couldn't be stat'd). Returning false cancels the copy (same
+ * convention as net_progress_cb in net.h): the partial dst is removed, same
+ * as any other failure. For a copy big enough to be worth watching (a large
+ * app revert/backup) — fs_copy_file itself stays the plain, callback-free
+ * entry point every existing caller already uses unchanged. */
+bool fs_copy_file_progress(const char *src, const char *dst,
+                           bool (*progress)(void *ud, uint64_t now, uint64_t total),
+                           void *ud);
+
 /* true if path exists. */
 bool fs_exists(const char *path);
 

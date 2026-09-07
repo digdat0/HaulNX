@@ -164,12 +164,31 @@ typedef struct {
      * app/library/inbox logic a normal game push gets: this is a plain file
      * write, not a ROM import. Empty for every other kind of push. */
     char recv_fs_dest[768];
+    /* Set alongside recv_fs_dest by an X-Fs-Extract header: the body is a zip
+     * of a whole folder (the SD Card tab's "send folder" flow bundles it into
+     * one archive/one push instead of one push per file, which used to mean
+     * hundreds of back-to-back connections against this single-client server
+     * for a folder of any real size — see PushExtractThread's SD-card-folder
+     * case in InvApplyFile). recv_fs_dest is the destination DIRECTORY in
+     * this case, not a file path; the caller extracts into it instead of
+     * fs_move()ing the part straight there. Meaningless (ignored) when
+     * recv_fs_dest is empty. */
+    bool recv_fs_extract;
     /* Inventory mode only: an X-Dat header marked this buffered POST as a
      * verification DAT (the companion's DAT Files tab › push). It forces the body
      * to buffer in RAM (a DAT is small XML) rather than stream to the inbox, so
      * the caller can parse its header and file it into DATS_DIR by console. Reset
      * per connection; see InvApplyDat. */
     bool recv_dat;
+    /* Inventory mode only: an X-Dat-Bulk header marked this streamed POST as a
+     * zip of several verification DATs (the DAT Files tab's "Push all" —
+     * batched into one push instead of one per DAT for the same reason a
+     * folder push is, see recv_fs_extract). Unlike a single X-Dat push this
+     * streams to disk (a bulk zip can be sizable) rather than buffering in
+     * RAM; the caller extracts it to a private staging folder and runs each
+     * extracted file through the same dat_stage validation a single push
+     * uses — see PushExtractApplyDatBulk. Reset per connection. */
+    bool recv_dat_bulk;
     char last_err[64]; /* why a ROM stream aborted, for the caller to log */
     /* Inventory mode only: system tick (ns) of the last inventory.json GET, i.e.
      * the last time a companion polled us. 0 = never. Lets the console show

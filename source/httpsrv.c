@@ -2242,6 +2242,7 @@ static int client_step(HttpSrv *s) {
              * rejecting the request outright, so a bad value falls back to
              * landing in the inbox (like a nameless push) instead of the
              * connection erroring mid-setup. */
+            s->recv_fs_extract = false;
             if (s->sd_access) {
                 const char *fp = hdr_val(s->head, "x-fs-path:");
                 if (fp) {
@@ -2250,6 +2251,11 @@ static int client_step(HttpSrv *s) {
                     if (sd_path_allowed(s, dest)) {
                         snprintf(s->recv_fs_dest, sizeof(s->recv_fs_dest), "%s",
                                 dest);
+                        /* Only meaningful alongside a valid recv_fs_dest --
+                         * an SD-card folder push (one zip, one connection)
+                         * instead of one push per file. */
+                        s->recv_fs_extract =
+                            hdr_val(s->head, "x-fs-extract:") != NULL;
                     }
                 }
             }
@@ -2257,6 +2263,12 @@ static int client_step(HttpSrv *s) {
              * the caller can read its header and file it by console — never route
              * it to the streamed-to-inbox path even though it has an X-Filename. */
             s->recv_dat = (hdr_val(s->head, "x-dat:") != NULL);
+            /* A DAT *bulk* push (companion's "Push all") carries X-Dat-Bulk
+             * instead — deliberately NOT folded into recv_dat above, so the
+             * stream_to_disk check below (which only excludes recv_dat) still
+             * streams it like an ordinary file push rather than buffering a
+             * whole zip of DATs in RAM. See recv_dat_bulk's own comment. */
+            s->recv_dat_bulk = (hdr_val(s->head, "x-dat-bulk:") != NULL);
             /* A console-art push (companion's Console Art button) carries
              * X-Art-Target and must buffer for the same reason a DAT does: the
              * caller writes it into the box-art cache under that console's key

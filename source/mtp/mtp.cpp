@@ -198,6 +198,27 @@ namespace mtp {
         std::vector<std::string> g_delq;
         bool   g_delup = false;        /* worker thread created */
 
+        /* --- console-art push mailbox ---------------------------------------
+         * No dedicated worker thread needed here (unlike extract/delete): the
+         * work itself (read a small staged image, call into MainApplication's
+         * config/UI state) is cheap, not slow -- this mutex-guarded queue
+         * exists purely to cross from the responder thread (which can't
+         * safely touch MainApplication's main-thread-only state) to the main
+         * thread's own per-frame poll. See EnqueueArtPush/PollArtPush. */
+        Mutex  g_artlock;              /* guards g_artq */
+        std::vector<ArtPush> g_artq;
+
+        /* --- box-art search/pick request + status mailbox ------------------
+         * Same no-dedicated-worker shape as the art-push mailbox above (the
+         * eventual work runs on MainApplication's own inv_boxsearch/
+         * inv_boxpick BgTasks, not here) -- one mutex covers both the request
+         * queue (responder thread -> main thread) and the status snapshot
+         * (main thread -> responder thread), since neither side is ever hot
+         * enough for contention to matter. */
+        Mutex         g_boxartlock;
+        std::vector<BoxartReq> g_boxartq;
+        BoxartStatus  g_boxart_status;
+
         void DeleteWorker(void *) {
             while (!g_stopping) {
                 int idx = 0;
@@ -226,6 +247,57 @@ namespace mtp {
         g_delq.push_back(path);
         mutexUnlock(std::addressof(g_dellock));
         ueventSignal(std::addressof(g_delwake));
+    }
+
+    void EnqueueArtPush(const char *target, const char *path) {
+        if (!target || !target[0] || !path || !path[0]) return;
+        ArtPush ap{};
+        snprintf(ap.target, sizeof(ap.target), "%s", target);
+        snprintf(ap.path, sizeof(ap.path), "%s", path);
+        mutexLock(std::addressof(g_artlock));
+        g_artq.push_back(ap);
+        mutexUnlock(std::addressof(g_artlock));
+    }
+
+    bool PollArtPush(ArtPush *out) {
+        mutexLock(std::addressof(g_artlock));
+        bool have = !g_artq.empty();
+        if (have) {
+            *out = g_artq.front();
+            g_artq.erase(g_artq.begin());
+        }
+        mutexUnlock(std::addressof(g_artlock));
+        return have;
+    }
+
+    void EnqueueBoxartReq(const BoxartReq &req) {
+        mutexLock(std::addressof(g_boxartlock));
+        g_boxartq.push_back(req);
+        mutexUnlock(std::addressof(g_boxartlock));
+    }
+
+    bool PollBoxartReq(BoxartReq *out) {
+        mutexLock(std::addressof(g_boxartlock));
+        bool have = !g_boxartq.empty();
+        if (have) {
+            *out = g_boxartq.front();
+            g_boxartq.erase(g_boxartq.begin());
+        }
+        mutexUnlock(std::addressof(g_boxartlock));
+        return have;
+    }
+
+    void SetBoxartStatus(const BoxartStatus &st) {
+        mutexLock(std::addressof(g_boxartlock));
+        g_boxart_status = st;
+        mutexUnlock(std::addressof(g_boxartlock));
+    }
+
+    BoxartStatus GetBoxartStatus() {
+        mutexLock(std::addressof(g_boxartlock));
+        BoxartStatus st = g_boxart_status;
+        mutexUnlock(std::addressof(g_boxartlock));
+        return st;
     }
 
     bool Start(const char *root, const Folder *folders, int nfolders,

@@ -42,6 +42,18 @@ static int parse_sources(const char *js, size_t len, UpdSource *out, int max) {
             char kind[16];
             copy_field(js, tok, child, "kind", kind, sizeof(kind));
             s->kind = (strcasecmp(kind, "app") == 0) ? UPD_KIND_APP : UPD_KIND_EMU;
+#ifdef HAULNX_LITE
+            /* The bundled manifest's self-entry ("detect":"haulnx") points at
+             * digdat0/HaulNX, but that substring also matches a Lite install's
+             * own "HaulNX-Lite.nro" -- left alone, a Lite build would list
+             * itself in the Emulators tab offering an update from the FULL
+             * repo. Repoint it to the Lite repo here rather than in the JSON
+             * (which the full build shares and can't #ifdef). */
+            if (strcasecmp(s->id, "haulnx") == 0) {
+                snprintf(s->name, sizeof(s->name), "HaulNX Lite");
+                snprintf(s->repo, sizeof(s->repo), "digdat0/HaulNX-lite");
+            }
+#endif
             if (s->id[0] && s->name[0]) {
                 count++;
             }

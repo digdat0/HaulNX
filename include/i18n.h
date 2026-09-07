@@ -28,6 +28,8 @@ enum {
     S_TAB_BROWSE,
     S_TAB_INSTALLED,
     S_TAB_QUEUE,
+    S_TAB_EMULATORS, /* Emulators tab: emulator update/install list, promoted out of Settings */
+    S_TAB_FOLDERS, /* Folders tab: ROM root + per-console folders, promoted out of Settings */
     S_TAB_SETTINGS,
 
     /* ---- browse / home ---- */
@@ -127,6 +129,7 @@ enum {
     S_SUB_CONSOLE_FOLDERS,    /* per-console folder list subtitle */
     S_OPEN,                   /* right-cell value: actionable */
     S_LOCKED,                 /* right-cell value: disabled until unlocked */
+    S_CLOSE,                  /* right-cell value: the collapsed half of an expand/collapse toggle */
     /* ---- ROM-folder dialog on the Installed tab (Y on a console) ---- */
     S_ROM_FOLDER_INSTALLS_TO, /* dialog body: "Installs to:\n%s" */
     S_ROM_FOLDER_DEFAULT_TAG, /* body line when using the default location */
@@ -513,8 +516,8 @@ enum {
     S_SEC_INSTALL_PC,
     S_SEC_ACCOUNT,
     S_SEC_UPDATES,
-    S_SEC_APP_EMU_UPDATES, /* new top-level row: emulator/app update management,
-                             * split out of Updates (which stayed HaulNX-only) */
+    S_SEC_APP_UPDATES, /* Settings row: app update management -- emulator
+                         * updates moved out to their own top-level tab */
     S_SEC_LOGS,
     S_SEC_DIAGNOSTICS,
     S_SEC_ABOUT,
@@ -524,9 +527,10 @@ enum {
     S_TITLE_DLPREFS,      S_SUB_DLPREFS,
     S_TITLE_SOURCES,      S_SUB_SOURCES,
     S_TITLE_STORAGE,      S_SUB_STORAGE,
+    S_TITLE_FOLDERS,      S_SUB_FOLDERS, /* Folders tab hub: ROM root, install mode, per-console */
     S_TITLE_TRANSFERS,    S_SUB_TRANSFERS,
     S_TITLE_RECV_CONSOLE, S_SUB_RECV_CONSOLE,
-    S_TITLE_ACCOUNT,      S_SUB_ACCOUNT,
+    S_TITLE_ACCOUNT,      S_SUB_ACCOUNT,      S_SUB_ACCOUNT_LITE, /* Lite: no archive.org creds row */
     S_TITLE_UPDATES,      S_SUB_UPDATES,
     S_TITLE_APP_EMU_UPDATES, S_SUB_APP_EMU_UPDATES,
     S_TITLE_DIAGNOSTICS,  S_SUB_DIAGNOSTICS,
@@ -700,7 +704,7 @@ enum {
 
     /* Guided first-time tour (Welcome() is its final step). */
     S_TOUR_NEXT, S_TOUR_BACK, S_TOUR_CLOSE, S_TOUR_DONE,
-    S_TOUR1_TITLE, S_TOUR1_BODY,
+    S_TOUR1_TITLE, S_TOUR1_BODY, S_TOUR1_BODY_LITE, /* Lite: no Collections-tab mention */
     S_TOUR2_TITLE, S_TOUR2_BODY,
     S_TOUR3_TITLE, S_TOUR3_BODY,
     S_TOUR4_TITLE, S_TOUR4_BODY,
@@ -711,7 +715,7 @@ enum {
     S_TOUR_QUEUE_MOCK_NAME, /* mocked-up queue card filename behind the Queue tour step */
 
     /* Getting Started articles. */
-    S_GS1_TITLE, S_GS1_BODY,
+    S_GS1_TITLE, S_GS1_BODY, S_GS1_BODY_LITE, /* Lite: no archive.org mention */
     S_GS2_TITLE, S_GS2_BODY,
     S_GS3_TITLE, S_GS3_BODY,
     S_GS4_TITLE, S_GS4_BODY,
@@ -739,6 +743,7 @@ enum {
     S_HOWTO18_TITLE, S_HOWTO18_BODY,
     S_HOWTO19_TITLE, S_HOWTO19_BODY, /* how unzipping/extraction works */
     S_HOWTO20_TITLE, S_HOWTO20_BODY, /* set up archive.org/GitHub/SteamGridDB credentials */
+    S_HOWTO20_TITLE_LITE, S_HOWTO20_BODY_LITE, /* Lite: GitHub/SteamGridDB only, no archive.org */
     S_HOWTO21_TITLE, S_HOWTO21_BODY, /* what's in each Settings section */
     S_HOWTO22_TITLE, S_HOWTO22_BODY, /* set a custom install folder for a console */
     S_HOWTO23_TITLE, S_HOWTO23_BODY, /* control download speed and concurrency */
@@ -933,12 +938,17 @@ enum {
     S_EMU_INSTALL_DONE,  /* toast: <app> v%s installed */
 
     /* ---- Tools: on-device emulator / app update manager ---- */
-    S_APPMAN_MENU,        /* Tools slide-out row: shortcut to Settings -> App & Emulator Updates */
+    S_APPMAN_MENU,        /* Tools slide-out row: shortcut to the Emulators tab */
     S_UPDSRC_PUSHED,      /* toast: desktop pushed the shared update manifest */
     S_APPMAN_EMUS,        /* Updates row + section title: Emulators */
     S_APPMAN_APPS,        /* Updates row + section title: Apps */
     S_APPMAN_EMPTY,       /* section empty-state (no entries of this kind) */
+    S_APPMAN_ADD_MANUAL,  /* Emulators tab: trailing row, browse for an .nro the
+                            * bundled catalogue doesn't know about */
+    S_TITLE_NRO_PICKER,   /* Add-emulator-manually file browser title */
+    S_SUB_NRO_PICKER,     /* Add-emulator-manually file browser button hints */
     S_APPMAN_LIST_HINT,   /* section list footer hint */
+    S_APPMAN_LIST_HINT_EMU, /* Emulators-tab variant: no B-back (top-level tab), L/R tabs instead */
     S_APPMAN_INSTALLED,   /* list status: installed (version unknown) */
     S_APPMAN_NOT_INSTALLED, /* list status: not installed */
     S_APPMAN_NO_SOURCE,   /* list status suffix: no update source set */

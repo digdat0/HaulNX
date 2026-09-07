@@ -39,6 +39,7 @@
 #include <updman.h>
 #include <boxart.h> /* boxart_lookup: root "art_<target>.png" objects below */
 #include <queue.h> /* queue_write_status_json: root "queue_status.json" object below */
+#include <jsonutil.h> /* boxart_request.json parsing below */
 
 #include <cstdarg>
 #include <cstdio>
@@ -97,6 +98,8 @@ namespace mtp {
             bool active;
             bool extract;  /* the file is an archive to unpack in place once received */
             bool apply_updsrc; /* root update_sources.json push: validate + apply on finish */
+            char art_target[64]; /* non-empty: a console-art push, see kArtPushPrefix */
+            bool boxart_req; /* root boxart_request.json push: parse + hand off on finish */
             u32  handle;
             u64  size;
             char path[1040];
@@ -456,6 +459,69 @@ namespace mtp {
             return c->sd_root && c->sd_root[0] && strcmp(path, c->sd_root) == 0;
         }
 
+        /* True if `full` is (a descendant of, or is itself) c->sd_root -- the
+         * USB counterpart of Wi-Fi's sd_access gate (httpsrv.c). Used to scope
+         * the bulk-upload marker below to the same "Prefs.sd_full_access is
+         * on" boundary the SD Card object itself already requires; c->sd_root
+         * is null whenever that pref is off, so this is false unconditionally
+         * then. */
+        bool UnderSdRoot(Ctx *c, const char *full) {
+            if (!c->sd_root || !c->sd_root[0]) return false;
+            size_t l = strlen(c->sd_root);
+            return strncmp(full, c->sd_root, l) == 0 &&
+                   (full[l] == '/' || full[l] == '\0');
+        }
+
+        /* A file named exactly this (case-insensitive), sent anywhere under
+         * the SD Card object, is a zip bundling many files/folders into one
+         * push instead of one SendObject per item -- the USB counterpart of
+         * Wi-Fi's X-Fs-Extract (see recv_fs_extract in httpsrv.h for why that
+         * exists: hundreds of individual pushes each pay their own overhead
+         * and can race a single-client server; MTP has no equivalent
+         * connection-per-push cost, but the desktop's zip-batching already
+         * exists for Wi-Fi and reusing it here avoids maintaining a second,
+         * unbatched upload path for USB). SendObject extracts it into its
+         * parent folder (via the existing background EnqueueExtract worker --
+         * see PtpOperationCode_SendObject below) and removes the marker,
+         * exactly like a console-folder archive drop already does; the only
+         * difference is WHICH destinations are eligible (see UnderSdRoot vs
+         * UnderKnownFolder). MTP has no header mechanism to carry an explicit
+         * flag the way HTTP does, hence the magic name instead. */
+        const char *const kBulkUploadMarker = "__haulnx_bulk__.zip";
+
+        /* A file named "__haulnx_art_<target>.png" (case-insensitive prefix/
+         * suffix), sent to the storage ROOT, is a new cover-art image for
+         * console <target> -- the USB counterpart of Wi-Fi's X-Art-Target
+         * push (see recv_art_target in httpsrv.h). Not scoped to sd_root:
+         * Wi-Fi's art push isn't gated behind Prefs.sd_full_access either, so
+         * this shouldn't be. Distinct from the read-only "art_<target>.png"
+         * root objects CollectChildren already publishes for pulling the
+         * CURRENT art (see boxart_lookup above) -- same target-naming idea,
+         * deliberately different prefix so a push can never collide with a
+         * pull. Filing it needs config_find_console/config_save and a Toast,
+         * none of which this thread can safely touch (see EnqueueArtPush's
+         * own comment), so SendObject stages the file and hands the target
+         * off through that mailbox instead of applying it inline. Returns
+         * true and fills `target_out` on a match. */
+        bool ParseArtPushName(const char *fname, char *target_out, size_t out_sz) {
+            static const char kPrefix[] = "__haulnx_art_";
+            static const char kSuffix[] = ".png";
+            size_t flen = strlen(fname);
+            size_t plen = sizeof(kPrefix) - 1;
+            size_t slen = sizeof(kSuffix) - 1;
+            if (flen <= plen + slen || strncasecmp(fname, kPrefix, plen) != 0 ||
+                strcasecmp(fname + flen - slen, kSuffix) != 0) {
+                return false;
+            }
+            size_t tlen = flen - plen - slen;
+            if (tlen == 0 || tlen >= out_sz) {
+                return false;
+            }
+            memcpy(target_out, fname + plen, tlen);
+            target_out[tlen] = '\0';
+            return true;
+        }
+
         /* Enumerate the children of `parent` into the DB and return their
          * handles. */
         u16 CollectChildren(Ctx *c, u32 parent, std::vector<u32> &out) {
@@ -620,6 +686,65 @@ namespace mtp {
                 for (const auto &e : s_art_cache) {
                     out.push_back(AddOrFind(c, PtpRootParentObject, e.path, e.name,
                                             false, e.size, e.mtime));
+                }
+
+                /* Box-art search/pick status, so a USB companion can poll the
+                 * outcome of a boxart_request.json push the same way Wi-Fi
+                 * polls GET boxartsearch_status/boxartpick_status. Cheap (an
+                 * in-memory struct + small JSON write), same 1s throttle as
+                 * queue_status.json since it should feel live while a search
+                 * is running. */
+                static time_t s_boxstat_last = 0;
+                time_t boxstat_now = time(nullptr);
+                if (boxstat_now - s_boxstat_last >= 1) {
+                    mtp::BoxartStatus bst = mtp::GetBoxartStatus();
+                    FILE *bf = fopen(BOXART_STATUS_PATH, "wb");
+                    if (bf) {
+                        fprintf(bf,
+                                "{\"search_running\":%s,\"search_done\":%s,"
+                                "\"search_count\":%d,\"pick_running\":%s,"
+                                "\"pick_done\":%s,\"pick_ok\":%s,\"sizes\":[",
+                                bst.search_running ? "true" : "false",
+                                bst.search_done ? "true" : "false",
+                                bst.search_count,
+                                bst.pick_running ? "true" : "false",
+                                bst.pick_done ? "true" : "false",
+                                bst.pick_ok ? "true" : "false");
+                        for (int i = 0; i < bst.search_count && i < BOXART_MAX_CANDIDATES; i++) {
+                            fprintf(bf, "%s[%d,%d]", i ? "," : "", bst.search_w[i], bst.search_h[i]);
+                        }
+                        fputs("]}", bf);
+                        fclose(bf);
+                    }
+                    s_boxstat_last = boxstat_now;
+                }
+                struct stat bst_st;
+                if (stat(BOXART_STATUS_PATH, &bst_st) == 0)
+                    out.push_back(AddOrFind(c, PtpRootParentObject, BOXART_STATUS_PATH,
+                                            "boxart_status.json", false,
+                                            static_cast<u64>(bst_st.st_size), bst_st.st_mtime));
+
+                /* Each candidate's downloaded thumbnail, so a USB companion
+                 * can render the search results grid the same way GET
+                 * boxartthumb?p=<i> serves it over Wi-Fi -- boxart_fetch_thumb
+                 * (called from MainApplication's search worker regardless of
+                 * transport) already wrote these; this just exposes whichever
+                 * ones exist as root objects, one stat() per candidate slot,
+                 * only while a completed search actually has results. */
+                {
+                    mtp::BoxartStatus bst = mtp::GetBoxartStatus();
+                    if (bst.search_done) {
+                        for (int i = 0; i < bst.search_count && i < BOXART_MAX_CANDIDATES; i++) {
+                            char tpath[768], tname[32];
+                            snprintf(tpath, sizeof(tpath), "%s/%d.png", BOXART_TMP_DIR, i);
+                            struct stat tst;
+                            if (stat(tpath, &tst) != 0) continue;
+                            snprintf(tname, sizeof(tname), "boxart_thumb_%d.png", i);
+                            out.push_back(AddOrFind(c, PtpRootParentObject, tpath, tname,
+                                                    false, static_cast<u64>(tst.st_size),
+                                                    tst.st_mtime));
+                        }
+                    }
                 }
                 return PtpResponseCode_Ok;
             }
@@ -1004,9 +1129,36 @@ namespace mtp {
                     if (is_updsrc)
                         snprintf(full, sizeof(full), "%s.mtp", UPDSRC_PATH);
 
+                    /* A companion pushing new console art at the root (see
+                     * ParseArtPushName's own comment) -- stage to a fixed
+                     * scratch path the same single-slot way is_updsrc does
+                     * (only one MTP session's transfer is ever in flight on
+                     * this responder, so no collision risk). */
+                    char art_target[64] = "";
+                    bool is_art_push = (pnorm == PtpRootParentObject) &&
+                                       ParseArtPushName(fname, art_target, sizeof(art_target));
+                    if (is_art_push)
+                        snprintf(full, sizeof(full), "%s/incoming_art.mtp", CONFIG_DIR);
+
+                    /* A companion kicking off a box-art search/pick at the
+                     * root (the USB mirror of Wi-Fi's GET boxartsearch/POST
+                     * boxartpick) -- a small JSON blob instead of a raw
+                     * query-string param since MTP filenames can't safely
+                     * carry arbitrary search text (the '/'/'\\' ban above
+                     * would reject any query containing one). Staged the same
+                     * single-slot way as the other two root special-cases;
+                     * parsed on SendObject completion (see below). */
+                    bool is_boxart_req = (pnorm == PtpRootParentObject) &&
+                                        strcmp(fname, "boxart_request.json") == 0;
+                    if (is_boxart_req)
+                        snprintf(full, sizeof(full), "%s/incoming_boxart_req.mtp", CONFIG_DIR);
+
                     u32 h = AddOrFind(c, pnorm, full, fname, false, csize, time(nullptr));
                     c->pending.active = true;
                     c->pending.apply_updsrc = is_updsrc;
+                    c->pending.boxart_req = is_boxart_req;
+                    snprintf(c->pending.art_target, sizeof(c->pending.art_target), "%s",
+                            is_art_push ? art_target : "");
                     /* Unpack archives dropped straight into a console folder,
                      * mirroring the download install step. Inbox drops are left
                      * whole so the sorter can identify them first; root drops
@@ -1017,10 +1169,13 @@ namespace mtp {
                      * reachable generically (the SD Card tab's whole-card
                      * tree, or a nested Inbox subfolder) would wrongly
                      * auto-extract too. */
-                    c->pending.extract = is_archive_name(fname) &&
-                                         pnorm != PtpRootParentObject &&
-                                         strcmp(pdir, c->inbox) != 0 &&
-                                         UnderKnownFolder(c, full);
+                    c->pending.extract =
+                        (is_archive_name(fname) &&
+                         pnorm != PtpRootParentObject &&
+                         strcmp(pdir, c->inbox) != 0 &&
+                         UnderKnownFolder(c, full)) ||
+                        (strcasecmp(fname, kBulkUploadMarker) == 0 &&
+                         UnderSdRoot(c, full));
                     c->pending.handle = h;
                     c->pending.size   = csize;
                     snprintf(c->pending.path, sizeof(c->pending.path), "%s", full);
@@ -1186,6 +1341,67 @@ namespace mtp {
                         if (!c->stopping)
                             RC(c, applied ? PtpResponseCode_Ok : PtpResponseCode_GeneralError, trans);
                         XferEnd(applied);
+                        c->pending.active = false;
+                        return;
+                    }
+
+                    /* New console art, staged: hand the target + staged path
+                     * to the main thread via EnqueueArtPush (see its own
+                     * comment for why this thread can't apply it inline) and
+                     * ack now -- filing it happens off this thread's critical
+                     * path, same shape as an extract handoff below, just
+                     * without needing a dedicated worker since the eventual
+                     * work is cheap, not slow. */
+                    if (c->pending.art_target[0]) {
+                        mtp::EnqueueArtPush(c->pending.art_target, c->pending.path);
+                        Obj *o = FindHandle(c, c->pending.handle);
+                        if (o) o->parent = 0xFFFFFFFEu; /* orphan the staging entry */
+                        if (!c->stopping) RC(c, PtpResponseCode_Ok, trans);
+                        XferEnd(true);
+                        c->pending.active = false;
+                        return;
+                    }
+
+                    /* A box-art search/pick request, staged: parse the tiny
+                     * JSON and hand it to the main thread via
+                     * EnqueueBoxartReq. Malformed/unrecognized JSON is simply
+                     * dropped -- best-effort, same as an unknown target is
+                     * silently ignored on the Wi-Fi side (see InvBoxartTick,
+                     * which validates the console once on the UI thread
+                     * either way). */
+                    if (c->pending.boxart_req) {
+                        size_t len = 0;
+                        char *body = json_read_file(c->pending.path, &len);
+                        if (body) {
+                            int ntok = 0;
+                            jsmntok_t *tok = json_parse_alloc(body, len, &ntok);
+                            if (tok && tok[0].type == JSMN_OBJECT) {
+                                char kind[16] = "";
+                                mtp::BoxartReq req{};
+                                json_copy(body, tok, json_obj_get(body, tok, 0, "kind"),
+                                         kind, sizeof(kind));
+                                json_copy(body, tok, json_obj_get(body, tok, 0, "target"),
+                                         req.target, sizeof(req.target));
+                                if (req.target[0] && strcmp(kind, "pick") == 0) {
+                                    req.is_pick = true;
+                                    req.index = (int)json_u64(body, tok,
+                                        json_obj_get(body, tok, 0, "index"));
+                                    mtp::EnqueueBoxartReq(req);
+                                } else if (req.target[0] && strcmp(kind, "search") == 0) {
+                                    req.is_pick = false;
+                                    json_copy(body, tok, json_obj_get(body, tok, 0, "query"),
+                                             req.query, sizeof(req.query));
+                                    if (req.query[0]) mtp::EnqueueBoxartReq(req);
+                                }
+                            }
+                            free(tok);
+                            free(body);
+                        }
+                        remove(c->pending.path);
+                        Obj *o = FindHandle(c, c->pending.handle);
+                        if (o) o->parent = 0xFFFFFFFEu; /* orphan the staging entry */
+                        if (!c->stopping) RC(c, PtpResponseCode_Ok, trans);
+                        XferEnd(true);
                         c->pending.active = false;
                         return;
                     }

@@ -168,9 +168,20 @@ bool fs_ensure_parent(const char *file_path) {
 #define COPY_CHUNK (64 * 1024)
 
 bool fs_copy_file(const char *src, const char *dst) {
+    return fs_copy_file_progress(src, dst, NULL, NULL);
+}
+
+bool fs_copy_file_progress(const char *src, const char *dst,
+                           bool (*progress)(void *ud, uint64_t now, uint64_t total),
+                           void *ud) {
     FILE *in = fopen(src, "rb");
     if (!in) {
         return false;
+    }
+    uint64_t total = 0;
+    if (progress) {
+        struct stat st;
+        total = (stat(src, &st) == 0) ? (uint64_t)st.st_size : 0;
     }
     FILE *out = fopen(dst, "wb");
     if (!out) {
@@ -183,11 +194,17 @@ bool fs_copy_file(const char *src, const char *dst) {
      * matters because one caller is copying the app's own .nro over itself. */
     char *buf = (char *)malloc(COPY_CHUNK);
     bool ok = buf != NULL;
+    uint64_t done = 0;
     if (ok) {
         size_t r;
         while ((r = fread(buf, 1, COPY_CHUNK, in)) > 0) {
             if (fwrite(buf, 1, r, out) != r) {
                 ok = false;
+                break;
+            }
+            done += r;
+            if (progress && !progress(ud, done, total)) {
+                ok = false; /* cancelled -- same cleanup as any other failure */
                 break;
             }
         }

@@ -27,6 +27,7 @@
 #pragma once
 
 #include <switch.h>
+#include <boxart.h> /* BOXART_MAX_CANDIDATES, for BoxartStatus below */
 
 #ifdef __cplusplus
 namespace mtp {
@@ -134,6 +135,68 @@ namespace mtp {
     // view; Stop() unwinds an in-flight one promptly rather than riding out
     // the whole tree (see fs_rm_rf_cancelable).
     void EnqueueDelete(const char *path);
+
+    // A console cover-art image received over USB (the MTP counterpart of
+    // Wi-Fi's X-Art-Target push), staged to a temp file. Filing it needs
+    // config_find_console/config_save and a Toast/screen refresh -- none of
+    // which the responder thread can safely touch (see MainApplication's own
+    // main-thread-only UI/config conventions) -- so responder.cpp stages the
+    // file and calls this instead of applying it inline, the same handoff
+    // shape EnqueueExtract/EnqueueDelete use for their own thread-unsafe
+    // work. `target` is the console key; ownership of the staged file at
+    // `path` passes to the consumer of PollArtPush below (it deletes it).
+    void EnqueueArtPush(const char *target, const char *path);
+
+    // One pending art push, staged by EnqueueArtPush above.
+    struct ArtPush {
+        char target[64];
+        char path[768];
+    };
+
+    // Main thread, once per frame alongside PushExtractTick: pop one pending
+    // art push if any is waiting. Returns false (out untouched) when empty.
+    bool PollArtPush(ArtPush *out);
+
+    // Box-art search/pick over USB -- the MTP counterpart of Wi-Fi's
+    // boxartsearch/boxartpick routes and their _status polling. A search/pick
+    // is genuine SteamGridDB network I/O, so it's triggered and answered the
+    // same way the Wi-Fi routes already are (see the long comment on
+    // HttpSrv's boxsearch_*/boxpick_* fields in httpsrv.h): a request is
+    // stashed here (by the responder thread, off a buffered "boxart_request.
+    // json" push -- see mtp/responder.cpp), MainApplication's InvBoxartTick
+    // (which now runs every frame regardless of transport) notices it and
+    // does the real work on its own background thread, then publishes the
+    // result back via SetBoxartStatus for the responder thread's
+    // boxart_status.json root object to report. Guarded by an internal mutex
+    // since both threads touch this.
+    struct BoxartReq {
+        bool is_pick;    // false = search, true = pick
+        char target[64];
+        char query[256]; // search only
+        int  index;      // pick only
+    };
+    // Responder thread: stash a decoded request (see mtp/responder.cpp's
+    // "boxart_request.json" handling) for the main thread to pick up.
+    void EnqueueBoxartReq(const BoxartReq &req);
+    // Main thread, once per frame: pop a pending request, if any. Returns
+    // false (out untouched) when none is waiting.
+    bool PollBoxartReq(BoxartReq *out);
+
+    struct BoxartStatus {
+        bool search_running = false, search_done = false;
+        int  search_count = 0;
+        int  search_w[BOXART_MAX_CANDIDATES] = {};
+        int  search_h[BOXART_MAX_CANDIDATES] = {};
+        bool pick_running = false, pick_done = false;
+        bool pick_ok = false;
+    };
+    // Main thread: publish the current search/pick snapshot after
+    // InvBoxartTick updates it (mirrors what it already writes into
+    // HttpSrv's own fields for the Wi-Fi side).
+    void SetBoxartStatus(const BoxartStatus &st);
+    // Responder thread: read the last-published snapshot, for
+    // boxart_status.json.
+    BoxartStatus GetBoxartStatus();
 
 }
 #endif

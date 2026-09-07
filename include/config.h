@@ -12,13 +12,26 @@ extern "C" {
 #define MAX_REPOS    32 /* download repos per console */
 
 /* GitHub repo (owner/name) the in-app updater pulls releases from.
- * >>> EDIT THIS to your repo before building a release you intend to ship. <<< */
+ * >>> EDIT THIS to your repo before building a release you intend to ship. <<<
+ * Lite builds have their own repo/release history (release-lite.sh), so a Lite
+ * NRO must never point back at the full-build repo. */
+#ifdef HAULNX_LITE
+#define UPDATE_REPO   "digdat0/HaulNX-lite"
+#else
 #define UPDATE_REPO   "digdat0/HaulNX"
+#endif
 
-/* Where the app lives if it can't determine its own path from argv[0]. */
+/* Where the app lives if it can't determine its own path from argv[0].
+ * Lite gets its own folder (not just its own filename) so the full and Lite
+ * builds can be installed side by side on the same SD card for testing,
+ * without sharing (or clobbering) each other's config/logs/queue state. */
+#ifdef HAULNX_LITE
+#define DEFAULT_SELF_PATH "sdmc:/switch/haulnx-lite/HaulNX-Lite.nro"
+#define CONFIG_DIR    "sdmc:/switch/haulnx-lite"
+#else
 #define DEFAULT_SELF_PATH "sdmc:/switch/HaulNX/HaulNX.nro"
-
 #define CONFIG_DIR    "sdmc:/switch/HaulNX"
+#endif
 /* The app's files live in two subfolders under CONFIG_DIR so its root stays
  * tidy: config/ holds the JSON state (collections, credentials, prefs, queue,
  * size cache) and logs/ holds every append-only log. Builds up to 1.0.2 wrote
@@ -49,6 +62,10 @@ extern "C" {
  * INVENTORY_PATH's diag_bundle sibling. Distinct from QUEUE_STATE_PATH above,
  * which only persists resumable in-flight work across a relaunch. */
 #define QUEUE_STATUS_PATH DATA_DIR "/queue_status.json"
+/* Box-art search/pick outcome for a USB companion to poll -- the MTP
+ * counterpart of Wi-Fi's GET boxartsearch_status/boxartpick_status, written
+ * by mtp/responder.cpp's CollectChildren from mtp::GetBoxartStatus(). */
+#define BOXART_STATUS_PATH DATA_DIR "/boxart_status.json"
 /* Device inventory served to the desktop companion over the LAN. Regenerated
  * app-side while the inventory server pref is on; the server just serves this
  * file (see httpsrv.c HTTPSRV_MODE_INVENTORY). A staging file keeps a reader

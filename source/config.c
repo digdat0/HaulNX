@@ -369,6 +369,14 @@ void config_seed_rom_folders(const SourcesConfig *cfg, const char *roms_root) {
 }
 
 Repo *config_add_repo(ConsoleGroup *g, const char *label, const char *id) {
+#ifdef HAULNX_LITE
+    /* The ROM-acquisition/downloader feature is compiled out entirely in
+     * Lite builds -- see HAULNX_LITE in the Makefile and the matching strip
+     * in parse_sources_buf() above (this is the OTHER way a repo can appear:
+     * a manual add, rather than a loaded/imported document). */
+    (void)g; (void)label; (void)id;
+    return NULL;
+#else
     if (!g || g->repo_count >= MAX_REPOS) {
         return NULL;
     }
@@ -379,6 +387,7 @@ Repo *config_add_repo(ConsoleGroup *g, const char *label, const char *id) {
     r->enabled = true;
     repo_set_url_default(r);
     return r;
+#endif /* HAULNX_LITE */
 }
 
 bool config_remove_repo(ConsoleGroup *g, int idx) {
@@ -558,6 +567,21 @@ static void parse_sources_buf(const char *js, size_t len, SourcesConfig *cfg) {
     for (int i = 0; i < cfg->console_count; i++) {
         add_supported(cfg, cfg->consoles[i].console);
     }
+
+#ifdef HAULNX_LITE
+    /* HAULNX_LITE (see Makefile) removes the ROM-acquisition/downloader
+     * feature entirely. This is the one choke point every repo-carrying
+     * document passes through -- the on-disk sources.json at startup, a
+     * dl_sources.json import, and a backup restore all call this same
+     * function (see the comment above it) -- so stripping repos here, rather
+     * than hiding them at every Browse/Search screen individually, guarantees
+     * a Lite build can never end up with a downloadable source no matter
+     * which path a document arrived by. Console groups themselves (folders,
+     * on/off, custom names) are untouched -- only their repo lists are wiped. */
+    for (int i = 0; i < cfg->console_count; i++) {
+        cfg->consoles[i].repo_count = 0;
+    }
+#endif
 
     free(tok);
 }

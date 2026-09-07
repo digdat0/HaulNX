@@ -8,6 +8,12 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* HAULNX_LITE (see Makefile) compiles this whole engine out -- the entire
+ * ROM-acquisition/downloader feature. Every caller in MainApplication.cpp is
+ * guarded the same way, so nothing references these symbols in a Lite build;
+ * an empty translation unit is correct, not a stub. */
+#ifndef HAULNX_LITE
+
 /* ---- identifier extraction ------------------------------------------ */
 
 static void strip_trailing_slashes(char *s) {
@@ -422,3 +428,5 @@ void ia_free(ArchiveItem *item) {
         item->file_count = 0;
     }
 }
+
+#endif /* HAULNX_LITE */

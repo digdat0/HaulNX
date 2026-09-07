@@ -64,6 +64,36 @@ static char g_files_id[256], g_files_base[512], g_files_target[64];
 static std::vector<std::string> g_inst_idx;
 static bool g_files_manual = false;
 
+// The Queue tab's empty-state hint normally points at the Collections tab
+// ("queue downloads from..."), which doesn't exist in a Lite build (see
+// HAULNX_LITE in the Makefile) -- omit it there rather than dangle a
+// reference to a removed feature. No new i18n key needed either way.
+static const char *queue_empty_hint() {
+#ifdef HAULNX_LITE
+    return "";
+#else
+    return tr(S_QUEUE_EMPTY_HINT);
+#endif
+}
+
+// The top tab bar is 5 tabs in a Lite build (Browse/Collections is removed
+// entirely -- no repo can ever exist, see HAULNX_LITE in the Makefile) and 6
+// in the full build (Updates and Folders were promoted out of Settings into
+// their own tabs). Shared by the tab-bar construction, RefreshTabs (on a
+// language change) and SetActiveTab (pill/chip/pulse-dot positioning), so the
+// segment width and the per-tab label indices only need to change once.
+#ifdef HAULNX_LITE
+// Only the Lite build's SyncTab/SwitchTab need explicit Updates/Folders index
+// constants (they remap the logical Tab enum onto the narrower visual strip);
+// the full build casts Tab straight to a visual index, so it has no use for
+// them -- declaring them there too would be an unused-variable build error
+// under -Werror.
+static constexpr int kTabCount = 5, kQueueTabIdx = 1, kEmulatorsTabIdx = 2,
+                      kFoldersTabIdx = 3, kSettingsTabIdx = 4;
+#else
+static constexpr int kTabCount = 6, kQueueTabIdx = 2, kSettingsTabIdx = 5;
+#endif
+
 #define FILES_SUBTITLE tr(S_SUB_FILES)
 
 struct DirEnt {
@@ -1037,6 +1067,13 @@ static const int g_sort_keys[] = {
     S_SORT_SIZE_DESC, S_SORT_SIZE_ASC
 };
 
+// This whole cluster (through load_dl_md5 below) exists only to answer
+// "is this repo file already installed / does the repo now advertise a
+// different md5?" for rebuild_files/QueueSelection -- both no-ops in a Lite
+// build (see HAULNX_LITE in the Makefile), so -Werror=unused-function would
+// otherwise fail the build. ascii_lower has no other caller left once this
+// is compiled out.
+#ifndef HAULNX_LITE
 // ASCII lower-fold (locale-free) for case-insensitive path matching, matching
 // FAT's case-insensitivity as strcasecmp/fs_exists do.
 static void ascii_lower(std::string &s) {
@@ -1046,7 +1083,6 @@ static void ascii_lower(std::string &s) {
         }
     }
 }
-
 // Build a case-folded, sorted index of the console's roms/<target> directory in
 // ONE scan, so the file list can test "already installed?" per row with a binary
 // search instead of an opendir()/readdir() scan per file — the latter made a big
@@ -1147,6 +1183,7 @@ static void load_dl_md5() {
         free(tok);
     }
 }
+#endif /* HAULNX_LITE */
 
 // How many rows the last rebuild flagged as updatable, kept so the info line can
 // be recomposed (on every selection change) without redoing the whole list.
@@ -1201,6 +1238,17 @@ static void files_info_line(MainLayout *lay) {
 // re-parse of the download log.
 static void rebuild_files(MainLayout *lay, const char *target,
                           bool reload_ctx = true) {
+#ifdef HAULNX_LITE
+    // The repo/download engine (archive.c) is compiled out entirely in Lite
+    // builds -- see HAULNX_LITE in the Makefile. Nothing should reach this
+    // (every entry point into the acquisition flow is gated the same way),
+    // but fail safe with an empty list rather than touch archive state that
+    // was never populated.
+    (void)target; (void)reload_ctx;
+    lay->ClearMenu();
+    lay->AddRow(tr(S_META_FAILED));
+    return;
+#else
     lay->ClearMenu();
     g_files.clear();
     g_marks.clear();
@@ -1295,6 +1343,7 @@ static void rebuild_files(MainLayout *lay, const char *target,
     }
     g_files_updates = updates;
     files_info_line(lay);
+#endif /* HAULNX_LITE */
 }
 
 // Background metadata load: ia_fetch runs on its own thread so the file
@@ -1302,10 +1351,12 @@ static void rebuild_files(MainLayout *lay, const char *target,
 void MainApplication::MetaThread(void *arg) {
     auto self = static_cast<MainApplication *>(arg);
     bool ok = false;
+#ifndef HAULNX_LITE
     if (g_files_id[0]) {
         ok = ia_fetch(g_files_id, &g_item, g_prefs.use_cache && !self->meta_force,
                       CACHE_DIR);
     }
+#endif
     self->meta_ok = ok;
     self->meta.done = true;
 }
@@ -1314,6 +1365,14 @@ void MainApplication::StartMetaLoad(const std::string &id,
                                     const std::string &base,
                                     const std::string &target, bool force,
                                     const std::string &done_subtitle) {
+#ifdef HAULNX_LITE
+    // The repo/download engine is compiled out entirely in Lite builds -- see
+    // HAULNX_LITE in the Makefile. Every entry point that would call this is
+    // gated the same way, so fail safe rather than reach for archive state
+    // that was never set up.
+    (void)id; (void)base; (void)target; (void)force; (void)done_subtitle;
+    return;
+#else
     // A previously-cancelled fetch may still be finishing on the shared worker;
     // reap it (briefly, bounded by the network timeout) and drop its result
     // before reusing the thread for this load.
@@ -1355,6 +1414,7 @@ void MainApplication::StartMetaLoad(const std::string &id,
     g_sel.clear(); // a new repo's file indices mean nothing to the old selection
     rebuild_files(this->layout.get(), g_files_target);
     this->layout->SetSubtitle(done_subtitle);
+#endif /* HAULNX_LITE */
 }
 
 void MainApplication::MetaTick() {
@@ -1446,8 +1506,13 @@ static std::string resolve_self_path() {
         fs_exists(g_launch_path.c_str())) {
         return g_launch_path;
     }
+#ifdef HAULNX_LITE
+    const char *candidates[] = {"sdmc:/switch/haulnx-lite/HaulNX-Lite.nro",
+                                "sdmc:/switch/HaulNX-Lite.nro"};
+#else
     const char *candidates[] = {"sdmc:/switch/HaulNX/HaulNX.nro",
                                 "sdmc:/switch/HaulNX.nro"};
+#endif
     for (const char *c : candidates) {
         if (fs_exists(c)) {
             return std::string(c);
@@ -1944,10 +2009,19 @@ MainLayout::MainLayout() : Layout::Layout() {
     this->Add(this->tab_pill);
 
     // Library first (front door), then Add — see the Tab enum comment.
-    const char *labels[] = {tr(S_TAB_INSTALLED), tr(S_TAB_BROWSE), tr(S_TAB_QUEUE), tr(S_TAB_SETTINGS)};
+    // No Browse/Collections tab in a Lite build -- see kTabCount above.
+#ifdef HAULNX_LITE
+    const char *labels[] = {tr(S_TAB_INSTALLED), tr(S_TAB_QUEUE),
+                            tr(S_TAB_EMULATORS), tr(S_TAB_FOLDERS),
+                            tr(S_TAB_SETTINGS)};
+#else
+    const char *labels[] = {tr(S_TAB_INSTALLED), tr(S_TAB_BROWSE), tr(S_TAB_QUEUE),
+                            tr(S_TAB_EMULATORS), tr(S_TAB_FOLDERS),
+                            tr(S_TAB_SETTINGS)};
+#endif
     const s32 tab_y = strip_y + 16;
-    const s32 seg = sw / 4;
-    for (int i = 0; i < 4; i++) {
+    const s32 seg = sw / kTabCount;
+    for (int i = 0; i < kTabCount; i++) {
         auto tb = pu::ui::elm::TextBlock::New(0, tab_y, labels[i]);
         tb->SetColor(g_theme->tab_clr);
         tb->SetX(seg * i + (seg - tb->GetWidth()) / 2);
@@ -2163,7 +2237,7 @@ void MainLayout::SetActiveTab(int idx) {
     // active tab changes. Both are comfortably wider than any label at this
     // font. Sits just above the strip's accent line so the active tab
     // "owns" that segment.
-    const s32 seg = 1920 / 4; // matches the tab layout in OnLoad/RefreshTabs
+    const s32 seg = 1920 / kTabCount; // matches the tab layout in OnLoad/RefreshTabs
     const s32 seg_cx = seg * idx + seg / 2;
     const s32 pill_w = 200, chip_w = 280;
     this->tab_pill->SetBounds(seg_cx - pill_w / 2, 140, pill_w, 6);
@@ -2173,16 +2247,18 @@ void MainLayout::SetActiveTab(int idx) {
     // (140-146), so the underline sits fully inside the capsule instead of
     // poking out below it as two separate shapes.
     this->tab_chip->SetBounds(seg_cx - chip_w / 2, 86, chip_w, 64);
-    // Park the Queue-tab pulse just after the Queue (index 2) label.
-    if (this->tabs.size() > 2) {
-        this->queue_dot->SetPos(this->tabs[2]->GetX() +
-                                    this->tabs[2]->GetWidth() + 10,
+    // Park the Queue-tab pulse just after the Queue label (index varies --
+    // one slot earlier in a Lite build, no Browse/Collections tab ahead of it).
+    if (this->tabs.size() > (size_t)kQueueTabIdx) {
+        this->queue_dot->SetPos(this->tabs[kQueueTabIdx]->GetX() +
+                                    this->tabs[kQueueTabIdx]->GetWidth() + 10,
                                 92);
     }
-    // Park the "update available" pulse just after the Settings (index 3) label.
-    if (this->tabs.size() > 3) {
-        this->settings_dot->SetPos(this->tabs[3]->GetX() +
-                                       this->tabs[3]->GetWidth() + 10,
+    // Park the "update available" pulse just after the Settings label (same
+    // index-shift reasoning as above).
+    if (this->tabs.size() > (size_t)kSettingsTabIdx) {
+        this->settings_dot->SetPos(this->tabs[kSettingsTabIdx]->GetX() +
+                                       this->tabs[kSettingsTabIdx]->GetWidth() + 10,
                                    92);
     }
 }
@@ -2194,9 +2270,17 @@ void MainLayout::SetUpdateAvailable(bool avail) {
 }
 
 void MainLayout::RefreshTabs() {
-    const char *labels[] = {tr(S_TAB_INSTALLED), tr(S_TAB_BROWSE), tr(S_TAB_QUEUE), tr(S_TAB_SETTINGS)};
-    const s32 seg = 1920 / 4;
-    for (int i = 0; i < 4 && i < (int)this->tabs.size(); i++) {
+#ifdef HAULNX_LITE
+    const char *labels[] = {tr(S_TAB_INSTALLED), tr(S_TAB_QUEUE),
+                            tr(S_TAB_EMULATORS), tr(S_TAB_FOLDERS),
+                            tr(S_TAB_SETTINGS)};
+#else
+    const char *labels[] = {tr(S_TAB_INSTALLED), tr(S_TAB_BROWSE), tr(S_TAB_QUEUE),
+                            tr(S_TAB_EMULATORS), tr(S_TAB_FOLDERS),
+                            tr(S_TAB_SETTINGS)};
+#endif
+    const s32 seg = 1920 / kTabCount;
+    for (int i = 0; i < kTabCount && i < (int)this->tabs.size(); i++) {
         this->tabs[i]->SetText(labels[i]);
         this->tabs[i]->SetX(seg * i + (seg - this->tabs[i]->GetWidth()) / 2);
     }
@@ -3268,6 +3352,12 @@ static const char *install_folder_for(const char *target) {
 // size here comes from the repo metadata, so the count, the bytes and what will
 // actually fit are all known before a single byte is transferred.
 void MainApplication::QueueSelection() {
+#ifdef HAULNX_LITE
+    // g_have_item can never become true in a Lite build (StartMetaLoad is a
+    // no-op -- see above), so this would already be dead code at runtime;
+    // compiled out too so nothing here references the removed engine.
+    return;
+#else
     if (!g_have_item || g_sel.empty()) {
         return;
     }
@@ -3417,6 +3507,7 @@ void MainApplication::QueueSelection() {
     } else {
         this->ToastErr(tr(S_QUEUE_FULL));
     }
+#endif /* HAULNX_LITE */
 }
 
 void MainApplication::RefreshStatus() {
@@ -3472,6 +3563,14 @@ static std::string import_hint() {
 
 // ---- screens --------------------------------------------------------------
 void MainApplication::GotoHome() {
+#ifdef HAULNX_LITE
+    // The Browse/Collections tab is removed entirely in Lite builds (no repo
+    // can ever exist -- see HAULNX_LITE in the Makefile and kTabCount above).
+    // Land on Library instead, same destination "Not now" on the old Welcome
+    // dialog used.
+    this->GotoInstalled(roms_root(&g_tico));
+    return;
+#endif
     this->screen = Screen::Home;
     this->layout->ClearMenu();
     if (g_prefs.group_consoles) {
@@ -3693,6 +3792,20 @@ void MainApplication::GotoFiles(int ci, int ri, bool force) {
 
 // ---- tabs -----------------------------------------------------------------
 MainApplication::Tab MainApplication::CurrentTab() {
+    // Screen::AppUpdates is shared by two very different homes: the Emulators
+    // tab's root (UPD_KIND_EMU) and a Settings sub-screen, "App Updates"
+    // (UPD_KIND_APP) -- which one depends on appman_kind, not the screen
+    // alone, so it can't be a plain case label below.
+    if (this->screen == Screen::AppUpdates) {
+        return (this->appman_kind == UPD_KIND_EMU) ? Tab::Emulators
+                                                    : Tab::Settings;
+    }
+    // Screen::RomPicker is shared three ways: browsing for the ROM root or a
+    // per-console folder (Folders tab) and browsing for an .nro to add an
+    // emulator manually (picker_nro_mode, Emulators tab) -- see AppAddManual.
+    if (this->screen == Screen::RomPicker) {
+        return this->picker_nro_mode ? Tab::Emulators : Tab::Folders;
+    }
     switch (this->screen) {
     case Screen::Installed:
     case Screen::Verify:
@@ -3712,7 +3825,6 @@ MainApplication::Tab MainApplication::CurrentTab() {
     case Screen::DlPrefs:
     case Screen::Appearance:
     case Screen::ExtFilter:
-    case Screen::RomPicker:
     case Screen::Downloads:
     case Screen::Language:
     case Screen::Accent:
@@ -3727,14 +3839,11 @@ MainApplication::Tab MainApplication::CurrentTab() {
     case Screen::InboxFiles:
     case Screen::RegionOrder:
     case Screen::LargestFiles:
-    case Screen::InstallFolders:
     case Screen::BoxArtManageConsoles:
     case Screen::BoxArtManageList:
     case Screen::Backups:
     case Screen::Account:
     case Screen::Updates:
-    case Screen::AppEmuUpdates:
-    case Screen::AppUpdates:
     case Screen::Diagnostics:
     case Screen::About:
     case Screen::ViewLogs:
@@ -3747,12 +3856,30 @@ MainApplication::Tab MainApplication::CurrentTab() {
     case Screen::HelpTopics:
     case Screen::HelpArticle:
     case Screen::HelpSearch: return Tab::Settings;
+    case Screen::Folders:    return Tab::Folders;
     default:                return Tab::Browse; // Home/Repos/Files/RepoEdit/Picker/Search
     }
 }
 
 void MainApplication::SyncTab() {
+#ifdef HAULNX_LITE
+    // No Browse/Collections tab in a Lite build -- map the logical Tab enum
+    // (unchanged, so CurrentTab()'s per-screen mapping needs no edits) onto
+    // the 5 visual slots that actually exist. Browse can't be current (see
+    // GotoHome/SwitchTab below), but land on Installed rather than an
+    // out-of-range index if it somehow were.
+    int idx;
+    switch (this->CurrentTab()) {
+    case Tab::Queue:    idx = kQueueTabIdx;   break;
+    case Tab::Emulators:  idx = kEmulatorsTabIdx; break;
+    case Tab::Folders:  idx = kFoldersTabIdx; break;
+    case Tab::Settings: idx = kSettingsTabIdx; break;
+    default:            idx = 0; break; // Installed, or Browse as a fallback
+    }
+    this->layout->SetActiveTab(idx);
+#else
     this->layout->SetActiveTab((int)this->CurrentTab());
+#endif
 }
 
 void MainApplication::GotoTab(Tab t) {
@@ -3760,14 +3887,28 @@ void MainApplication::GotoTab(Tab t) {
     case Tab::Browse:    this->GotoHome(); break;
     case Tab::Installed: this->GotoInstalled(roms_root(&g_tico)); break;
     case Tab::Queue:     this->GotoQueue(); break;
+    case Tab::Emulators: this->GotoAppUpdates(UPD_KIND_EMU); break;
+    case Tab::Folders:   this->GotoFolders(); break;
     case Tab::Settings:  this->GotoSettings(); break;
     }
 }
 
 void MainApplication::SwitchTab(int dir) {
-    const int n = 4;
+#ifdef HAULNX_LITE
+    // No Browse/Collections tab to cycle through -- see kTabCount above.
+    static const Tab order[] = {Tab::Installed, Tab::Queue, Tab::Emulators,
+                                Tab::Folders, Tab::Settings};
+    int cur = 0;
+    for (int i = 0; i < kTabCount; i++) {
+        if (order[i] == this->CurrentTab()) { cur = i; break; }
+    }
+    int nx = ((cur + dir) % kTabCount + kTabCount) % kTabCount;
+    this->GotoTab(order[nx]);
+#else
+    const int n = kTabCount;
     int nx = (((int)this->CurrentTab() + dir) % n + n) % n;
     this->GotoTab((Tab)nx);
+#endif
 }
 
 void MainApplication::GotoQueue() {
@@ -3939,6 +4080,10 @@ void MainApplication::GotoSettings() {
     // placeholders until art lands; console_icon() falls back to "default".
     // Console show/hide + the file-extension filter moved into Appearance, and
     // "Install from PC" moved into PC Sync, so neither has a top-level row now.
+    // Folder location moved out to its own top-level Folders tab -- same
+    // reasoning as Queue not having a Settings row. Emulator updates moved to
+    // their own top-level Emulators tab too, but app updates (row 7) stayed
+    // here: apps aren't a library-wide concern the way emulators are.
     static const struct { int str; const char *icon; } kEntries[] = {
         {S_SEC_APPEARANCE,  "set-appearance"},  // 0
         {S_SEC_DOWNLOADS,   "set-downloads"},   // 1
@@ -3947,11 +4092,8 @@ void MainApplication::GotoSettings() {
         {S_SEC_TRANSFERS,   "set-transfers"},   // 4 — PC Sync (now hosts Install from PC)
         {S_SEC_ACCOUNT,     "set-account"},     // 5
         {S_SEC_UPDATES,     "set-updates"},     // 6 — carries the update chip; HaulNX's
-                                                 // own build check only now (emulator/app
-                                                 // update management moved out below)
-        {S_SEC_APP_EMU_UPDATES, "set-app-updates"}, // 7 — emulator/app updates, split out
-                                                 // of Updates into its own section; own
-                                                 // icon as of 2.1.45, was sharing set-updates
+                                                 // own build check only
+        {S_SEC_APP_UPDATES, "set-app-updates"}, // 7 — shows the app list directly, no submenu
         {S_SEC_LOGS,        "set-logs"},        // 8
         {S_SEC_DIAGNOSTICS, "set-diagnostics"}, // 9
         {S_SEC_HELP,        "set-help"},      // 10 — Getting Started/How-To/Troubleshooting
@@ -4058,13 +4200,23 @@ void MainApplication::GotoDlPrefs() {
                           b ? tr(S_ON) : tr(S_OFF), lbl, onoff_color(b)); // 8 (7 if the row above is hidden)
 }
 
-/* Browse the SD card and choose a folder to use as the ROM root. Shows only
- * directories (you're picking a folder, not a file). */
+// Forward declaration: the real definition (further down) sits inside an
+// anonymous namespace, but all anonymous namespaces in one translation unit
+// are the same namespace, so re-opening one here names the same entity
+// instead of creating an ambiguous second overload.
+namespace { static bool is_nro_name(const std::string &n); }
+
+/* Browse the SD card and choose a folder to use as the ROM root or, in
+ * picker_nro_mode (Add emulator manually, see AppAddManual), a specific .nro
+ * file -- the only case this lists anything other than directories. */
 void MainApplication::GotoRomPicker(const std::string &path) {
     this->screen = Screen::RomPicker;
     this->picker_path = path;
-    if (this->picker_console >= 0 &&
-        this->picker_console < g_cfg.console_count) {
+    if (this->picker_nro_mode) {
+        this->layout->SetTitle(tr(S_TITLE_NRO_PICKER));
+        this->layout->SetSubtitle(tr(S_SUB_NRO_PICKER));
+    } else if (this->picker_console >= 0 &&
+               this->picker_console < g_cfg.console_count) {
         // Picking a console's custom install folder: name it in the title.
         this->layout->SetTitle(
             std::string(g_cfg.consoles[this->picker_console].console) + " > " +
@@ -4072,23 +4224,40 @@ void MainApplication::GotoRomPicker(const std::string &path) {
     } else {
         this->layout->SetTitle(tr(S_TITLE_ROM_PICKER));
     }
-    this->layout->SetSubtitle(tr(S_SUB_ROM_PICKER));
+    if (!this->picker_nro_mode) {
+        this->layout->SetSubtitle(tr(S_SUB_ROM_PICKER));
+    }
     this->layout->ClearMenu();
 
     g_rompick = list_dir(path);
-    /* Directories only. */
-    g_rompick.erase(std::remove_if(g_rompick.begin(), g_rompick.end(),
-                                   [](const DirEnt &e) { return !e.is_dir; }),
-                    g_rompick.end());
+    if (this->picker_nro_mode) {
+        /* Directories to browse, plus .nro files to select. */
+        g_rompick.erase(std::remove_if(g_rompick.begin(), g_rompick.end(),
+                        [](const DirEnt &e) {
+                            return !e.is_dir && !is_nro_name(e.name);
+                        }),
+                        g_rompick.end());
+    } else {
+        /* Directories only. */
+        g_rompick.erase(std::remove_if(g_rompick.begin(), g_rompick.end(),
+                                       [](const DirEnt &e) { return !e.is_dir; }),
+                        g_rompick.end());
+    }
 
     pu::ui::Color lbl = g_theme->row_text;
     if (g_rompick.empty()) {
         this->layout->AddRow(tr(S_NO_SUBFOLDERS));
     } else {
         for (const auto &e : g_rompick) {
-            this->layout->AddRow2(std::string(tr(S_DIR_PREFIX)) + e.name,
-                                  CHEVRON, lbl, chevron_color(), -1.0f, nullptr,
-                                  "", false, false);
+            if (e.is_dir) {
+                this->layout->AddRow2(std::string(tr(S_DIR_PREFIX)) + e.name,
+                                      CHEVRON, lbl, chevron_color(), -1.0f,
+                                      nullptr, "", false, false);
+            } else {
+                // .nro file row -- only reachable in picker_nro_mode.
+                this->layout->AddRow2(e.name, tr(S_OPEN), lbl, value_color(),
+                                      -1.0f, nullptr, "", false, false);
+            }
         }
     }
     char info[600];
@@ -4318,9 +4487,15 @@ void MainApplication::GotoTransfers() {
                           -1.0f, nullptr, "", false, false);      // 0 install from USB
     this->layout->AddRow2(tr(S_INSTALL_WIFI), CHEVRON, lbl, chevron_color(),
                           -1.0f, nullptr, "", false, false);      // 1 install from Wi-Fi
+#ifndef HAULNX_LITE
+    // Collection import/export/restore only matters for the repo/download
+    // engine (dl_sources.json's repos), compiled out entirely in Lite builds
+    // -- see HAULNX_LITE in the Makefile. The handler below shifts its own
+    // case numbers down by 3 to match this being skipped.
     this->layout->AddRow(tr(S_IMPORT_COLLECTION));  // 2 receive dl_sources.json from a PC
     this->layout->AddRow(tr(S_EXPORT_COLLECTION));  // 3 serve dl_sources.json to a PC
     this->layout->AddRow(tr(S_RESTORE_COLLECTION)); // 4 restore previous collection
+#endif
     // Read-only companion inventory server: a toggle plus the address the app
     // utility connects to (shown only while it's on).
     bool inv = g_prefs.inv_server;
@@ -4408,8 +4583,11 @@ void MainApplication::GotoSources() {
 }
 
 // Storage: where space goes and how to reclaim it. A live SD-card readout, the
-// ROM install folder, the download scratch area, and the metadata cache. The
-// SD row is a status line (A opens a used/free breakdown); the rest drill in.
+// download scratch area, Inbox, backups, and the metadata cache. The SD row is
+// a status line (A opens a used/free breakdown); the rest drill in. The ROM
+// install folder and per-console folders moved out to their own top-level
+// Folders tab (see GotoFolders) -- they're about where games live, not about
+// reclaiming space.
 void MainApplication::GotoStorage() {
     this->screen = Screen::Storage;
     this->layout->SetTitle(tr(S_TITLE_STORAGE));
@@ -4429,56 +4607,72 @@ void MainApplication::GotoStorage() {
         this->layout->AddRow2(settings_label(tr(S_SD_CARD)), v, lbl,
                               value_color());
     }
-    {                                               // 1 ROM folder
+    this->layout->AddRow(tr(S_MANAGE_DOWNLOADS));   // 1 download scratch folder
+    this->layout->AddRow(tr(S_MANAGE_INBOX));       // 2 view/select/delete Inbox files
+    // DAT files + metadata cache moved up to their own top-level Settings
+    // section ("Data Files").
+    this->layout->AddRow(tr(S_MANAGE_BACKUPS));     // 3 emulator/app rollback backups
+    this->layout->AddRow(tr(S_LARGE_FILES));        // 4 whole-library biggest files
+    this->layout->AddRow(tr(S_MANAGE_BOX_ART));     // 5 view/delete cached covers
+}
+
+// Folders tab root: everything about where the library lives on the SD card.
+// Promoted out of Storage into its own top-level tab so it's reachable in one
+// hop instead of three (Settings > Storage > Per-console folders) -- users
+// need to set this at a higher level. Per-console folders (row 2) expands
+// inline below a divider instead of drilling into a separate screen, so every
+// console's folder is visible and pickable from this one page.
+void MainApplication::GotoFolders() {
+    this->screen = Screen::Folders;
+    this->layout->SetTitle(tr(S_TITLE_FOLDERS));
+    this->layout->SetSubtitle(tr(S_SUB_FOLDERS));
+    this->layout->ClearMenu();
+    pu::ui::Color lbl = g_theme->row_text;
+    {                                               // 0 ROM folder
         bool custom = g_prefs.roms_override[0] != '\0';
         this->layout->AddRow2(settings_label(tr(S_ROMS_OVERRIDE)),
                               custom ? roms_root(&g_tico) : tr(S_ROMS_AUTO), lbl,
                               custom ? value_color() : onoff_color(false));
     }
-    {                                               // 2 install-folder mode
+    {                                               // 1 install-folder mode
         bool cf = g_prefs.custom_folders;
         this->layout->AddRow2(settings_label(tr(S_INSTALL_MODE)),
                               cf ? tr(S_INSTALL_MODE_CUSTOM)
                                  : tr(S_INSTALL_MODE_DEFAULT),
                               lbl, onoff_color(cf));
     }
-    {                                               // 3 per-console folders
+    {                                               // 2 per-console folders
         // Only actionable when custom mode is on; otherwise it reads as a locked
         // hint so the "unlock" relationship with the row above is visible.
+        // The value doubles as the expand/collapse indicator once unlocked.
         bool cf = g_prefs.custom_folders;
         this->layout->AddRow2(settings_label(tr(S_CONSOLE_FOLDERS)),
-                              cf ? tr(S_OPEN) : tr(S_LOCKED), lbl,
-                              cf ? value_color() : onoff_color(false));
+                              !cf ? tr(S_LOCKED)
+                                  : (this->folders_expanded ? tr(S_CLOSE)
+                                                             : tr(S_OPEN)),
+                              lbl, cf ? value_color() : onoff_color(false));
     }
-    this->layout->AddRow(tr(S_MANAGE_DOWNLOADS));   // 4 download scratch folder
-    this->layout->AddRow(tr(S_MANAGE_INBOX));       // 5 view/select/delete Inbox files
-    // DAT files + metadata cache moved up to their own top-level Settings
-    // section ("Data Files").
-    this->layout->AddRow(tr(S_MANAGE_BACKUPS));     // 6 emulator/app rollback backups
-    this->layout->AddRow(tr(S_LARGE_FILES));        // 7 whole-library biggest files
-    this->layout->AddRow(tr(S_MANAGE_BOX_ART));     // 8 view/delete cached covers
-}
-
-// Storage sub-screen: the list of consoles, each showing its install folder
-// (default or a custom path). A opens the SD folder picker for that console.
-// Only reachable when the per-console mode is on (see GotoStorage row 2).
-void MainApplication::GotoInstallFolders() {
-    this->screen = Screen::InstallFolders;
-    this->layout->SetTitle(tr(S_TITLE_CONSOLE_FOLDERS));
-    this->layout->SetSubtitle(tr(S_SUB_CONSOLE_FOLDERS));
-    this->layout->ClearMenu();
-    for (int i = 0; i < g_cfg.console_count; i++) {
-        ConsoleGroup *g = &g_cfg.consoles[i];
-        char label[128];
-        console_label(g->console, label, sizeof(label));
-        this->layout->AddRow2(label,
-                              g->folder[0] ? g->folder
-                                           : tr(S_INSTALL_FOLDER_DEFAULT),
-                              g_theme->row_text, onoff_color(g->folder[0] != 0),
-                              -1.0f, console_icon(g->console));
-    }
-    if (g_cfg.console_count == 0) {
-        this->layout->AddRow(tr(S_NO_CONSOLES));
+    // Expanded: a divider, then one row per console -- the same content a
+    // separate Install Folders screen used to show, now inline so every
+    // folder is visible and pickable from this one page without drilling in.
+    // Row indices from here on (a fixed divider at 3, consoles at 4..) are
+    // kept in sync with kConsoleBase in the Screen::Folders input handler.
+    if (this->folders_expanded && g_prefs.custom_folders) {
+        this->layout->AddRow2(std::string("── ") + tr(S_CONSOLE_FOLDERS) + " ──",
+                              "", onoff_color(false), onoff_color(false));
+        for (int i = 0; i < g_cfg.console_count; i++) {
+            ConsoleGroup *g = &g_cfg.consoles[i];
+            char label[128];
+            console_label(g->console, label, sizeof(label));
+            this->layout->AddRow2(label,
+                                  g->folder[0] ? g->folder
+                                               : tr(S_INSTALL_FOLDER_DEFAULT),
+                                  g_theme->row_text, onoff_color(g->folder[0] != 0),
+                                  -1.0f, console_icon(g->console));
+        }
+        if (g_cfg.console_count == 0) {
+            this->layout->AddRow(tr(S_NO_CONSOLES));
+        }
     }
 }
 
@@ -4516,19 +4710,29 @@ void MainApplication::StorageDetail() {
 void MainApplication::GotoAccount() {
     this->screen = Screen::Account;
     this->layout->SetTitle(tr(S_TITLE_ACCOUNT));
+#ifdef HAULNX_LITE
+    this->layout->SetSubtitle(tr(S_SUB_ACCOUNT_LITE));
+#else
     this->layout->SetSubtitle(tr(S_SUB_ACCOUNT));
+#endif
     this->layout->ClearMenu();
     pu::ui::Color lbl = g_theme->row_text;
+#ifndef HAULNX_LITE
+    // archive.org account credentials are meaningless without the
+    // repo/download engine, which is compiled out entirely in Lite builds --
+    // see HAULNX_LITE in the Makefile. Row 0 in the full build; the handler
+    // below shifts its own case numbers down one slot to match.
     bool b = g_creds.access_key[0] != '\0';
     this->layout->AddRow2(settings_label(tr(S_ARCHIVE_CREDS)),
                           b ? tr(S_SET) : tr(S_UNSET), lbl, onoff_color(b)); // 0
+#endif
     bool gh = g_creds.github_token[0] != '\0';
     this->layout->AddRow2(settings_label(tr(S_GITHUB_TOKEN)),
-                          gh ? tr(S_SET) : tr(S_UNSET), lbl, onoff_color(gh)); // 1
+                          gh ? tr(S_SET) : tr(S_UNSET), lbl, onoff_color(gh)); // 1 (0 in Lite)
     bool sgdb = g_creds.steamgriddb_key[0] != '\0';
     this->layout->AddRow2(settings_label(tr(S_STEAMGRIDDB_KEY)),
                           sgdb ? tr(S_SET) : tr(S_UNSET), lbl,
-                          onoff_color(sgdb)); // 2
+                          onoff_color(sgdb)); // 2 (1 in Lite)
 }
 
 // Updates: check now (GitHub release or a pushed .nro over Wi-Fi) and whether
@@ -4554,29 +4758,15 @@ void MainApplication::GotoUpdates() {
         this->layout->AddRow(tr(S_CHECK_NOW));                        // 1
     }
     // 2: release-notes history (moved here from About — it's about versions).
-    // (The "push list to PC" action moved to Settings › PC Sync. Emulator/app
-    // update management moved out to its own Settings section — see
-    // GotoAppEmuUpdates — since it isn't about HaulNX's own build at all.)
+    // (The "push list to PC" action moved to Settings › PC Sync. Emulator
+    // update management moved out to its own top-level Emulators tab, and app
+    // update management stayed a Settings section — see GotoAppUpdates —
+    // since neither is about HaulNX's own build at all.)
     this->layout->AddRow2(tr(S_RELEASE_NOTES), CHEVRON, lbl, chevron_color(),
                           -1.0f, nullptr, "", false, false);         // 2
     bool b = g_prefs.chk_updates;
     this->layout->AddRow2(settings_label(tr(S_CHK_UPDATES_STARTUP)),
                           b ? tr(S_ON) : tr(S_OFF), lbl, onoff_color(b)); // 3
-}
-
-// The new top-level Settings section that houses the two per-app update-
-// management rows (Emulator updates / App updates) that used to live under
-// Updates. Same rows, same GotoAppUpdates(kind) destinations — just moved.
-void MainApplication::GotoAppEmuUpdates() {
-    this->screen = Screen::AppEmuUpdates;
-    this->layout->SetTitle(tr(S_TITLE_APP_EMU_UPDATES));
-    this->layout->SetSubtitle(tr(S_SUB_APP_EMU_UPDATES));
-    this->layout->ClearMenu();
-    pu::ui::Color lbl = g_theme->row_text;
-    this->layout->AddRow2(tr(S_APPMAN_EMUS), CHEVRON, lbl, chevron_color(),
-                          -1.0f, nullptr, "", false, false);         // 0
-    this->layout->AddRow2(tr(S_APPMAN_APPS), CHEVRON, lbl, chevron_color(),
-                          -1.0f, nullptr, "", false, false);         // 1
 }
 
 // A companion is "connected" when it has read our inventory recently: over
@@ -4758,11 +4948,43 @@ void MainApplication::GotoHelp() {
 // static list — ShowHelpArticle's idx is always into kGetStarted/kHowTo/kTrouble
 // directly (never offset by that action row; OnInput subtracts 1 for it).
 struct HelpArticle { int title; int body; };
+// #3 ("Adding your first collection") is entirely about the repo/download
+// engine, compiled out entirely in Lite builds -- see HAULNX_LITE in the
+// Makefile.
+#ifdef HAULNX_LITE
+static const HelpArticle kHelpGetStarted[] = {
+    {S_GS1_TITLE, S_GS1_BODY_LITE}, {S_GS2_TITLE, S_GS2_BODY},
+    {S_GS4_TITLE, S_GS4_BODY},
+    {S_GS5_TITLE, S_GS5_BODY}, {S_GS6_TITLE, S_GS6_BODY},
+};
+#else
 static const HelpArticle kHelpGetStarted[] = {
     {S_GS1_TITLE, S_GS1_BODY}, {S_GS2_TITLE, S_GS2_BODY},
     {S_GS3_TITLE, S_GS3_BODY}, {S_GS4_TITLE, S_GS4_BODY},
     {S_GS5_TITLE, S_GS5_BODY}, {S_GS6_TITLE, S_GS6_BODY},
 };
+#endif
+// #1 (add a repository), #2 (queue files from a repo), #17 (search
+// repositories), and #18 (back up/restore collection setup) all describe the
+// repo/download engine, compiled out entirely in Lite builds -- see
+// HAULNX_LITE in the Makefile. Dropped from the list rather than left
+// pointing at a menu/tab that no longer exists. HelpArticleList below returns
+// this array generically by pointer+count, so no index remap is needed
+// anywhere else the way the fixed-case-number screens elsewhere needed.
+#ifdef HAULNX_LITE
+static const HelpArticle kHelpHowTo[] = {
+    {S_HOWTO3_TITLE, S_HOWTO3_BODY},   {S_HOWTO4_TITLE, S_HOWTO4_BODY},
+    {S_HOWTO5_TITLE, S_HOWTO5_BODY},   {S_HOWTO6_TITLE, S_HOWTO6_BODY},
+    {S_HOWTO7_TITLE, S_HOWTO7_BODY},   {S_HOWTO8_TITLE, S_HOWTO8_BODY},
+    {S_HOWTO9_TITLE, S_HOWTO9_BODY},   {S_HOWTO10_TITLE, S_HOWTO10_BODY},
+    {S_HOWTO11_TITLE, S_HOWTO11_BODY}, {S_HOWTO12_TITLE, S_HOWTO12_BODY},
+    {S_HOWTO13_TITLE, S_HOWTO13_BODY}, {S_HOWTO14_TITLE, S_HOWTO14_BODY},
+    {S_HOWTO15_TITLE, S_HOWTO15_BODY}, {S_HOWTO16_TITLE, S_HOWTO16_BODY},
+    {S_HOWTO19_TITLE, S_HOWTO19_BODY}, {S_HOWTO20_TITLE_LITE, S_HOWTO20_BODY_LITE},
+    {S_HOWTO21_TITLE, S_HOWTO21_BODY}, {S_HOWTO22_TITLE, S_HOWTO22_BODY},
+    {S_HOWTO23_TITLE, S_HOWTO23_BODY}, {S_HOWTO24_TITLE, S_HOWTO24_BODY},
+};
+#else
 static const HelpArticle kHelpHowTo[] = {
     {S_HOWTO1_TITLE, S_HOWTO1_BODY},   {S_HOWTO2_TITLE, S_HOWTO2_BODY},
     {S_HOWTO3_TITLE, S_HOWTO3_BODY},   {S_HOWTO4_TITLE, S_HOWTO4_BODY},
@@ -4777,6 +4999,23 @@ static const HelpArticle kHelpHowTo[] = {
     {S_HOWTO21_TITLE, S_HOWTO21_BODY}, {S_HOWTO22_TITLE, S_HOWTO22_BODY},
     {S_HOWTO23_TITLE, S_HOWTO23_BODY}, {S_HOWTO24_TITLE, S_HOWTO24_BODY},
 };
+#endif
+// #15 ("Archive.org says the item needs a login") is entirely about the
+// repo/download engine, compiled out entirely in Lite builds -- see
+// HAULNX_LITE in the Makefile.
+#ifdef HAULNX_LITE
+static const HelpArticle kHelpTrouble[] = {
+    {S_TS1_TITLE, S_TS1_BODY},   {S_TS2_TITLE, S_TS2_BODY},
+    {S_TS3_TITLE, S_TS3_BODY},   {S_TS4_TITLE, S_TS4_BODY},
+    {S_TS5_TITLE, S_TS5_BODY},   {S_TS6_TITLE, S_TS6_BODY},
+    {S_TS7_TITLE, S_TS7_BODY},   {S_TS8_TITLE, S_TS8_BODY},
+    {S_TS9_TITLE, S_TS9_BODY},   {S_TS10_TITLE, S_TS10_BODY},
+    {S_TS11_TITLE, S_TS11_BODY}, {S_TS12_TITLE, S_TS12_BODY},
+    {S_TS13_TITLE, S_TS13_BODY}, {S_TS14_TITLE, S_TS14_BODY},
+    {S_TS16_TITLE, S_TS16_BODY},
+    {S_TS17_TITLE, S_TS17_BODY}, {S_TS18_TITLE, S_TS18_BODY},
+};
+#else
 static const HelpArticle kHelpTrouble[] = {
     {S_TS1_TITLE, S_TS1_BODY},   {S_TS2_TITLE, S_TS2_BODY},
     {S_TS3_TITLE, S_TS3_BODY},   {S_TS4_TITLE, S_TS4_BODY},
@@ -4788,6 +5027,7 @@ static const HelpArticle kHelpTrouble[] = {
     {S_TS15_TITLE, S_TS15_BODY}, {S_TS16_TITLE, S_TS16_BODY},
     {S_TS17_TITLE, S_TS17_BODY}, {S_TS18_TITLE, S_TS18_BODY},
 };
+#endif
 // Category -> {article array, count, screen title string id}. Getting Started
 // is index 0, matching GotoHelp's row order and Screen::Help's Sel().
 static const HelpArticle *help_articles(int cat, size_t *n) {
@@ -4937,6 +5177,19 @@ void MainApplication::GuidedTour() {
     // the closing PC-companion note) leave the background screen alone.
     enum class Page { None, Library, Browse, Queue, InstallFolders, Storage, Transfers };
     struct Step { int title; int body; Page page; };
+    // No Browse/Collections tab in a Lite build (see HAULNX_LITE in the
+    // Makefile) -- the two steps that explain it are dropped rather than
+    // pointing at a tab that no longer exists.
+#ifdef HAULNX_LITE
+    static const Step kSteps[] = {
+        {S_TOUR1_TITLE, S_TOUR1_BODY_LITE, Page::Library},
+        {S_TOUR2_TITLE, S_TOUR2_BODY, Page::Library},
+        {S_TOUR4_TITLE, S_TOUR4_BODY, Page::Queue},
+        {S_TOUR5_TITLE, S_TOUR5_BODY, Page::InstallFolders},
+        {S_TOUR6_TITLE, S_TOUR6_BODY, Page::Storage},
+        {S_TOUR7_TITLE, S_TOUR7_BODY, Page::Transfers},
+    };
+#else
     static const Step kSteps[] = {
         {S_TOUR1_TITLE, S_TOUR1_BODY, Page::Library},
         {S_TOUR2_TITLE, S_TOUR2_BODY, Page::Library},
@@ -4947,6 +5200,7 @@ void MainApplication::GuidedTour() {
         {S_TOUR6_TITLE, S_TOUR6_BODY, Page::Storage},
         {S_TOUR7_TITLE, S_TOUR7_BODY, Page::Transfers},
     };
+#endif
     const int n = (int)(sizeof(kSteps) / sizeof(kSteps[0]));
     int i = 0;
     while (i >= 0 && i < n) {
@@ -5002,7 +5256,10 @@ void MainApplication::GuidedTour() {
                     false, ic_is_art);
             }
             break;
-        case Page::InstallFolders: this->GotoInstallFolders();             break;
+        case Page::InstallFolders:
+            this->folders_expanded = true; // show the per-console rows expanded
+            this->GotoFolders();
+            break;
         case Page::Storage:        this->GotoStorage();                   break;
         case Page::Transfers:      this->GotoTransfers();                 break;
         case Page::None:                                                  break;
@@ -5063,15 +5320,22 @@ void MainApplication::ExportBundle() {
 }
 
 // Worker for the network self-test: does the LAN check (instant) and a single
-// small GET to archive.org, on net_selftest's own curl handle so it can't
-// stall behind unrelated http_get() traffic and B can actually cancel it.
+// small GET on net_selftest's own curl handle so it can't stall behind
+// unrelated http_get() traffic and B can actually cancel it. Lite builds never
+// talk to archive.org for anything -- including this diagnostic -- so they
+// probe GitHub instead (the same host the kept update system already uses).
 void MainApplication::DiagThread(void *arg) {
     auto self = static_cast<MainApplication *>(arg);
     self->diag_lan = httpsrv_local_ip(self->diag_ip, sizeof(self->diag_ip));
     self->diag_net = false;
     if (self->diag_lan && !self->diag_cancel) {
+#ifdef HAULNX_LITE
+        self->diag_net =
+            net_selftest("https://api.github.com/", &self->diag_cancel);
+#else
         self->diag_net =
             net_selftest("https://archive.org/robots.txt", &self->diag_cancel);
+#endif
     }
     self->diag_net_cancelled = self->diag_cancel != 0;
     self->diag.done = true;
@@ -5950,7 +6214,11 @@ void MainApplication::InvServerPoll() {
             this->LiveRecvEnd(false);
         }
     }
-    this->InvBoxartTick();
+    // Moved to the unconditional per-frame section (see its own comment) so a
+    // USB-triggered search/pick still gets serviced when the Wi-Fi inventory
+    // server toggle is off -- this whole function early-returns above
+    // whenever !inv_open, which used to mean InvBoxartTick (and the USB
+    // trigger it now also needs to notice) never ran at all in that case.
 }
 
 // Defined below find_nro_in_dir (needs it); forward-declared here because
@@ -6151,10 +6419,37 @@ void MainApplication::InvBoxartPickThread(void *arg) {
     self->inv_boxpick.done = true;
 }
 
-// Called every frame from InvServerPoll (UI thread): starts a fresh
-// search/pick request HttpSrv's GET/POST handlers left waiting, and reaps
-// whichever thread has finished since the last frame.
+// Called every frame (UI thread): starts a fresh search/pick request either
+// transport's front end left waiting, and reaps whichever thread has
+// finished since the last frame. USB requests (mtp::PollBoxartReq) are
+// folded straight into the same HttpSrv-side intake fields Wi-Fi's GET/POST
+// handlers already use, so everything below this point treats both
+// transports identically -- SetBoxartStatus at the end mirrors the outcome
+// back out for USB's boxart_status.json the same way inv_srv's own fields
+// already serve Wi-Fi's polling.
 void MainApplication::InvBoxartTick() {
+    mtp::BoxartReq usbreq;
+    if (mtp::PollBoxartReq(&usbreq)) {
+        // Mirror exactly what httpsrv.c's GET boxartsearch / POST boxartpick
+        // handlers set on the Wi-Fi side when accepting a request -- the
+        // req_target[0] checks just below only kick off the worker; running/
+        // done have to be set here since there's no equivalent "answer the
+        // request" step to hang them off on the USB side.
+        if (usbreq.is_pick) {
+            snprintf(this->inv_srv.boxpick_req_target,
+                     sizeof(this->inv_srv.boxpick_req_target), "%s", usbreq.target);
+            this->inv_srv.boxpick_req_index = usbreq.index;
+            this->inv_srv.boxpick_running = true;
+            this->inv_srv.boxpick_done = false;
+        } else {
+            snprintf(this->inv_srv.boxsearch_req_target,
+                     sizeof(this->inv_srv.boxsearch_req_target), "%s", usbreq.target);
+            snprintf(this->inv_srv.boxsearch_req_query,
+                     sizeof(this->inv_srv.boxsearch_req_query), "%s", usbreq.query);
+            this->inv_srv.boxsearch_running = true;
+            this->inv_srv.boxsearch_done = false;
+        }
+    }
     if (this->inv_srv.boxsearch_req_target[0]) {
         this->inv_boxsearch_target = this->inv_srv.boxsearch_req_target;
         this->inv_boxsearch_query = this->inv_srv.boxsearch_req_query;
@@ -6233,6 +6528,18 @@ void MainApplication::InvBoxartTick() {
         this->inv_srv.boxpick_running = false;
         this->inv_srv.boxpick_done = true;
     }
+    mtp::BoxartStatus st;
+    st.search_running = this->inv_srv.boxsearch_running;
+    st.search_done = this->inv_srv.boxsearch_done;
+    st.search_count = this->inv_srv.boxsearch_count;
+    for (int i = 0; i < BOXART_MAX_CANDIDATES; i++) {
+        st.search_w[i] = this->inv_srv.boxsearch_w[i];
+        st.search_h[i] = this->inv_srv.boxsearch_h[i];
+    }
+    st.pick_running = this->inv_srv.boxpick_running;
+    st.pick_done = this->inv_srv.boxpick_done;
+    st.pick_ok = this->inv_srv.boxpick_ok;
+    mtp::SetBoxartStatus(st);
 }
 
 // A game streamed to the always-on server (app utility › Device Transfer › Send
@@ -6247,6 +6554,8 @@ void MainApplication::InvApplyFile() {
     bool new_app = this->inv_srv.recv_app_new;
     std::string folder = this->inv_srv.recv_folder;
     std::string fsdest = this->inv_srv.recv_fs_dest;
+    bool fsextract = this->inv_srv.recv_fs_extract;
+    bool dat_bulk = this->inv_srv.recv_dat_bulk;
     this->inv_srv.recv_name[0] = '\0';
     this->inv_srv.part_path[0] = '\0';
     this->inv_srv.recv_app[0] = '\0';
@@ -6254,17 +6563,111 @@ void MainApplication::InvApplyFile() {
     this->inv_srv.recv_app_new = false;
     this->inv_srv.recv_folder[0] = '\0';
     this->inv_srv.recv_fs_dest[0] = '\0';
+    this->inv_srv.recv_fs_extract = false;
+    this->inv_srv.recv_dat_bulk = false;
     if (name.empty() || part.empty() || !fs_exists(part.c_str())) {
         return; // never completed, or already consumed
+    }
+    // DAT Files tab "Push all" (X-Dat-Bulk): the body is a zip of several DAT
+    // files, batched into one push for the same reason the SD Card tab's
+    // folder push is (see recv_fs_extract's comment below) -- pushing dozens
+    // of DATs one at a time meant that many back-to-back connections against
+    // this single-client server. Unpack to a private staging folder on the
+    // same background extract worker, then run every extracted file through
+    // the ordinary single-DAT staging/validation (PushExtractApplyDatBulk).
+    // Checked ahead of the fsdest branch since a DAT bulk push never sets
+    // recv_fs_dest at all.
+    if (dat_bulk) {
+        std::string stage = std::string(DATS_DIR) + "/_bulk_incoming";
+        fs_rm_rf(stage.c_str()); // clear any stale leftover from an aborted prior bulk push
+        fs_mkdir_p(stage.c_str());
+        if (this->pxt.running) {
+            this->pxt.Join();
+        }
+        this->pxt_path = part;
+        this->pxt_dir = stage;
+        this->pxt_name = name;
+        this->pxt_target.clear();
+        this->pxt_kind = 2;
+        this->pxt_cancel = false;
+        if (!this->pxt.Start(&MainApplication::PushExtractThread, this)) {
+            // Couldn't spawn: fall back to doing it inline, same as the other
+            // two extract paths above.
+            int ow = 0;
+            int n = extract_archive(part.c_str(), stage.c_str(), NULL, NULL, &ow);
+            if (n > 0) {
+                remove(part.c_str());
+                this->PushExtractApplyDatBulk();
+            } else {
+                xfer_log("FAILED     PC DAT bulk push: couldn't unpack %s",
+                         name.c_str());
+                fs_rm_rf(stage.c_str());
+            }
+        }
+        return;
     }
     // SD Card tab direct write (X-Fs-Path): move the finished temp straight to
     // its exact requested destination, already validated server-side. This is
     // a plain file write, not a ROM import -- no app/library/inbox routing,
-    // no archive extraction, no toast (the desktop's own file browser already
-    // reflects the write; a device-side toast for every drag-drop would be
-    // noise). Checked first so it can never fall through into the game-push
-    // logic below.
+    // no toast (the desktop's own file browser already reflects the write; a
+    // device-side toast for every drag-drop would be noise). Checked first so
+    // it can never fall through into the game-push logic below.
     if (!fsdest.empty()) {
+        // A whole-folder push (X-Fs-Extract): the desktop bundles the folder
+        // into one zip instead of one push per file -- sending a folder as
+        // hundreds/thousands of individual pushes each pays this
+        // single-client server's connect/accept overhead and can race the
+        // brief window right after one push finishes before the next is
+        // accepted (see wifi_push's own retry comment), which is exactly what
+        // made a large folder look like it was DoSing the console. fsdest is
+        // the destination DIRECTORY here, not a file -- unpack into it on the
+        // same background extract worker a Wi-Fi ROM archive push already
+        // uses (PushExtractThread), for the same reason that one runs off
+        // this thread: a synchronous extract_archive here would freeze
+        // InvServerPoll -- and with it httpsrv_poll's accept() -- for the
+        // whole unzip.
+        if (fsextract) {
+            fs_mkdir_p(fsdest.c_str());
+            if (this->pxt.running) {
+                // Shouldn't happen -- the desktop sends one folder at a time --
+                // but don't drop this extract if it somehow does.
+                this->pxt.Join();
+            }
+            this->pxt_path = part;
+            this->pxt_dir = fsdest;
+            this->pxt_name = name;
+            this->pxt_target.clear();
+            this->pxt_kind = 1; // SD Card tab folder push, not a console game
+            this->pxt_cancel = false;
+            if (!this->pxt.Start(&MainApplication::PushExtractThread, this)) {
+                // Couldn't spawn: fall back to doing it inline, same as the
+                // game-push path below.
+                int ow = 0;
+                int n = extract_archive(part.c_str(), fsdest.c_str(), NULL, NULL,
+                                        &ow);
+                if (n <= 0) {
+                    size_t nl = name.size();
+                    if (nl > 4 && strcasecmp(name.c_str() + nl - 4, ".rar") == 0) {
+                        ow = 0;
+                        n = rar3_extract(part.c_str(), fsdest.c_str(), NULL, NULL,
+                                         &ow);
+                    }
+                }
+                if (n > 0) {
+                    remove(part.c_str());
+                    xfer_log("push       PC unpacked %s -> %s (SD Card tab)",
+                             name.c_str(), fsdest.c_str());
+                } else {
+                    xfer_log("FAILED     PC SD-card folder push: couldn't unpack "
+                             "%s into %s",
+                             name.c_str(), fsdest.c_str());
+                }
+            } else {
+                xfer_log("push       PC unpacking %s -> %s (SD Card tab)",
+                         name.c_str(), fsdest.c_str());
+            }
+            return;
+        }
         if (!fs_move(part.c_str(), fsdest.c_str())) {
             remove(part.c_str());
             xfer_log("FAILED     PC SD-card write of %s to %s", name.c_str(),
@@ -6340,6 +6743,7 @@ void MainApplication::InvApplyFile() {
                 this->pxt_dir = dir;
                 this->pxt_name = name;
                 this->pxt_target = g->target;
+                this->pxt_kind = 0; // a console game archive
                 this->pxt_cancel = false;
                 if (!this->pxt.Start(&MainApplication::PushExtractThread, this)) {
                     // Couldn't spawn: fall back to doing it inline, same as before.
@@ -6424,6 +6828,15 @@ void MainApplication::PushExtractTick() {
         return;
     }
     this->pxt.Join();
+    if (this->pxt_kind == 2) {
+        this->PushExtractApplyDatBulk();
+        return;
+    }
+    if (this->pxt_kind == 1) {
+        xfer_log("push       PC unpacked %s -> %s (SD Card tab)",
+                 this->pxt_name.c_str(), this->pxt_dir.c_str());
+        return;
+    }
     xfer_log("push       PC game %s unpacked -> %s", this->pxt_name.c_str(),
              this->pxt_target.c_str());
 }
@@ -7206,6 +7619,15 @@ void MainApplication::UmiTick(int j) {
             }
             break;
         }
+        // Outlives this row patch: the next GotoAppUpdates open rebuilds the
+        // whole list from scratch (AppChkThread), which would otherwise
+        // recompute this entry's state from its installed-version string vs
+        // the last cached GitHub tag -- a comparison that isn't guaranteed to
+        // agree with "we just personally swapped this file to that release"
+        // (see appman_just_updated's own comment). Insert here, not
+        // unconditionally, to respect the same appchk.running gate as the
+        // vectors above.
+        this->appman_just_updated.insert(job.id);
         if (this->screen == Screen::AppUpdates) {
             this->AppUpdatesRender();
         }
@@ -7256,6 +7678,19 @@ void MainApplication::AppSetSource(const UpdSource &e) {
     free(all);
 }
 
+// Emulators tab, trailing "Add manually" row: for a niche/custom emulator the
+// bundled catalogue doesn't know about. Browses the SD card for its .nro
+// (Screen::RomPicker in picker_nro_mode); once one is picked, the repo prompt
+// and manifest insert are the same AppSetSource() every other entry uses --
+// see the picker_nro_mode branch in the Screen::RomPicker input handler.
+void MainApplication::AppAddManual() {
+    this->picker_nro_mode = true;
+    this->picker_console = -1;
+    this->picker_from_installed = false;
+    std::string start = fs_exists("sdmc:/switch") ? "sdmc:/switch" : "sdmc:/";
+    this->GotoRomPicker(start);
+}
+
 // Roll back to one of the stored backups for this app.
 void MainApplication::AppRevert(const UpdSource &e) {
     auto baks = list_backups(e.id);
@@ -7290,28 +7725,120 @@ void MainApplication::AppRevert(const UpdSource &e) {
         this->ToastErr(tr(S_NRO_STAGE_FAIL));
         return;
     }
-    // Keep the build we're replacing (so the user can go forward again), then
-    // copy the chosen backup into place with the transient .bak safety.
-    backup_keep2(e.id, cur_path, cur_ver);
-    std::string bak = cur_path + ".bak";
-    remove(bak.c_str());
-    bool restore = fs_move(cur_path.c_str(), bak.c_str());
-    if (!fs_copy_file(src.c_str(), cur_path.c_str())) {
-        if (restore) {
-            fs_move(bak.c_str(), cur_path.c_str());
-        }
-        this->ToastErr(tr(S_NRO_STAGE_FAIL));
+    // The actual copy (potentially a large NRO) used to run right here, inline
+    // on the UI thread, with no progress feedback at all -- unlike a normal
+    // update (which at least has a download's progress bar first), 100% of a
+    // revert's wait was silent, so any real file made it look hung. Handed off
+    // to revert_job's background thread instead; see AppRevertThread/Tick.
+    if (this->revert_job.task.running) {
+        // Shouldn't happen -- revert is a modal, one-at-a-time action -- but
+        // don't drop this one if it somehow does.
+        this->revert_job.task.Join();
+    }
+    this->revert_job.src = src;
+    this->revert_job.dest = cur_path;
+    this->revert_job.bak = cur_path + ".bak";
+    this->revert_job.id = e.id;
+    this->revert_job.name = e.name;
+    this->revert_job.label = opts[r];
+    this->revert_job.now = 0;
+    this->revert_job.total = 0;
+    this->revert_job.ok = false;
+    this->revert_job.restore_bak = false;
+    // backup_keep2 (called on the worker thread now, see AppRevertThread)
+    // needs the version being replaced, the same way UmiJob stashes bakver
+    // for its own backup_keep2 call.
+    this->revert_job.cur_ver = cur_ver;
+    if (!this->revert_job.task.Start(&MainApplication::AppRevertThread,
+                                     &this->revert_job)) {
+        // Couldn't spawn: fall back to doing it inline (blocks), same
+        // fallback shape UmiStart/PushExtractThread use.
+        AppRevertThread(&this->revert_job);
+        this->AppRevertTick();
         return;
     }
-    if (restore) {
-        remove(bak.c_str());
+    this->revert_job.xslot = this->BeginXfer(e.name, e.id, 2); // xkind 2: same bucket a normal update uses
+}
+
+// Off-thread: backup_keep2 (keep the build being replaced) + the actual
+// backup-restore copy, with the same transient .bak safety AppRevert used to
+// do inline. arg is &this->revert_job.
+void MainApplication::AppRevertThread(void *arg) {
+    auto job = static_cast<RevertJob *>(arg);
+    backup_keep2(job->id, job->dest, job->cur_ver);
+    remove(job->bak.c_str());
+    job->restore_bak = fs_move(job->dest.c_str(), job->bak.c_str());
+    bool ok = fs_copy_file_progress(job->src.c_str(), job->dest.c_str(),
+                                    &MainApplication::AppRevertProgress, job);
+    if (!ok) {
+        if (job->restore_bak) {
+            fs_move(job->bak.c_str(), job->dest.c_str());
+        }
+    } else if (job->restore_bak) {
+        remove(job->bak.c_str());
     }
-    this->inv_last_gen_ns = 0;
-    xfer_log("reverted   %s -> %s (%s)", e.name, opts[r].c_str(),
-             cur_path.c_str());
-    char done[160];
-    snprintf(done, sizeof(done), tr(S_APPMAN_REVERTED), e.name);
-    this->Toast(done);
+    job->ok = ok;
+    job->task.done = true;
+}
+
+bool MainApplication::AppRevertProgress(void *ud, u64 now, u64 total) {
+    auto job = static_cast<RevertJob *>(ud);
+    job->now = now;
+    job->total = total;
+    return true; // no cancel support -- a revert is short enough not to need one
+}
+
+// Per-frame: mirror progress into the Queue-tab item while the copy runs,
+// then reap it once done -- toast, log, and refresh the App Updates row the
+// same way UmiTick's success path does (see appman_just_updated's comment;
+// a revert is exactly the same "we just changed what's installed" case).
+void MainApplication::AppRevertTick() {
+    if (!this->revert_job.task.done) {
+        if (this->revert_job.task.running && this->revert_job.xslot >= 0) {
+            queue_ext_progress(this->revert_job.xslot, this->revert_job.now,
+                              this->revert_job.total, 0);
+        }
+        return;
+    }
+    this->revert_job.task.Join();
+    bool ok = this->revert_job.ok;
+    if (ok) {
+        this->inv_last_gen_ns = 0;
+        xfer_log("reverted   %s -> %s (%s)", this->revert_job.name.c_str(),
+                 this->revert_job.label.c_str(), this->revert_job.dest.c_str());
+        char done[160];
+        snprintf(done, sizeof(done), tr(S_APPMAN_REVERTED),
+                 this->revert_job.name.c_str());
+        this->Toast(done);
+        if (!this->appchk.running) {
+            for (size_t k = 0; k < this->appman_list.size(); k++) {
+                if (strcasecmp(this->appman_list[k].id, this->revert_job.id.c_str()) != 0) {
+                    continue;
+                }
+                if (k < this->appman_ipath.size()) {
+                    this->appman_ipath[k] = this->revert_job.dest;
+                }
+                if (k < this->appman_ver.size()) {
+                    char verbuf[24];
+                    this->appman_ver[k] = (nro_file_version(this->revert_job.dest.c_str(),
+                                                            verbuf, sizeof(verbuf)) &&
+                                           verbuf[0])
+                                              ? verbuf
+                                              : "";
+                }
+                break;
+            }
+            this->appman_just_updated.erase(this->revert_job.id); // a revert's version isn't "the latest checked" -- let a real check judge it
+            if (this->screen == Screen::AppUpdates) {
+                this->AppUpdatesRender();
+            }
+        }
+    } else {
+        xfer_log("FAILED     revert of %s", this->revert_job.name.c_str());
+        this->ToastErr(tr(S_NRO_STAGE_FAIL));
+    }
+    queue_ext_finish(this->revert_job.xslot, ok, ok ? NULL : "err");
+    this->revert_job.xslot = -1;
 }
 
 // One entry's action menu. Opening it does NOT touch the network (that was the
@@ -7588,6 +8115,12 @@ void MainApplication::GotoAppUpdates(uint8_t kind) {
         this->appchk.Join();
     }
     this->screen = Screen::AppUpdates;
+    if (this->appman_kind != kind) {
+        // Switching sections (Emulators <-> Apps, which used to mean picking
+        // a different hub row and always landed on row 0): don't carry over a
+        // scroll position that belonged to the other, differently-sized list.
+        this->appman_sel = 0;
+    }
     this->appman_kind = kind;
     this->appchk_net = false; // open = local versions only, no network
     if (!this->appman_checked_loaded) {
@@ -7727,10 +8260,23 @@ void MainApplication::AppChkThread(void *arg) {
                 rel_url[i] = ci->second.url;
                 rel_asset[i] = ci->second.asset;
                 if (!ipath[i].empty()) {
-                    int cmp = ver[i].empty()
-                                  ? -1
-                                  : version_cmp(ver[i].c_str(), latest[i].c_str());
-                    state[i] = (cmp < 0) ? APST_UPDATE : APST_UPTODATE;
+                    // An id UmiTick just successfully installed/updated this
+                    // session is trusted outright instead of recomputed:
+                    // "we just personally swapped this file to the release we
+                    // ourselves checked" is more reliable ground truth than a
+                    // version_cmp of the installed file's own version string
+                    // against the cached tag, which isn't guaranteed to agree
+                    // (a release's NACP version not matching its GitHub tag's
+                    // format, or not bumped at all) even though the install
+                    // genuinely succeeded. See appman_just_updated's comment.
+                    if (self->appman_just_updated.count(list[i].id)) {
+                        state[i] = APST_UPTODATE;
+                    } else {
+                        int cmp = ver[i].empty()
+                                      ? -1
+                                      : version_cmp(ver[i].c_str(), latest[i].c_str());
+                        state[i] = (cmp < 0) ? APST_UPDATE : APST_UPTODATE;
+                    }
                 }
             }
         }
@@ -7831,6 +8377,10 @@ void MainApplication::AppChkThread(void *arg) {
                 self->appman_checked_at[list[i].id] = (uint64_t)time(NULL);
                 stamped = true;
                 net_cache[list[i].id] = {latest[i], rel_url[i], rel_asset[i]};
+                // A real check just gave us the true state -- the "trust the
+                // install we just did" shortcut (see its own comment) is no
+                // longer needed and shouldn't outlive fresh data either way.
+                self->appman_just_updated.erase(list[i].id);
             }
             self->appchk_idx = self->appchk_idx + 1;
         }
@@ -7900,9 +8450,17 @@ std::string MainApplication::AppCheckedLabel(const std::string &id) {
 // source / unreachable badge per entry, colour-coded so the states don't blur.
 // Installed rows also carry when they were last checked ("· 5m ago").
 void MainApplication::AppUpdatesRender() {
-    this->layout->SetSubtitle(tr(S_APPMAN_LIST_HINT));
+    bool is_emu = (this->appman_kind == UPD_KIND_EMU);
+    // Emulators is a top-level tab root (no B-back, tabs are on L/R) while
+    // Apps was opened from Settings (B does go back) -- the footer hint has
+    // to match which one this is.
+    this->layout->SetSubtitle(tr(is_emu ? S_APPMAN_LIST_HINT_EMU
+                                        : S_APPMAN_LIST_HINT));
     this->layout->ClearMenu();
-    if (this->appman_list.empty()) {
+    // Apps with nothing installed is a genuine empty state (there's nothing on
+    // the card to manage). Emulators always has the bundled catalogue rows
+    // plus the trailing "Add manually" action below, so it's never truly empty.
+    if (this->appman_list.empty() && !is_emu) {
         this->layout->SetEmptyState(console_icon("default"), tr(S_APPMAN_EMPTY),
                                     "");
         return;
@@ -7988,9 +8546,17 @@ void MainApplication::AppUpdatesRender() {
         this->layout->AddRow2(std::string(e.name), tag, lbl, clr, -1.0f,
                               console_icon("default"), "", false, pill);
     }
+    s32 row_count = (s32)this->appman_list.size();
+    if (is_emu) {
+        // Trailing action row: register an emulator the bundled catalogue
+        // doesn't know about -- pick its .nro, then set a GitHub repo for it.
+        this->layout->AddRow2(tr(S_APPMAN_ADD_MANUAL), CHEVRON, lbl,
+                              chevron_color(), -1.0f, nullptr, "", false, false);
+        row_count++;
+    }
     s32 sel = this->appman_sel;
-    if (sel >= (s32)this->appman_list.size()) {
-        sel = (s32)this->appman_list.size() - 1;
+    if (sel >= row_count) {
+        sel = row_count - 1;
     }
     if (sel < 0) {
         sel = 0;
@@ -8049,6 +8615,7 @@ void MainApplication::AppRecheckOne(size_t idx) {
             this->AppMarkChecked(e.id); // stamp "checked just now"
             this->appman_net_cache[this->appman_kind][e.id] = {latest, rel_url,
                                                                 rel_asset};
+            this->appman_just_updated.erase(e.id); // fresh data now; drop the shortcut
         }
     }
     if (idx < this->appman_state.size()) {
@@ -8173,6 +8740,42 @@ void MainApplication::PollXfers() {
     // reap it once finished so Join() doesn't pile up.
     if (this->pxt.running && this->pxt.done) {
         this->PushExtractTick();
+    }
+    // Unlike pxt above, this needs to run every frame while the job is still
+    // going too (not just once done), to mirror its live progress into the
+    // Queue-tab item -- see AppRevertTick's own comment.
+    if (this->revert_job.task.running) {
+        this->AppRevertTick();
+    }
+    // Box-art search/pick request handoff (see its own long comment in
+    // httpsrv.h) -- moved here from InvServerPoll's tail so a USB-triggered
+    // request (see PollBoxartReq below) still gets serviced when the Wi-Fi
+    // inventory server toggle is off; runs unconditionally every frame same
+    // as it always did inside InvServerPoll, just no longer gated on inv_open.
+    this->InvBoxartTick();
+    // Console art pushed over USB (see EnqueueArtPush's own comment for why
+    // the responder thread stages it here instead of applying it itself).
+    // Cheap to poll unconditionally -- just a mutex check when nothing's
+    // waiting, same as PushExtractTick's own gate above being effectively
+    // free when pxt isn't running.
+    {
+        mtp::ArtPush ap;
+        while (mtp::PollArtPush(&ap)) {
+            FILE *f = fopen(ap.path, "rb");
+            if (f) {
+                fseek(f, 0, SEEK_END);
+                long sz = ftell(f);
+                fseek(f, 0, SEEK_SET);
+                char *body = (sz > 0) ? static_cast<char *>(malloc(static_cast<size_t>(sz))) : nullptr;
+                if (body && fread(body, 1, static_cast<size_t>(sz), f) == static_cast<size_t>(sz)) {
+                    this->InvApplyConsoleArt(ap.target, body, static_cast<size_t>(sz)); // takes ownership of body
+                } else {
+                    free(body);
+                }
+                fclose(f);
+            }
+            remove(ap.path);
+        }
     }
     // A USB (MTP) session runs on every screen now, so a copy started from the
     // connect screen keeps flowing after we jump to the Queue tab. UsbMtpTick
@@ -9460,6 +10063,52 @@ void MainApplication::InvApplyDat(char *body, size_t len) {
     this->Toast(done);
 }
 
+// Reap a finished DAT-bulk extraction (InvApplyFile's X-Dat-Bulk branch,
+// pxt_kind == 2): pxt_dir now holds every file the pushed zip contained.
+// Run each through InvApplyDat -- the exact same staging/validation and
+// per-file toast a single DAT push already gets, so a batch of N DATs looks
+// identical to N individual pushes except for how it got here -- then drop
+// the staging folder regardless of how many entries actually parsed as a
+// DAT (a stray non-DAT file, or one for a system with no matching console,
+// is simply skipped by InvApplyDat itself). Best-effort: one bad file in the
+// batch doesn't stop the rest, matching the desktop's own per-item bulk-push
+// loop this replaces.
+void MainApplication::PushExtractApplyDatBulk() {
+    int total = 0;
+    for (const auto &e : list_dir(this->pxt_dir.c_str())) {
+        if (e.is_dir) {
+            continue; // a DAT-bulk zip has no subfolders to speak of; ignore if it somehow does
+        }
+        total++;
+        std::string path = this->pxt_dir + "/" + e.name;
+        FILE *f = fopen(path.c_str(), "rb");
+        if (!f) {
+            continue;
+        }
+        fseek(f, 0, SEEK_END);
+        long sz = ftell(f);
+        fseek(f, 0, SEEK_SET);
+        if (sz <= 0) {
+            fclose(f);
+            continue;
+        }
+        char *body = (char *)malloc((size_t)sz);
+        if (!body) {
+            fclose(f);
+            continue;
+        }
+        size_t rd = fread(body, 1, (size_t)sz, f);
+        fclose(f);
+        if (rd != (size_t)sz) {
+            free(body);
+            continue;
+        }
+        this->InvApplyDat(body, (size_t)sz); // takes ownership of body
+    }
+    fs_rm_rf(this->pxt_dir.c_str());
+    xfer_log("push       PC DAT bulk: %d file(s) in the batch", total);
+}
+
 bool MainApplication::StagedRestartPrompt(const std::string &msg) {
     // Same state the GitHub updater leaves behind: the Settings chip flips to
     // "Restart to update" and the tab dot stays lit until the relaunch.
@@ -9500,6 +10149,15 @@ bool MainApplication::StagedRestartPrompt(const std::string &msg) {
 // moment anything is added. A pref would also desync — wiping dl_sources.json
 // while keeping prefs.json would spend the guidance and never offer it again.
 void MainApplication::Welcome() {
+#ifdef HAULNX_LITE
+    // No repo can ever exist in a Lite build (see HAULNX_LITE in the Makefile
+    // and the strip in config.c's parse_sources_buf/config_add_repo), so
+    // offering "add your first repo" would be pure dead-end UI. Land straight
+    // on the Library tab instead, same as this dialog's own "Not now" path.
+    this->GotoInstalled(roms_root(&g_tico));
+    this->SyncTab();
+    return;
+#else
     // Last option as cancel, so it and B both come back as -1 (see the note on
     // CreateShowDialog above) — a real index is never returned for "Not now".
     // "Add your first repo" leads (the direct, no-other-device path); sending
@@ -9518,6 +10176,7 @@ void MainApplication::Welcome() {
         this->GotoInstalled(roms_root(&g_tico));
         this->SyncTab();
     }
+#endif /* HAULNX_LITE */
 }
 
 // Put one of the backups kept by past imports back. These files are unreachable
@@ -9595,6 +10254,12 @@ static std::atomic<int> g_ra_next{0}; // next id index a worker claims
 // instead of stacking up one repo at a time. ra_ok/ra_fail/ra_idx are atomics,
 // safe to bump from any worker; g_ra_ids is read-only for the run's duration.
 void MainApplication::RaWorker(void *arg) {
+#ifdef HAULNX_LITE
+    // Bulk metadata refresh only applies to the repo/download engine, which
+    // is compiled out entirely in Lite builds -- see HAULNX_LITE in the
+    // Makefile. Nothing should ever start this worker, but fail safe.
+    (void)arg;
+#else
     auto self = static_cast<MainApplication *>(arg);
     void *conn = net_conn_new();
     for (;;) {
@@ -9619,6 +10284,7 @@ void MainApplication::RaWorker(void *arg) {
         self->ra_idx.fetch_add(1); // completed count, for the readout
     }
     net_conn_free(conn);
+#endif /* HAULNX_LITE */
 }
 
 void MainApplication::RaThread(void *arg) {
@@ -9924,8 +10590,15 @@ void MainApplication::GotoDataFiles() {
     pu::ui::Color lbl = g_theme->row_text;
     this->layout->AddRow2(tr(S_MANAGE_DAT_FILES), CHEVRON, lbl, chevron_color(),
                           -1.0f, nullptr, "", false, false);          // 0
+#ifndef HAULNX_LITE
+    // The metadata cache only ever holds archive.org item metadata (written
+    // by the repo/download engine's StartMetaLoad/run_search_scan, both
+    // compiled out entirely in Lite builds -- see HAULNX_LITE in the
+    // Makefile), so it can never hold anything to manage there. The handler
+    // below shifts its own case numbers down one slot to match.
     this->layout->AddRow2(tr(S_MANAGE_META), CHEVRON, lbl, chevron_color(),
                           -1.0f, nullptr, "", false, false);          // 1
+#endif
     // 2: push the emulator/app list (with each entry's repo) to a connected
     // companion. Moved here from PC Sync — it's a catalog push, not a
     // transfer-session concern. The right cell reflects whether a companion
@@ -11492,7 +12165,13 @@ static void run_search_scan(const std::string &query, int scope_ci,
                             int scope_ri) {
     g_search_results.clear();
     g_search_capped = false;
-
+#ifdef HAULNX_LITE
+    // The repo/download engine is compiled out entirely in Lite builds -- see
+    // HAULNX_LITE in the Makefile. GotoSearch (below) never actually starts
+    // this scan in a Lite build, but keep it a safe no-op regardless.
+    (void)query; (void)scope_ci; (void)scope_ri;
+    return;
+#else
     // Map repo id -> target console folder for download context, limited to the
     // requested scope (a single console, or a single repo within it).
     struct RepoRef { std::string id; std::string target; std::string base; };
@@ -11644,10 +12323,19 @@ static void run_search_scan(const std::string &query, int scope_ci,
                   return strcasecmp(a.name.c_str(), b.name.c_str()) < 0;
               });
     g_search_capped = capped;
+#endif /* HAULNX_LITE */
 }
 
 void MainApplication::GotoSearch(const std::string &query, int scope_ci,
                                  int scope_ri) {
+#ifdef HAULNX_LITE
+    // The repo/download engine is compiled out entirely in Lite builds -- see
+    // HAULNX_LITE in the Makefile. Every menu item that could reach this is
+    // hidden too, so a silent no-op (rather than a translated toast nobody
+    // should ever see) is the right fallback here.
+    (void)query; (void)scope_ci; (void)scope_ri;
+    return;
+#else
     // A previous scan may still be unwinding after a B-cancel: it keeps running
     // until it notices the cancel flag, and wasn't joined then (it was still
     // alive). Reap it before touching the shared query/result globals, or the
@@ -11686,6 +12374,7 @@ void MainApplication::GotoSearch(const std::string &query, int scope_ci,
     this->layout->HideSpinner();
     run_search_scan(query, scope_ci, scope_ri);
     this->FinishSearch();
+#endif /* HAULNX_LITE */
 }
 
 void MainApplication::SearchThread(void *arg) {
@@ -12194,8 +12883,8 @@ bool MainApplication::ToolsMenu() {
     live.tick = [this]() { this->InvServerPoll(); };
     // The inventory toggle must stay at the row index `live.row` points to, so
     // the update-manager entry goes before it and live.row is set to match.
-    // Emulator/app update management itself lives under Settings -> Updates now;
-    // this row is just a shortcut into that screen.
+    // Emulator update management lives on its own top-level Emulators tab now
+    // (app updates stayed in Settings); this row is just a shortcut there.
     // PC Sync and Scan Art were two rows apiece (USB / Wi-Fi, game art /
     // console art) — collapsed into one row each that opens a small chooser
     // dialog, so the panel doesn't keep growing as more transfer/scan
@@ -12240,7 +12929,7 @@ bool MainApplication::ToolsMenu() {
         else if (cr == 1) this->ToolsScanConsoleArt();
         return false;
     }
-    case 8: this->GotoAppEmuUpdates(); return false; // Emulator & app updates (Settings)
+    case 8: this->GotoAppUpdates(UPD_KIND_EMU); return false; // Emulators tab, shortcut
     // row 9 (inventory toggle) is handled in-place by SideMenu; never returns here
     case SIDEMENU_SWITCH: return true;            // flip to per-console Options
     default: return false;                        // dismissed (B)
@@ -12517,8 +13206,9 @@ void MainApplication::InstFolderDialog(s32 i) {
     }
     // With per-console folders off there is nothing to change — the dialog is
     // purely informational (where games land). Otherwise it sets, changes, or
-    // resets the custom folder. Either way it offers "Open settings" (→ Storage,
-    // where the per-console folders toggle lives), then a trailing Cancel.
+    // resets the custom folder. Either way it offers "Open settings" (→ the
+    // Folders tab, where the per-console folders toggle lives), then a
+    // trailing Cancel.
     std::vector<std::string> btns;
     int change_idx = -1, reset_idx = -1, set_idx = -1;
     if (cf && hascustom) {
@@ -12535,7 +13225,15 @@ void MainApplication::InstFolderDialog(s32 i) {
                 (set_idx >= 0 && r == set_idx);   // Set/Change → open the picker
     bool reset = reset_idx >= 0 && r == reset_idx; // Reset to default
     if (r == settings_idx) {
-        this->GotoStorage(); // ROM / per-console folders live under Storage
+        // Land right on this console's row instead of just the tab root --
+        // only meaningful when per-console mode is actually on.
+        if (cf) {
+            this->folders_expanded = true;
+            this->GotoFolders();
+            this->layout->SetSel(4 + (int)(g - g_cfg.consoles));
+        } else {
+            this->GotoFolders();
+        }
     } else if (pick) {
         this->picker_console = (int)(g - g_cfg.consoles);
         this->picker_from_installed = true;
@@ -13325,8 +14023,14 @@ void MainApplication::FinishInstSearch() {
 void MainApplication::ArchSearchThread(void *arg) {
     auto self = static_cast<MainApplication *>(arg);
     self->arch_hits.assign(ARCH_SEARCH_MAX, ArchiveSearchItem{});
+#ifdef HAULNX_LITE
+    // The archive.org catalogue-search-for-a-new-source tool is compiled out
+    // entirely in Lite builds -- see HAULNX_LITE in the Makefile.
+    int n = -1;
+#else
     int n = ia_search(nullptr, self->arch_query.c_str(), self->arch_hits.data(),
                       ARCH_SEARCH_MAX);
+#endif
     if (n < 0) {
         self->arch_hits.clear();
     } else {
@@ -13338,6 +14042,13 @@ void MainApplication::ArchSearchThread(void *arg) {
 
 void MainApplication::GotoArchSearch(const std::string &query,
                                      const std::string &console) {
+#ifdef HAULNX_LITE
+    // The archive.org catalogue-search-for-a-new-source tool is compiled out
+    // entirely in Lite builds -- see HAULNX_LITE in the Makefile. Every menu
+    // item that could reach this is hidden too, so a silent no-op is right.
+    (void)query; (void)console;
+    return;
+#else
     if (this->arch.running) this->arch.Join();
     this->screen = Screen::ArchiveSearch;
     this->arch_query = query;
@@ -13354,6 +14065,7 @@ void MainApplication::GotoArchSearch(const std::string &query,
     this->layout->HideSpinner();
     ArchSearchThread(this);
     this->FinishArchSearch();
+#endif /* HAULNX_LITE */
 }
 
 void MainApplication::ArchSearchTick() {
@@ -15638,7 +16350,9 @@ void MainApplication::HandleInput(u64 down, u64 held,
         // flows to the screen we returned to in the meantime.
         if (this->meta.done) {
             this->meta.Join();
-            ia_free(&g_item);
+#ifndef HAULNX_LITE
+            ia_free(&g_item); // this->meta never actually runs in a Lite build
+#endif
             g_have_item = false;
             g_sel.clear(); // its indices pointed into the item just freed
             this->meta_discard = false;
@@ -16003,7 +16717,7 @@ void MainApplication::HandleInput(u64 down, u64 held,
             }
             this->layout->SetEmptyState(console_icon("default"),
                                         tr(S_QUEUE_EMPTY),
-                                        tr(S_QUEUE_EMPTY_HINT));
+                                        queue_empty_hint());
         } else {
         if (!this->layout->InCards()) {
             this->layout->ClearMenu(); // drop list rows / empty state once
@@ -16316,7 +17030,7 @@ void MainApplication::HandleInput(u64 down, u64 held,
         if (n == 0) {
             this->layout->SetEmptyState(console_icon("default"),
                                         tr(S_QUEUE_EMPTY),
-                                        tr(S_QUEUE_EMPTY_HINT));
+                                        queue_empty_hint());
         }
         this->layout->SetSel(keep);
         // Offline with work pending: say why nothing is moving (items sit at
@@ -16483,19 +17197,37 @@ void MainApplication::HandleInput(u64 down, u64 held,
                 int ci = g_home_map[sel];
                 ConsoleGroup *g = &g_cfg.consoles[ci];
                 const char *full = console_full_name(g->target);
-                int r = this->SideMenu(
-                    full ? full : g->target,
-                    {tr(S_ADD_REPO), g->pinned ? tr(S_UNPIN) : tr(S_PIN),
-                     tr(S_HIDE_FROM_PAGE), tr(S_CANCEL)},
-                    0, "", false, false, console_display_icon(g->target));
+                // "Add repo" can't do anything in a Lite build (no repo can
+                // ever exist -- see HAULNX_LITE in the Makefile and the strip
+                // in config.c), so it's left off the menu entirely rather
+                // than offered and silently failing. r shifts down one slot
+                // to match.
+                std::vector<std::string> opts;
+#ifndef HAULNX_LITE
+                opts.push_back(tr(S_ADD_REPO));
+#endif
+                opts.push_back(g->pinned ? tr(S_UNPIN) : tr(S_PIN));
+                opts.push_back(tr(S_HIDE_FROM_PAGE));
+                opts.push_back(tr(S_CANCEL));
+                int r = this->SideMenu(full ? full : g->target, opts, 0, "",
+                                       false, false,
+                                       console_display_icon(g->target));
+#ifndef HAULNX_LITE
                 if (r == 0) { // Add repo
                     this->GotoPicker(Pending::AddRepo);
                 } else if (r == 1) { // Pin / Unpin the console
+#else
+                if (r == 0) { // Pin / Unpin the console
+#endif
                     g->pinned = !g->pinned;
                     config_save(&g_cfg);
                     this->GotoHome();
                     this->layout->SetSel(0);
+#ifndef HAULNX_LITE
                 } else if (r == 2) { // Hide from this page (Collections/Browse
+#else
+                } else if (r == 1) { // Hide from this page (Collections/Browse
+#endif
                                      // only -- shown_installed, the Library
                                      // side, is untouched; if that's already
                                      // off too this naturally lands on
@@ -16523,8 +17255,13 @@ void MainApplication::HandleInput(u64 down, u64 held,
             } else if ((down & HidNpadButton_X) &&
                        flat_ref(this->layout->Sel(), &ci, &ri)) {
                 this->GotoRepoEdit(ci, ri);
+#ifndef HAULNX_LITE
             } else if (down & HidNpadButton_Y) {
+                // No repo can ever exist in a Lite build -- see HAULNX_LITE
+                // in the Makefile and the strip in config.c -- so this is
+                // left unbound rather than offered and silently failing.
                 this->GotoPicker(Pending::AddRepo);
+#endif
             } else if (down & HidNpadButton_Minus) {
                 // Global search, same as the grouped view. Repo delete stays
                 // available in the app utility (X → delete).
@@ -16628,6 +17365,10 @@ void MainApplication::HandleInput(u64 down, u64 held,
                 this->QueueSelection();
                 break;
             }
+#ifndef HAULNX_LITE
+            // g_have_item is always false in a Lite build (the repo/download
+            // engine is compiled out -- see HAULNX_LITE in the Makefile), so
+            // this whole branch is already unreachable at runtime above.
             s32 i = this->layout->Sel();
             if (i >= 0 && i < (s32)g_files.size()) {
                 ArchiveFile *f = &g_item.files[g_files[i]];
@@ -16646,6 +17387,7 @@ void MainApplication::HandleInput(u64 down, u64 held,
                     this->ToastErr(tr(S_QUEUE_FULL));
                 }
             }
+#endif /* HAULNX_LITE */
         } else if ((down & HidNpadButton_Minus) && !g_files_manual) {
             // Search within the opened repo.
             char q[256] = {0};
@@ -16883,7 +17625,7 @@ void MainApplication::HandleInput(u64 down, u64 held,
             case 4: this->GotoTransfers();   return; // PC Sync (hosts Install from PC)
             case 5: this->GotoAccount();     return;
             case 6: this->GotoUpdates();     return;
-            case 7: this->GotoAppEmuUpdates(); return; // Emulator/App updates hub
+            case 7: this->GotoAppUpdates(UPD_KIND_APP); return; // shows the list directly
             case 8: this->GotoViewLogs();    return;
             case 9: this->GotoDiagnostics(); return;
             case 10: this->GotoHelp();       return; // Getting Started/How-To/Troubleshooting
@@ -16992,6 +17734,55 @@ void MainApplication::HandleInput(u64 down, u64 held,
     }
 
     case Screen::RomPicker: {
+        if (this->picker_nro_mode) {
+            // Add emulator manually (Emulators tab, trailing row): browse for
+            // its .nro, then reuse AppSetSource's repo prompt + manifest
+            // insert for it -- same as setting the source on any other entry.
+            bool at_root_nro = (this->picker_path == "sdmc:/");
+            if (down & HidNpadButton_B) {
+                if (at_root_nro) {
+                    this->picker_nro_mode = false;
+                    this->GotoAppUpdates(UPD_KIND_EMU);
+                } else {
+                    // Up one level (never above the SD root).
+                    std::string up = this->picker_path;
+                    while (up.size() > 6 && up.back() == '/') up.pop_back();
+                    auto p = up.find_last_of('/');
+                    this->GotoRomPicker((p == std::string::npos || p < 5)
+                                            ? std::string("sdmc:/")
+                                            : up.substr(0, p + 1));
+                }
+            } else if (down & HidNpadButton_A) {
+                s32 i = this->layout->Sel();
+                if (i >= 0 && i < (s32)g_rompick.size()) {
+                    if (g_rompick[i].is_dir) {
+                        std::string next = this->picker_path;
+                        if (next.empty() || next.back() != '/') next += "/";
+                        next += g_rompick[i].name;
+                        this->GotoRomPicker(next);
+                    } else {
+                        // An .nro was picked: build a synthetic entry from its
+                        // filename (same shape AppChkThread gives an unmanaged
+                        // installed app) and set its repo right away.
+                        UpdSource e;
+                        memset(&e, 0, sizeof(e));
+                        e.kind = UPD_KIND_EMU;
+                        std::string base = g_rompick[i].name;
+                        if (is_nro_name(base)) {
+                            base = base.substr(0, base.size() - 4);
+                        }
+                        snprintf(e.id, sizeof(e.id), "%s", base.c_str());
+                        snprintf(e.name, sizeof(e.name), "%s", base.c_str());
+                        snprintf(e.detect, sizeof(e.detect), "%s",
+                                 g_rompick[i].name.c_str());
+                        this->picker_nro_mode = false;
+                        this->AppSetSource(e); // swkbd repo prompt + save
+                        this->GotoAppUpdates(UPD_KIND_EMU);
+                    }
+                }
+            }
+            break;
+        }
         // Apply a chosen ROM root (empty string = reset to auto), then return
         // to Manage data. queue.c holds a pointer into g_tico.roms_path, so
         // rewriting that buffer takes effect without restarting the queue.
@@ -17008,12 +17799,12 @@ void MainApplication::HandleInput(u64 down, u64 held,
             this->inst_path = roms_root(&g_tico);
             this->Toast(norm[0] ? tr(S_ROMS_OVERRIDE_SET)
                                 : tr(S_ROMS_OVERRIDE_CLEARED));
-            this->GotoStorage(); // ROM folder lives under Storage now
+            this->GotoFolders(); // ROM folder lives under the Folders tab now
         };
         // Where to land after finishing (or backing out of) a per-console pick:
         // the Installed tab when the picker was opened from there, otherwise the
-        // Storage per-console folder list. Reselects the edited console either
-        // way. Clears the from-Installed flag so it can't leak into a later pick.
+        // per-console folder list. Reselects the edited console either way.
+        // Clears the from-Installed flag so it can't leak into a later pick.
         auto return_from_console = [&](int ci) {
             bool from_inst = this->picker_from_installed;
             std::string nm = g_cfg.consoles[ci].target;
@@ -17028,8 +17819,9 @@ void MainApplication::HandleInput(u64 down, u64 held,
                     }
                 }
             } else {
-                this->GotoInstallFolders();
-                this->layout->SetSel(ci); // keep the cursor on the edited console
+                this->folders_expanded = true; // keep the console rows visible
+                this->GotoFolders();
+                this->layout->SetSel(4 + ci); // land back on the edited console
             }
         };
         // Set (or, with chosen=="", clear) this console's custom install folder,
@@ -17051,7 +17843,7 @@ void MainApplication::HandleInput(u64 down, u64 held,
                 if (per_console) {
                     return_from_console(this->picker_console);
                 } else {
-                    this->GotoStorage();
+                    this->GotoFolders();
                 }
             } else {
                 // Up one level (never above the SD root).
@@ -17264,12 +18056,21 @@ void MainApplication::HandleInput(u64 down, u64 held,
         if (down & HidNpadButton_B) {
             this->GotoSettings();
         } else if (down & HidNpadButton_A) {
-            switch (this->layout->Sel()) {
+            // Rows 2-4 (Collection import/export/restore) don't exist in a
+            // Lite build (see GotoTransfers above) -- shift so the case
+            // numbers below still line up with the rows that do.
+            int sel = this->layout->Sel();
+#ifdef HAULNX_LITE
+            if (sel >= 2) sel += 3;
+#endif
+            switch (sel) {
             case 0: this->GotoUsbMtp(true);  return; // install from USB connection
             case 1: this->GotoRecvConsole(); return; // install from Wi-Fi
+#ifndef HAULNX_LITE
             case 2: this->ImportStart();    return; // receive dl_sources.json
             case 3: this->ExportStart();    return; // serve dl_sources.json
             case 4: this->RestoreBackup();  return; // restore previous
+#endif
             case 5: // toggle the read-only inventory server
                 g_prefs.inv_server = !g_prefs.inv_server;
                 prefs_save(&g_prefs);
@@ -17347,33 +18148,11 @@ void MainApplication::HandleInput(u64 down, u64 held,
         } else if (down & HidNpadButton_A) {
             switch (this->layout->Sel()) {
             case 0: this->StorageDetail(); return; // SD used/free breakdown
-            case 1: { // ROM folder — browse the SD card and pick a folder
-                std::string start = "sdmc:/";
-                if (g_prefs.roms_override[0] &&
-                    fs_exists(g_prefs.roms_override)) {
-                    start = g_prefs.roms_override;
-                }
-                this->picker_console = -1; // picking the ROM root, not a console
-                this->picker_from_installed = false;
-                this->GotoRomPicker(start);
-                return;
-            }
-            case 2: // Install-folder mode: single ROM folder vs per-console
-                g_prefs.custom_folders = !g_prefs.custom_folders;
-                prefs_save(&g_prefs);
-                break;
-            case 3: // Per-console folders (only when custom mode is on)
-                if (g_prefs.custom_folders) {
-                    this->GotoInstallFolders();
-                    return;
-                }
-                this->Toast(tr(S_CONSOLE_FOLDERS_LOCKED));
-                return;
-            case 4: this->GotoDownloads(); return; // download scratch folder
-            case 5: this->GotoInboxFiles(); return; // view/select/delete Inbox files
-            case 6: this->GotoBackups(); return;   // emulator/app rollback backups
-            case 7: this->LargeFilesStart(); return; // whole-library biggest files
-            case 8: this->BoxArtManageStart(); return; // view/delete cached covers
+            case 1: this->GotoDownloads(); return; // download scratch folder
+            case 2: this->GotoInboxFiles(); return; // view/select/delete Inbox files
+            case 3: this->GotoBackups(); return;   // emulator/app rollback backups
+            case 4: this->LargeFilesStart(); return; // whole-library biggest files
+            case 5: this->BoxArtManageStart(); return; // view/delete cached covers
             default: break;
             }
             if (this->screen == Screen::Storage) {
@@ -17381,16 +18160,6 @@ void MainApplication::HandleInput(u64 down, u64 held,
                 this->GotoStorage();
                 this->layout->SetSel(sel);
             }
-        } else if (down & (HidNpadButton_Left | HidNpadButton_Right)) {
-            s32 sel = this->layout->Sel();
-            if (sel == 2) { // Install-folder mode
-                g_prefs.custom_folders = !g_prefs.custom_folders;
-                prefs_save(&g_prefs);
-            } else {
-                break;
-            }
-            this->GotoStorage();
-            this->layout->SetSel(sel);
         }
         break;
     }
@@ -17423,11 +18192,20 @@ void MainApplication::HandleInput(u64 down, u64 held,
             this->GotoSettings();
             this->layout->SetSel(3);
         } else if (down & HidNpadButton_A) {
-            switch (this->layout->Sel()) {
+            // Row 1 (metadata cache manager) doesn't exist in a Lite build
+            // (see GotoDataFiles above) -- shift so the case numbers below
+            // still line up with the rows that do.
+            int sel = this->layout->Sel();
+#ifdef HAULNX_LITE
+            if (sel >= 1) sel += 1;
+#endif
+            switch (sel) {
             case 0: this->GotoDats();      return; // DAT files manager
+#ifndef HAULNX_LITE
             case 1: this->GotoMetaCache(); return; // metadata cache manager
+#endif
             case 2: this->PushListToPc();  return; // push emulator/app list to PC
-            case 3: // box-art cache: browse or clear
+            case 3: { // box-art cache: browse or clear
                 this->ArtCacheMenu();
                 // "Browse" navigates to Manage Box Art itself (screen already
                 // changed, leave it be); "Clear"/cancel stay right here, so
@@ -17435,9 +18213,14 @@ void MainApplication::HandleInput(u64 down, u64 held,
                 // stale until the screen is re-entered.
                 if (this->screen == Screen::DataFiles) {
                     this->GotoDataFiles();
+#ifdef HAULNX_LITE
+                    this->layout->SetSel(2);
+#else
                     this->layout->SetSel(3);
+#endif
                 }
                 return;
+            }
             default: break;
             }
         }
@@ -17501,21 +18284,74 @@ void MainApplication::HandleInput(u64 down, u64 held,
         break;
     }
 
-    case Screen::InstallFolders: {
-        if (down & HidNpadButton_B) {
-            this->GotoStorage();
-            this->layout->SetSel(3); // land back on the "Console folders" row
-        } else if ((down & HidNpadButton_A) &&
-                   this->layout->Sel() < g_cfg.console_count) {
-            // Choose this console's install folder. Start browsing at its current
-            // custom folder if it still exists, else the SD root.
-            int ci = this->layout->Sel();
-            this->picker_console = ci;
-            this->picker_from_installed = false;
-            std::string start = "sdmc:/";
-            const char *f = g_cfg.consoles[ci].folder;
-            if (f[0] && fs_exists(f)) start = f;
-            this->GotoRomPicker(start);
+    case Screen::Folders: {
+        // Top-level tab root, like Queue/Settings/Emulators: no B-back, tabs
+        // are on L/R. Y opens the global Tools panel, same as every other tab
+        // root. Row 2 (per-console folders) expands/collapses in place rather
+        // than drilling into a separate screen: a divider (row 3) then one
+        // row per console follow it when expanded -- see GotoFolders for the
+        // render side, kept in sync with kConsoleBase here.
+        const s32 kConsoleBase = 4;
+        bool expanded = this->folders_expanded && g_prefs.custom_folders;
+        if (down & HidNpadButton_Y) {
+            this->ToolsMenu();
+        } else if (down & HidNpadButton_A) {
+            s32 sel = this->layout->Sel();
+            if (expanded && sel >= kConsoleBase &&
+                sel - kConsoleBase < g_cfg.console_count) {
+                // Choose this console's install folder. Start browsing at its
+                // current custom folder if it still exists, else the SD root.
+                int ci = sel - kConsoleBase;
+                this->picker_console = ci;
+                this->picker_from_installed = false;
+                this->picker_nro_mode = false;
+                std::string start = "sdmc:/";
+                const char *f = g_cfg.consoles[ci].folder;
+                if (f[0] && fs_exists(f)) start = f;
+                this->GotoRomPicker(start);
+                return;
+            }
+            switch (sel) {
+            case 0: { // ROM folder — browse the SD card and pick a folder
+                std::string start = "sdmc:/";
+                if (g_prefs.roms_override[0] &&
+                    fs_exists(g_prefs.roms_override)) {
+                    start = g_prefs.roms_override;
+                }
+                this->picker_console = -1; // picking the ROM root, not a console
+                this->picker_from_installed = false;
+                this->picker_nro_mode = false;
+                this->GotoRomPicker(start);
+                return;
+            }
+            case 1: // Install-folder mode: single ROM folder vs per-console
+                g_prefs.custom_folders = !g_prefs.custom_folders;
+                prefs_save(&g_prefs);
+                break;
+            case 2: // Per-console folders: expand/collapse the list in place
+                if (!g_prefs.custom_folders) {
+                    this->Toast(tr(S_CONSOLE_FOLDERS_LOCKED));
+                    return;
+                }
+                this->folders_expanded = !this->folders_expanded;
+                break;
+            default: break;
+            }
+            if (this->screen == Screen::Folders) {
+                s32 keep = this->layout->Sel();
+                this->GotoFolders();
+                this->layout->SetSel(keep);
+            }
+        } else if (down & (HidNpadButton_Left | HidNpadButton_Right)) {
+            s32 sel = this->layout->Sel();
+            if (sel == 1) { // Install-folder mode
+                g_prefs.custom_folders = !g_prefs.custom_folders;
+                prefs_save(&g_prefs);
+            } else {
+                break;
+            }
+            this->GotoFolders();
+            this->layout->SetSel(sel);
         }
         break;
     }
@@ -17526,7 +18362,7 @@ void MainApplication::HandleInput(u64 down, u64 held,
         // returns to Storage on the backups row.
         if (down & HidNpadButton_B) {
             this->GotoStorage();
-            this->layout->SetSel(6);
+            this->layout->SetSel(3);
         } else if (down & HidNpadButton_Y) {
             s32 i = this->layout->Sel();
             if (i >= 0 && i < (s32)this->backup_rows.size()) {
@@ -17583,8 +18419,17 @@ void MainApplication::HandleInput(u64 down, u64 held,
         if (down & HidNpadButton_B) {
             this->GotoSettings();
         } else if (down & HidNpadButton_A) {
-            switch (this->layout->Sel()) {
+            // Row 0 (archive.org credentials) doesn't exist in a Lite build
+            // (see GotoAccount above) -- shift so the case numbers below
+            // still line up with the rows that do.
+            int sel = this->layout->Sel();
+#ifdef HAULNX_LITE
+            sel += 1;
+#endif
+            switch (sel) {
+#ifndef HAULNX_LITE
             case 0: this->GotoCreds(); return; // archive.org credentials
+#endif
             case 1: {                          // GitHub API token (raises the
                                                // update-check rate limit)
                 char v[1024] = {0};
@@ -17660,35 +18505,22 @@ void MainApplication::HandleInput(u64 down, u64 held,
         break;
     }
 
-    case Screen::AppEmuUpdates: {
-        if (down & HidNpadButton_B) {
-            this->GotoSettings();
-            this->layout->SetSel(7);
-        } else if (down & HidNpadButton_A) {
-            switch (this->layout->Sel()) {
-            case 0: // emulator updates
-                this->appman_sel = 0;
-                this->GotoAppUpdates(UPD_KIND_EMU);
-                return;
-            case 1: // app updates
-                this->appman_sel = 0;
-                this->GotoAppUpdates(UPD_KIND_APP);
-                return;
-            default: break;
-            }
-        }
-        break;
-    }
-
     case Screen::AppUpdates: {
         // Emulator/app list. It loads with versions only (no auto-scan); the user
         // checks for updates explicitly: X checks every entry, Y checks the
         // selected one, A opens that entry's action menu (which also has a "Check
-        // for updates" option). B goes back to the App & Emulator Updates hub.
+        // for updates" option). Emulators is this screen's home when kind is
+        // UPD_KIND_EMU -- a top-level tab root, no B-back, tabs are on L/R.
+        // Apps (UPD_KIND_APP) was opened from Settings, so B returns there.
+        // A trailing "Add manually" row (emulators only) opens the .nro picker.
+        bool is_emu = (this->appman_kind == UPD_KIND_EMU);
+        s32 add_row = is_emu ? (s32)this->appman_list.size() : -1;
         if (down & HidNpadButton_B) {
-            this->layout->ClearEmptyState();
-            this->GotoAppEmuUpdates();
-            this->layout->SetSel(this->appman_kind == UPD_KIND_APP ? 1 : 0);
+            if (!is_emu) {
+                this->layout->ClearEmptyState();
+                this->GotoSettings();
+                this->layout->SetSel(7); // "App Updates" row -- see GotoSettings' kEntries
+            }
         } else if (down & HidNpadButton_X) {
             this->AppScanAll(); // check them all against GitHub
         } else if (down & HidNpadButton_Y) {
@@ -17698,6 +18530,10 @@ void MainApplication::HandleInput(u64 down, u64 held,
             }
         } else if (down & HidNpadButton_A) {
             s32 sel = this->layout->Sel();
+            if (sel >= 0 && sel == add_row) {
+                this->AppAddManual();
+                return;
+            }
             if (sel >= 0 && sel < (s32)this->appman_list.size()) {
                 this->appman_sel = sel; // restored by the render below
                 bool changed = this->AppEntryMenu((size_t)sel);
@@ -18061,7 +18897,7 @@ void MainApplication::HandleInput(u64 down, u64 held,
     case Screen::InboxFiles: {
         if (down & HidNpadButton_B) {
             this->GotoStorage();
-            this->layout->SetSel(5);
+            this->layout->SetSel(2);
         } else if (down & HidNpadButton_Y) {
             s32 i = this->layout->Sel();
             if (i >= 0 && i < (s32)g_inbox_mfiles.size()) {
@@ -18339,7 +19175,7 @@ void MainApplication::HandleInput(u64 down, u64 held,
                         this->layout->SetSel(i);
                     }
                 } else if (r == set_idx) {
-                    this->GotoStorage(); // ROM folders live under Storage
+                    this->GotoFolders(); // ROM folders live under the Folders tab
                 }
             }
         } else if ((down & (HidNpadButton_X | HidNpadButton_Y)) &&
@@ -18575,6 +19411,10 @@ void MainApplication::HandleInput(u64 down, u64 held,
                 if (!e.url.empty()) {
                     body += "\n" + e.url;
                 }
+#ifndef HAULNX_LITE
+                // Retry re-queues a ROM download URL -- the repo/download
+                // engine is compiled out entirely in Lite builds (see
+                // HAULNX_LITE in the Makefile), so this option never offers.
                 if (e.can_retry) {
                     int opt = this->CreateShowDialog(
                         tr(S_TITLE_LOG), wrap_for_dialog(body),
@@ -18599,7 +19439,9 @@ void MainApplication::HandleInput(u64 down, u64 held,
                             this->ToastErr(tr(S_QUEUE_FULL));
                         }
                     }
-                } else {
+                } else
+#endif /* HAULNX_LITE */
+                {
                     this->CreateShowDialog(tr(S_TITLE_LOG),
                                            wrap_for_dialog(body), {tr(S_OK)},
                                            true, {}, style_dialog);
@@ -18845,7 +19687,7 @@ void MainApplication::HandleInput(u64 down, u64 held,
         if (down & HidNpadButton_B) {
             this->large_files.clear();
             this->GotoStorage();
-            this->layout->SetSel(7);
+            this->layout->SetSel(4);
         } else if (down & HidNpadButton_A) {
             this->LargeFileOpenSel();
         } else if (down & HidNpadButton_X) {
@@ -18858,7 +19700,7 @@ void MainApplication::HandleInput(u64 down, u64 held,
         if (down & HidNpadButton_B) {
             this->boxart_manage_rows.clear();
             this->GotoStorage();
-            this->layout->SetSel(8);
+            this->layout->SetSel(5);
         } else if (down & HidNpadButton_A) {
             // Rebuild the same "one row per console, in appearance order"
             // grouping GotoBoxArtManageConsoles used, so Sel() maps to the
