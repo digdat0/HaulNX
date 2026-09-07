@@ -1,4 +1,5 @@
-# <img width="34" height="34" alt="icon" src="https://github.com/user-attachments/assets/0c0cbe7e-3e2e-4068-9518-44179f6406d3" /> HaulNX
+# <img width="34" height="34" alt="icon" src="https://github.com/user-attachments/assets/aa057389-17e1-4756-bcff-5a80eacef90a" /> HaulNX
+
 
 > Please report issues on the [GitHub Issues](https://github.com/digdat0/HaulNX/issues) page.
 
