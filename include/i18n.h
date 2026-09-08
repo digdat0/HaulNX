@@ -998,6 +998,9 @@ enum {
     S_APPMAN_DAY_AGO,     /* last-checked suffix: "%dd ago" */
     S_APPMAN_SCAN_ALL,    /* footer/menu: check every entry for updates (X) */
     S_APPMAN_SCAN_ONE,    /* footer: check the selected entry (Y) */
+    S_APPMAN_MULTI_SYS,   /* Emulators tab card view: corner label for a multi-
+                            * system emulator (RetroArch, Lakka, ...) or one
+                            * supporting more than two consoles -- "Multi" */
 
     /* ---- accent color (Appearance) ---- */
     S_ACCENT,             /* Appearance row label: "Accent Color" */

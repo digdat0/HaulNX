@@ -848,6 +848,7 @@
   "appman_day_ago": "%d日前",
   "appman_scan_all": "すべて確認",
   "appman_scan_one": "1件確認",
+  "appman_multi_sys": "マルチ",
   "sub_installed_folder_cards": "A 開く  Y 選択  X オプション  - 検索  L/R タブ  B 戻る",
   "steamgriddb_key": "SteamGridDB APIキー",
   "update_too_many": "同時に実行できるインストール数が多すぎます — 1つが終わるまでお待ちください。",

@@ -848,6 +848,7 @@
   "appman_day_ago": "acum %dz",
   "appman_scan_all": "Verifică actualizări pentru toate",
   "appman_scan_one": "verifică una",
+  "appman_multi_sys": "Multi",
   "sub_installed_folder_cards": "A deschide  Y selectează  X opțiuni  - caută  L/R file  B înapoi",
   "steamgriddb_key": "Cheie API SteamGridDB",
   "update_too_many": "Prea multe instalări rulează simultan — așteaptă să se termine una.",

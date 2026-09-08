@@ -2643,8 +2643,8 @@ void MainLayout::HideSpinner() { this->spinner->Hide(); }
 void MainLayout::SetCardsMode(bool on) { this->cards_mode = on; }
 void MainLayout::AddCard(const std::string &title, const std::string &subtitle,
                          pu::sdl2::Texture icon, bool pinned, bool dim,
-                         bool art) {
-    this->grid->AddCard(title, subtitle, icon, pinned, dim, art);
+                         bool art, const std::string &console) {
+    this->grid->AddCard(title, subtitle, icon, pinned, dim, art, console);
 }
 void MainLayout::SetCardCols(s32 n) { this->grid->SetCols(n); }
 void MainLayout::SetCardPoster(bool on) { this->grid->SetPoster(on); }
@@ -8446,50 +8446,128 @@ std::string MainApplication::AppCheckedLabel(const std::string &id) {
     return checked_ago(it->second);
 }
 
-// Console-icon slug for a bundled-catalogue emulator id, for the Emulators
-// tab's card view -- e.g. "duckstation" -> "psx" (see console_icon/
-// console_full_name for the slug list). Sourced from each emulator's own
-// GitHub repo / the wiki's "Systems:" line, not the manifest (UpdSource has
-// no console field -- update_sources.json is shared with the desktop
-// companion, and most of its rows are plain apps with no console at all).
-// Returns "default" (console_icon's generic badge) for a multi-system
-// frontend (RetroArch, Lakka) or a manager/frontend that isn't tied to one
-// console at all (TICO, SCCM-Retro), and for anything the table doesn't
-// recognize (a manually-added emulator, or a future manifest entry) --
-// console_icon() itself only falls back to "default" for an unrecognized
-// non-empty key, not a NULL one, so this has to name it explicitly.
-static const char *emu_console_slug(const char *id) {
-    static const struct {
-        const char *id;
-        const char *slug;
-    } map[] = {
-        {"ppsspp", "psp"},        {"mgba", "gba"},
-        {"melonds", "nds"},       {"drastic", "nds"},
-        {"raikopon", "3ds"},      {"dekopon", "3ds"},
-        {"pfbn", "arcade"},       {"psnes", "snes"},
-        {"pnes", "nes"},          {"pgba", "gba"},
-        {"pgen", "genesis"},      {"mame", "arcade"},
-        {"flycast", "dc"},        {"duckstation", "psx"},
-        {"yabasanshiro", "saturn"}, {"nethersx2", "ps2"},
-        {"armsx2nx", "ps2"},      {"cemu", "wiiu"},
-        {"dolphin", "gc"},        {"vita3k", "vita"},
-        {"ps4-p8", "pico8"},      {"flashnx", "flash"},
-        {"axchip8", "chip8"},     {"chip8-nx", "chip8"},
-        {"fake-08", "pico8"},     {"gamelad", "gb"},
-        {"noods", "nds"},         {"tamatool-nx", "tamagotchi"},
-        {"yokoi", "game-and-watch"}, {"vba-next-switch", "gba"},
-        {"vapor-spec", "zx-spectrum"}, {"desmume-nx", "nds"},
-        {"gdkgba", "gba"},        {"khedgb", "gb"},
-        {"laines", "nes"},        {"noies", "nes"},
-        {"uae4all2", "amiga"},    {"fceumm", "nes"},
-        {"sms-plus-gx", "master-system"}, {"snes9x2010", "snes"},
-    };
-    for (size_t i = 0; i < sizeof(map) / sizeof(map[0]); i++) {
-        if (strcasecmp(id, map[i].id) == 0) {
-            return map[i].slug;
+// Console slug(s) a bundled-catalogue emulator id plays, for the Emulators
+// tab's card view -- icon (single system: e.g. "duckstation" -> psx) and the
+// top-left corner label (short name(s), or "Multi" -- see emu_console_label
+// below). Sourced from each emulator's own GitHub repo / the wiki's
+// "Systems:" line, not the manifest (UpdSource has no console field --
+// update_sources.json is shared with the desktop companion, and most of its
+// rows are plain apps with no console at all). An id absent from this table
+// (RetroArch, Lakka, TICO, SCCM-Retro -- multi-system frontends or a
+// manager/frontend not tied to one console at all -- plus a manually-added
+// emulator, or a future manifest entry) is treated the same as 3+ systems:
+// generic icon, "Multi" label.
+struct EmuSystems {
+    const char *id;
+    const char *slugs[3]; // see console_full_name for the slug list
+    int count;            // slugs actually filled in (1-3)
+};
+static const EmuSystems kEmuSystems[] = {
+    {"ppsspp", {"psp"}, 1},
+    {"mgba", {"gba", "gb", "gbc"}, 3},
+    {"melonds", {"nds"}, 1},
+    {"drastic", {"nds"}, 1},
+    {"raikopon", {"3ds"}, 1},
+    {"dekopon", {"3ds"}, 1},
+    {"pfbn", {"fbneo", "neo-geo", "arcade"}, 3},
+    {"psnes", {"snes"}, 1},
+    {"pnes", {"nes"}, 1},
+    {"pgba", {"gba"}, 1},
+    {"pgen", {"genesis"}, 1},
+    {"mame", {"arcade"}, 1},
+    {"flycast", {"dc", "naomi", "atomiswave"}, 3},
+    {"duckstation", {"psx"}, 1},
+    {"yabasanshiro", {"saturn"}, 1},
+    {"nethersx2", {"ps2"}, 1},
+    {"armsx2nx", {"ps2"}, 1},
+    {"cemu", {"wiiu"}, 1},
+    {"dolphin", {"gc", "wii"}, 2},
+    {"vita3k", {"vita"}, 1},
+    {"ps4-p8", {"pico8"}, 1},
+    {"flashnx", {"flash"}, 1},
+    {"axchip8", {"chip8"}, 1},
+    {"chip8-nx", {"chip8"}, 1},
+    {"fake-08", {"pico8"}, 1},
+    {"gamelad", {"gb"}, 1},
+    {"noods", {"nds"}, 1},
+    {"tamatool-nx", {"tamagotchi"}, 1},
+    {"yokoi", {"game-and-watch"}, 1},
+    {"vba-next-switch", {"gba"}, 1},
+    {"vapor-spec", {"zx-spectrum"}, 1},
+    {"desmume-nx", {"nds"}, 1},
+    {"gdkgba", {"gba"}, 1},
+    {"khedgb", {"gb"}, 1},
+    {"laines", {"nes"}, 1},
+    {"noies", {"nes"}, 1},
+    {"uae4all2", {"amiga"}, 1},
+    {"fceumm", {"nes"}, 1},
+    {"sms-plus-gx", {"master-system"}, 1},
+    {"snes9x2010", {"snes"}, 1},
+};
+static const EmuSystems *emu_systems_find(const char *id) {
+    for (size_t i = 0; i < sizeof(kEmuSystems) / sizeof(kEmuSystems[0]); i++) {
+        if (strcasecmp(id, kEmuSystems[i].id) == 0) {
+            return &kEmuSystems[i];
         }
     }
-    return "default";
+    return NULL;
+}
+
+// console_icon() only falls back to its "default" badge for an unrecognized
+// non-empty key, not a NULL one -- this names it explicitly for a 0- or 2+-
+// system entry, same as an id the table above doesn't recognize at all.
+static const char *emu_console_icon_slug(const char *id) {
+    const EmuSystems *e = emu_systems_find(id);
+    return (e && e->count == 1) ? e->slugs[0] : "default";
+}
+
+// Short display name for a console slug (distinct from console_full_name's
+// full names -- "GameCube"/"SNES", not "Nintendo GameCube"/"Super Nintendo
+// Entertainment System") -- only needs to cover the slugs actually used in
+// kEmuSystems above. Falls back to the slug itself (already short) for
+// anything not listed.
+static const char *console_short_name(const char *slug) {
+    static const struct {
+        const char *slug;
+        const char *name;
+    } map[] = {
+        {"psp", "PSP"},           {"gba", "GBA"},
+        {"gb", "GB"},             {"gbc", "GBC"},
+        {"nds", "DS"},            {"3ds", "3DS"},
+        {"arcade", "Arcade"},     {"snes", "SNES"},
+        {"nes", "NES"},           {"genesis", "Genesis"},
+        {"dc", "Dreamcast"},      {"naomi", "NAOMI"},
+        {"atomiswave", "Atomiswave"}, {"psx", "PS1"},
+        {"saturn", "Saturn"},     {"ps2", "PS2"},
+        {"wiiu", "Wii U"},        {"gc", "GameCube"},
+        {"wii", "Wii"},           {"vita", "Vita"},
+        {"pico8", "PICO-8"},      {"flash", "Flash"},
+        {"chip8", "CHIP-8"},      {"tamagotchi", "Tamagotchi"},
+        {"game-and-watch", "G&W"}, {"zx-spectrum", "ZX Spectrum"},
+        {"amiga", "Amiga"},       {"master-system", "Master System"},
+        {"fbneo", "FBNeo"},       {"neo-geo", "Neo Geo"},
+    };
+    for (size_t i = 0; i < sizeof(map) / sizeof(map[0]); i++) {
+        if (strcasecmp(slug, map[i].slug) == 0) {
+            return map[i].name;
+        }
+    }
+    return slug;
+}
+
+// Emulator card top-left corner label: the short console name for a single-
+// system emulator, "Name, Name" for two, or "Multi" for three or more (or an
+// id with no entry at all -- a multi-system frontend, or unrecognized).
+static std::string emu_console_label(const char *id) {
+    const EmuSystems *e = emu_systems_find(id);
+    if (!e || e->count >= 3) {
+        return tr(S_APPMAN_MULTI_SYS);
+    }
+    if (e->count == 1) {
+        return console_short_name(e->slugs[0]);
+    }
+    return std::string(console_short_name(e->slugs[0])) + ", " +
+           console_short_name(e->slugs[1]);
 }
 
 // Draw the rows from the worker's results: a clear Update / Up-to-date / no-
@@ -8604,7 +8682,8 @@ void MainApplication::AppUpdatesRender() {
             // subtitle colour, matching every other card screen) -- the state
             // text alone still carries "Update to X" / "Up to date" / etc.
             this->layout->AddCard(std::string(e.name), tag,
-                                  console_icon(emu_console_slug(e.id)), false);
+                                  console_icon(emu_console_icon_slug(e.id)),
+                                  false, false, false, emu_console_label(e.id));
         } else {
             this->layout->AddRow2(std::string(e.name), tag, lbl, clr, -1.0f,
                                   console_icon("default"), "", false, pill);

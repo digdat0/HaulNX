@@ -848,6 +848,7 @@
   "appman_day_ago": "há %dd",
   "appman_scan_all": "Verificar tudo",
   "appman_scan_one": "verificar um",
+  "appman_multi_sys": "Multi",
   "sub_installed_folder_cards": "A abrir  Y selecionar  X opções  - pesquisar  L/R abas  B voltar",
   "steamgriddb_key": "Chave de API do SteamGridDB",
   "update_too_many": "Muitas instalações em execução ao mesmo tempo — aguarde uma terminar.",

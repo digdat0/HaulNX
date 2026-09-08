@@ -848,6 +848,7 @@
   "appman_day_ago": "%d일 전",
   "appman_scan_all": "전체 업데이트 확인",
   "appman_scan_one": "하나 확인",
+  "appman_multi_sys": "멀티",
   "sub_installed_folder_cards": "A 열기  Y 선택  X 옵션  - 검색  L/R 탭  B 뒤로",
   "steamgriddb_key": "SteamGridDB API 키",
   "update_too_many": "동시에 너무 많은 설치가 진행 중입니다 — 하나가 끝날 때까지 기다려 주세요.",

@@ -848,6 +848,7 @@
   "appman_day_ago": "před %dd",
   "appman_scan_all": "Zkontrolovat aktualizace u všech",
   "appman_scan_one": "zkontrolovat jednu",
+  "appman_multi_sys": "Multi",
   "sub_installed_folder_cards": "A otevřít  Y vybrat  X možnosti  - hledat  L/R karty  B zpět",
   "steamgriddb_key": "SteamGridDB API klíč",
   "update_too_many": "Příliš mnoho instalací najednou — počkejte, až jedna skončí.",

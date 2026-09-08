@@ -961,6 +961,7 @@
   "appman_day_ago": "%dd ago",
   "appman_scan_all": "Check all for updates",
   "appman_scan_one": "check one",
+  "appman_multi_sys": "Multi",
   "accent": "Accent Color",
   "title_accent": "Accent Color",
   "sub_accent": "A select  B back",

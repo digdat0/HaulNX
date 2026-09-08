@@ -848,6 +848,7 @@
   "appman_day_ago": "πριν %d ημέρες",
   "appman_scan_all": "Έλεγχος ενημερώσεων για όλα",
   "appman_scan_one": "έλεγχος ενός",
+  "appman_multi_sys": "Πολλαπλό",
   "sub_installed_folder_cards": "A άνοιγμα  Y επιλογή  X επιλογές  - αναζήτηση  L/R καρτέλες  B πίσω",
   "steamgriddb_key": "Κλειδί API SteamGridDB",
   "update_too_many": "Πάρα πολλές εγκαταστάσεις ταυτόχρονα — περιμένετε να ολοκληρωθεί μία.",

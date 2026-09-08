@@ -848,6 +848,7 @@
   "appman_day_ago": "vor %dd",
   "appman_scan_all": "Alle auf Updates prüfen",
   "appman_scan_one": "eins prüfen",
+  "appman_multi_sys": "Multi",
   "sub_installed_folder_cards": "A öffnen  Y auswählen  X Optionen  - suchen  L/R Tabs  B zurück",
   "steamgriddb_key": "SteamGridDB-API-Schlüssel",
   "update_too_many": "Zu viele gleichzeitige Installationen — warte, bis eine fertig ist.",

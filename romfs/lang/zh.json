@@ -848,6 +848,7 @@
   "appman_day_ago": "%d 天前",
   "appman_scan_all": "检查全部更新",
   "appman_scan_one": "检查一个",
+  "appman_multi_sys": "多系统",
   "sub_installed_folder_cards": "A 打开  Y 选择  X 选项  - 搜索  L/R 标签  B 返回",
   "steamgriddb_key": "SteamGridDB API 密钥",
   "update_too_many": "同时运行的安装太多——请等待其中一个完成。",

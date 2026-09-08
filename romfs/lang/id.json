@@ -848,6 +848,7 @@
   "appman_day_ago": "%d hari lalu",
   "appman_scan_all": "Periksa semua pembaruan",
   "appman_scan_one": "periksa satu",
+  "appman_multi_sys": "Multi",
   "sub_installed_folder_cards": "A buka  Y pilih  X opsi  - cari  L/R tab  B kembali",
   "steamgriddb_key": "Kunci API SteamGridDB",
   "update_too_many": "Terlalu banyak instalasi berjalan sekaligus — tunggu salah satu selesai.",

@@ -848,6 +848,7 @@
   "appman_day_ago": "%dd siden",
   "appman_scan_all": "Sjekk alle for oppdateringer",
   "appman_scan_one": "sjekk én",
+  "appman_multi_sys": "Multi",
   "sub_installed_folder_cards": "A åpne  Y velg  X valg  - søk  L/R faner  B tilbake",
   "steamgriddb_key": "SteamGridDB API-nøkkel",
   "update_too_many": "For mange installasjoner kjører samtidig — vent til én er ferdig.",

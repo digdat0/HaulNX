@@ -610,7 +610,8 @@ class MainLayout : public pu::ui::Layout {
     bool InCards() const { return this->cards_mode; }
     void AddCard(const std::string &title, const std::string &subtitle,
                  pu::sdl2::Texture icon, bool pinned = false,
-                 bool dim = false, bool art = false);
+                 bool dim = false, bool art = false,
+                 const std::string &console = "");
     // Column count for the grid (default 4; ClearMenu resets it back).
     // Installed's game-list poster view narrows this to 6-7.
     void SetCardCols(s32 n);

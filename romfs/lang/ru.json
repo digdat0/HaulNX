@@ -848,6 +848,7 @@
   "appman_day_ago": "%d дн. назад",
   "appman_scan_all": "Проверить все обновления",
   "appman_scan_one": "проверить одно",
+  "appman_multi_sys": "Мульти",
   "sub_installed_folder_cards": "A открыть  Y выбрать  X опции  - поиск  L/R вкладки  B назад",
   "steamgriddb_key": "Ключ API SteamGridDB",
   "update_too_many": "Слишком много установок одновременно — дождитесь завершения одной.",

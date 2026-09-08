@@ -22,6 +22,12 @@ class CardGrid : public pu::ui::elm::Element {
     struct Card {
         std::string title;
         std::string subtitle;
+        // Poster mode only: short label pinned to the top-left corner, over
+        // the icon art -- e.g. an emulator card's supported console(s). Empty
+        // draws nothing, so every other poster screen (Home/Installed's
+        // console cards, Settings) is unaffected without touching their call
+        // sites -- see AddCard's default.
+        std::string console;
         pu::sdl2::Texture icon; // borrowed
         bool pinned; // small logo-green dot in the card's top-left corner
         bool dim = false; // disabled entry: icon renders faded
@@ -60,7 +66,9 @@ class CardGrid : public pu::ui::elm::Element {
         pu::sdl2::Texture t1_tex; // title line 1
         pu::sdl2::Texture t2_tex; // title line 2 (word-wrapped overflow)
         pu::sdl2::Texture sub_tex;
+        pu::sdl2::Texture con_tex = nullptr; // poster-mode corner label (Card::console)
         s32 t1w, t1h, t2w, t2h, sw, sh;
+        s32 conw = 0, conh = 0;
         // Set once BuildCell has actually rasterized this cell's text. A
         // freshly (re)sized cache starts every cell unbuilt regardless of
         // aggregate-init order, since this has its own default -- see
@@ -240,6 +248,9 @@ class CardGrid : public pu::ui::elm::Element {
             }
             if (c.sub_tex) {
                 pu::ui::render::DeleteTexture(c.sub_tex);
+            }
+            if (c.con_tex) {
+                pu::ui::render::DeleteTexture(c.con_tex);
             }
             if (c.st_tex) {
                 pu::ui::render::DeleteTexture(c.st_tex);
@@ -446,6 +457,12 @@ class CardGrid : public pu::ui::elm::Element {
                 this->sub_clr, max_tw);
             c.sw = pu::ui::render::GetTextureWidth(c.sub_tex);
             c.sh = pu::ui::render::GetTextureHeight(c.sub_tex);
+        }
+        if (!cd.console.empty()) {
+            c.con_tex = pu::ui::render::RenderText(this->font_tiny,
+                                                    cd.console, this->sub_clr);
+            c.conw = pu::ui::render::GetTextureWidth(c.con_tex);
+            c.conh = pu::ui::render::GetTextureHeight(c.con_tex);
         }
         c.built = true;
     }
@@ -759,8 +776,10 @@ class CardGrid : public pu::ui::elm::Element {
 
     void AddCard(const std::string &title, const std::string &subtitle,
                  pu::sdl2::Texture icon, bool pinned = false,
-                 bool dim = false, bool art = false) {
-        this->cards.push_back(Card{title, subtitle, icon, pinned, dim, art});
+                 bool dim = false, bool art = false,
+                 const std::string &console = "") {
+        Card c{title, subtitle, console, icon, pinned, dim, art};
+        this->cards.push_back(c);
         this->dirty = true;
     }
 
@@ -1413,6 +1432,15 @@ class CardGrid : public pu::ui::elm::Element {
                     this->BuildCell(idx);
                 }
                 if (this->poster) {
+                    if (ce.con_tex) {
+                        // Corner label over the icon art (e.g. an emulator
+                        // card's supported console) -- same plain-text-no-pill
+                        // treatment as the queue card's top-left corner label
+                        // (Cell::t1_tex there), so a real icon's baked-in
+                        // transparent padding is what keeps this legible
+                        // rather than a background box fighting the art.
+                        drawer->RenderTexture(ce.con_tex, cx + 14, cy + 10);
+                    }
                     // Poster card: box art (or a centred fallback icon) fills
                     // the top, title + size sit in the band below it. Real
                     // cover art already fills the whole image area, so the

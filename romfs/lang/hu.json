@@ -848,6 +848,7 @@
   "appman_day_ago": "%d napja",
   "appman_scan_all": "Frissítések keresése mindegyikhez",
   "appman_scan_one": "egy ellenőrzése",
+  "appman_multi_sys": "Több",
   "sub_installed_folder_cards": "A megnyit  Y kiválaszt  X opciók  - keresés  L/R fülek  B vissza",
   "steamgriddb_key": "SteamGridDB API-kulcs",
   "update_too_many": "Túl sok telepítés fut egyszerre — várja meg, amíg egy befejeződik.",
