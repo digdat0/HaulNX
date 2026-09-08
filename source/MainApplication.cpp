@@ -88,8 +88,8 @@ static const char *queue_empty_hint() {
 // the full build casts Tab straight to a visual index, so it has no use for
 // them -- declaring them there too would be an unused-variable build error
 // under -Werror.
-static constexpr int kTabCount = 5, kQueueTabIdx = 1, kEmulatorsTabIdx = 2,
-                      kFoldersTabIdx = 3, kSettingsTabIdx = 4;
+static constexpr int kTabCount = 5, kEmulatorsTabIdx = 1, kFoldersTabIdx = 2,
+                      kQueueTabIdx = 3, kSettingsTabIdx = 4;
 #else
 static constexpr int kTabCount = 6, kQueueTabIdx = 2, kSettingsTabIdx = 5;
 #endif
@@ -2011,13 +2011,13 @@ MainLayout::MainLayout() : Layout::Layout() {
     // Library first (front door), then Add — see the Tab enum comment.
     // No Browse/Collections tab in a Lite build -- see kTabCount above.
 #ifdef HAULNX_LITE
-    const char *labels[] = {tr(S_TAB_INSTALLED), tr(S_TAB_QUEUE),
-                            tr(S_TAB_EMULATORS), tr(S_TAB_FOLDERS),
+    const char *labels[] = {tr(S_TAB_INSTALLED), tr(S_TAB_EMULATORS),
+                            tr(S_TAB_FOLDERS), tr(S_TAB_QUEUE),
                             tr(S_TAB_SETTINGS)};
 #else
-    const char *labels[] = {tr(S_TAB_INSTALLED), tr(S_TAB_BROWSE), tr(S_TAB_QUEUE),
+    const char *labels[] = {tr(S_TAB_INSTALLED), tr(S_TAB_BROWSE),
                             tr(S_TAB_EMULATORS), tr(S_TAB_FOLDERS),
-                            tr(S_TAB_SETTINGS)};
+                            tr(S_TAB_QUEUE), tr(S_TAB_SETTINGS)};
 #endif
     const s32 tab_y = strip_y + 16;
     const s32 seg = sw / kTabCount;
@@ -2271,13 +2271,13 @@ void MainLayout::SetUpdateAvailable(bool avail) {
 
 void MainLayout::RefreshTabs() {
 #ifdef HAULNX_LITE
-    const char *labels[] = {tr(S_TAB_INSTALLED), tr(S_TAB_QUEUE),
-                            tr(S_TAB_EMULATORS), tr(S_TAB_FOLDERS),
+    const char *labels[] = {tr(S_TAB_INSTALLED), tr(S_TAB_EMULATORS),
+                            tr(S_TAB_FOLDERS), tr(S_TAB_QUEUE),
                             tr(S_TAB_SETTINGS)};
 #else
-    const char *labels[] = {tr(S_TAB_INSTALLED), tr(S_TAB_BROWSE), tr(S_TAB_QUEUE),
+    const char *labels[] = {tr(S_TAB_INSTALLED), tr(S_TAB_BROWSE),
                             tr(S_TAB_EMULATORS), tr(S_TAB_FOLDERS),
-                            tr(S_TAB_SETTINGS)};
+                            tr(S_TAB_QUEUE), tr(S_TAB_SETTINGS)};
 #endif
     const s32 seg = 1920 / kTabCount;
     for (int i = 0; i < kTabCount && i < (int)this->tabs.size(); i++) {
@@ -3896,8 +3896,8 @@ void MainApplication::GotoTab(Tab t) {
 void MainApplication::SwitchTab(int dir) {
 #ifdef HAULNX_LITE
     // No Browse/Collections tab to cycle through -- see kTabCount above.
-    static const Tab order[] = {Tab::Installed, Tab::Queue, Tab::Emulators,
-                                Tab::Folders, Tab::Settings};
+    static const Tab order[] = {Tab::Installed, Tab::Emulators, Tab::Folders,
+                                Tab::Queue, Tab::Settings};
     int cur = 0;
     for (int i = 0; i < kTabCount; i++) {
         if (order[i] == this->CurrentTab()) { cur = i; break; }

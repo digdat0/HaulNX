@@ -732,13 +732,14 @@ class MainApplication : public pu::ui::Application {
     enum class Pending { None, AddRepo, Manual, SortAssign };
     // Tab positions, left to right. The library is the front door of the app, so
     // Installed sits at 0 (labelled "Library") and Browse at 1 (labelled "Add").
-    // Emulators and Folders were promoted out of Settings to their own tabs and
-    // sit just before Settings, which stays last. Emulators opens straight to
-    // the emulator list (GotoAppUpdates(UPD_KIND_EMU)) -- app updates stayed
-    // back in Settings, since apps aren't a library-wide concern the way
-    // emulators (which every console folder depends on) are. Enum member names
-    // still describe the screen each tab opens.
-    enum class Tab { Installed = 0, Browse = 1, Queue = 2, Emulators = 3, Folders = 4, Settings = 5 };
+    // Emulators and Folders were promoted out of Settings to their own tabs;
+    // Queue sits just before Settings (which stays last), right of Folders.
+    // Emulators opens straight to the emulator list (GotoAppUpdates(
+    // UPD_KIND_EMU)) -- app updates stayed back in Settings, since apps aren't
+    // a library-wide concern the way emulators (which every console folder
+    // depends on) are. Enum member names still describe the screen each tab
+    // opens.
+    enum class Tab { Installed = 0, Browse = 1, Emulators = 2, Folders = 3, Queue = 4, Settings = 5 };
 
   private:
     MainLayout::Ref layout;
