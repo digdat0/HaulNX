@@ -18,7 +18,7 @@
 
   "tab_browse": "Collections",
   "tab_installed": "Library",
-  "tab_queue": "Xfer Queue",
+  "tab_queue": "Queue",
   "tab_emulators": "Emulators",
   "tab_folders": "Folders",
   "tab_settings": "Settings",
@@ -44,7 +44,7 @@
   "queued_n": "Queued %d file(s)",
   "already_have": "Already have %d — queue %d new (%s)?",
 
-  "title_queue": "Xfer Queue",
+  "title_queue": "Queue",
   "sub_queue": "A cancel  Y tools  X menu  - log  ZL/ZR move  ◀ top ▶ bottom",
   "queue_empty": "(queue empty)",
   "queue_empty_hint": "Queue downloads from the Collections tab",

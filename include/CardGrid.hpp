@@ -1433,13 +1433,13 @@ class CardGrid : public pu::ui::elm::Element {
                 }
                 if (this->poster) {
                     if (ce.con_tex) {
-                        // Corner label over the icon art (e.g. an emulator
-                        // card's supported console) -- same plain-text-no-pill
-                        // treatment as the queue card's top-left corner label
-                        // (Cell::t1_tex there), so a real icon's baked-in
-                        // transparent padding is what keeps this legible
-                        // rather than a background box fighting the art.
-                        drawer->RenderTexture(ce.con_tex, cx + 14, cy + 10);
+                        // Label over the icon art (e.g. an emulator card's
+                        // supported console), centred like the title/subtitle
+                        // below it rather than pinned to the corner. Plain
+                        // text, no pill -- a real icon's baked-in transparent
+                        // padding is what keeps this legible over the art.
+                        drawer->RenderTexture(ce.con_tex,
+                                              cx + (cw - ce.conw) / 2, cy + 10);
                     }
                     // Poster card: box art (or a centred fallback icon) fills
                     // the top, title + size sit in the band below it. Real
