@@ -90,9 +90,29 @@ static const char *queue_empty_hint() {
 // under -Werror.
 static constexpr int kTabCount = 5, kEmulatorsTabIdx = 1, kFoldersTabIdx = 2,
                       kQueueTabIdx = 3, kSettingsTabIdx = 4;
+// Visual tab-bar order (no Browse tab in Lite) -- shared by SwitchTab (L/R
+// cycling) and the touch-tap-a-tab handlers, so a tapped slot and an L/R step
+// always land on the same tab.
+static const MainApplication::Tab kTabOrder[] = {
+    MainApplication::Tab::Installed, MainApplication::Tab::Emulators,
+    MainApplication::Tab::Folders,   MainApplication::Tab::Queue,
+    MainApplication::Tab::Settings};
 #else
-static constexpr int kTabCount = 6, kQueueTabIdx = 2, kSettingsTabIdx = 5;
+static constexpr int kTabCount = 6, kQueueTabIdx = 4, kSettingsTabIdx = 5;
 #endif
+
+// Maps a tapped visual tab-bar slot (0..kTabCount-1, left to right) to the
+// logical Tab it represents. The full build's bar order matches the Tab
+// enum's numeric order exactly, so it's a direct cast; Lite drops Browse from
+// the bar, so its slots need the explicit kTabOrder remap above -- casting
+// straight to Tab there used to land a tap one-or-more tabs off target.
+static MainApplication::Tab TabAtVisualIndex(int idx) {
+#ifdef HAULNX_LITE
+    return kTabOrder[idx];
+#else
+    return (MainApplication::Tab)idx;
+#endif
+}
 
 #define FILES_SUBTITLE tr(S_SUB_FILES)
 
@@ -3895,15 +3915,13 @@ void MainApplication::GotoTab(Tab t) {
 
 void MainApplication::SwitchTab(int dir) {
 #ifdef HAULNX_LITE
-    // No Browse/Collections tab to cycle through -- see kTabCount above.
-    static const Tab order[] = {Tab::Installed, Tab::Emulators, Tab::Folders,
-                                Tab::Queue, Tab::Settings};
+    // No Browse/Collections tab to cycle through -- see kTabOrder above.
     int cur = 0;
     for (int i = 0; i < kTabCount; i++) {
-        if (order[i] == this->CurrentTab()) { cur = i; break; }
+        if (kTabOrder[i] == this->CurrentTab()) { cur = i; break; }
     }
     int nx = ((cur + dir) % kTabCount + kTabCount) % kTabCount;
-    this->GotoTab(order[nx]);
+    this->GotoTab(kTabOrder[nx]);
 #else
     const int n = kTabCount;
     int nx = (((int)this->CurrentTab() + dir) % n + n) % n;
@@ -16292,6 +16310,24 @@ void MainApplication::HandleInput(u64 down, u64 held,
     // BoxArtAutoPoll.
     this->BoxArtAutoPoll();
 
+    // Touch: tapping a footer hint chip fires that button, so the on-screen
+    // controls are usable without the physical buttons. Edge-triggered so one
+    // tap is one press. Folded into `down` this early -- before startup
+    // dialogs and every background-scan/transfer block below that checks
+    // `down` directly and returns early (search/isearch/arch, the Import and
+    // UsbMtp connect screens) -- so a tapped "B cancel"/"B disconnect" chip
+    // reaches those checks the same as a physical B press. Those blocks used
+    // to only see it once flow fell through to the old, later copy of this
+    // same merge, which their own early returns made unreachable.
+    {
+        static bool ftr_prev = false;
+        bool ftr_now = !touch.IsEmpty();
+        if (ftr_now && !ftr_prev) {
+            down |= this->layout->FooterButtonAt(touch.x, touch.y);
+        }
+        ftr_prev = ftr_now;
+    }
+
     // One-shot startup dialogs, deferred from OnLoad so they render over a
     // live frame instead of a black screen.
     if (this->startup_checks) {
@@ -16628,13 +16664,13 @@ void MainApplication::HandleInput(u64 down, u64 held,
             return;
         }
         if (!touch.IsEmpty() && touch.y >= 80 && touch.y < 150) {
-            s32 seg = (s32)pu::ui::render::ScreenWidth / 4;
+            s32 seg = (s32)pu::ui::render::ScreenWidth / kTabCount;
             s32 idx = touch.x / (seg > 0 ? seg : 1);
-            if (idx >= 0 && idx < 4) {
+            if (idx >= 0 && idx < kTabCount) {
                 if (!this->imp_rom) {
                     this->ImportStop();
                 }
-                this->GotoTab((Tab)idx);
+                this->GotoTab(TabAtVisualIndex(idx));
                 return;
             }
         }
@@ -16664,10 +16700,10 @@ void MainApplication::HandleInput(u64 down, u64 held,
             return;
         }
         if (!touch.IsEmpty() && touch.y >= 80 && touch.y < 150) {
-            s32 seg = (s32)pu::ui::render::ScreenWidth / 4;
+            s32 seg = (s32)pu::ui::render::ScreenWidth / kTabCount;
             s32 idx = touch.x / (seg > 0 ? seg : 1);
-            if (idx >= 0 && idx < 4) {
-                this->GotoTab((Tab)idx);
+            if (idx >= 0 && idx < kTabCount) {
+                this->GotoTab(TabAtVisualIndex(idx));
                 return;
             }
         }
@@ -16681,26 +16717,15 @@ void MainApplication::HandleInput(u64 down, u64 held,
         static bool tch_prev = false;
         bool tch_now = !touch.IsEmpty();
         if (tch_now && !tch_prev && touch.y >= 80 && touch.y < 150) {
-            s32 seg = (s32)pu::ui::render::ScreenWidth / 4;
+            s32 seg = (s32)pu::ui::render::ScreenWidth / kTabCount;
             s32 idx = touch.x / (seg > 0 ? seg : 1);
-            if (idx >= 0 && idx < 4) {
-                this->GotoTab((Tab)idx);
+            if (idx >= 0 && idx < kTabCount) {
+                this->GotoTab(TabAtVisualIndex(idx));
                 tch_prev = tch_now;
                 return;
             }
         }
         tch_prev = tch_now;
-    }
-    // Touch: tapping a footer hint chip fires that button, so the on-screen
-    // controls are usable without the physical buttons. Edge-triggered so one
-    // tap is one press.
-    {
-        static bool ftr_prev = false;
-        bool ftr_now = !touch.IsEmpty();
-        if (ftr_now && !ftr_prev) {
-            down |= this->layout->FooterButtonAt(touch.x, touch.y);
-        }
-        ftr_prev = ftr_now;
     }
     // Touch: a horizontal swipe across the content area flips tabs (swipe
     // left = next tab), matching the strip above it. The list/grid treat
