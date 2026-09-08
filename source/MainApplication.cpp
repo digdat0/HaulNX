@@ -8446,6 +8446,52 @@ std::string MainApplication::AppCheckedLabel(const std::string &id) {
     return checked_ago(it->second);
 }
 
+// Console-icon slug for a bundled-catalogue emulator id, for the Emulators
+// tab's card view -- e.g. "duckstation" -> "psx" (see console_icon/
+// console_full_name for the slug list). Sourced from each emulator's own
+// GitHub repo / the wiki's "Systems:" line, not the manifest (UpdSource has
+// no console field -- update_sources.json is shared with the desktop
+// companion, and most of its rows are plain apps with no console at all).
+// Returns "default" (console_icon's generic badge) for a multi-system
+// frontend (RetroArch, Lakka) or a manager/frontend that isn't tied to one
+// console at all (TICO, SCCM-Retro), and for anything the table doesn't
+// recognize (a manually-added emulator, or a future manifest entry) --
+// console_icon() itself only falls back to "default" for an unrecognized
+// non-empty key, not a NULL one, so this has to name it explicitly.
+static const char *emu_console_slug(const char *id) {
+    static const struct {
+        const char *id;
+        const char *slug;
+    } map[] = {
+        {"ppsspp", "psp"},        {"mgba", "gba"},
+        {"melonds", "nds"},       {"drastic", "nds"},
+        {"raikopon", "3ds"},      {"dekopon", "3ds"},
+        {"pfbn", "arcade"},       {"psnes", "snes"},
+        {"pnes", "nes"},          {"pgba", "gba"},
+        {"pgen", "genesis"},      {"mame", "arcade"},
+        {"flycast", "dc"},        {"duckstation", "psx"},
+        {"yabasanshiro", "saturn"}, {"nethersx2", "ps2"},
+        {"armsx2nx", "ps2"},      {"cemu", "wiiu"},
+        {"dolphin", "gc"},        {"vita3k", "vita"},
+        {"ps4-p8", "pico8"},      {"flashnx", "flash"},
+        {"axchip8", "chip8"},     {"chip8-nx", "chip8"},
+        {"fake-08", "pico8"},     {"gamelad", "gb"},
+        {"noods", "nds"},         {"tamatool-nx", "tamagotchi"},
+        {"yokoi", "game-and-watch"}, {"vba-next-switch", "gba"},
+        {"vapor-spec", "zx-spectrum"}, {"desmume-nx", "nds"},
+        {"gdkgba", "gba"},        {"khedgb", "gb"},
+        {"laines", "nes"},        {"noies", "nes"},
+        {"uae4all2", "amiga"},    {"fceumm", "nes"},
+        {"sms-plus-gx", "master-system"}, {"snes9x2010", "snes"},
+    };
+    for (size_t i = 0; i < sizeof(map) / sizeof(map[0]); i++) {
+        if (strcasecmp(id, map[i].id) == 0) {
+            return map[i].slug;
+        }
+    }
+    return "default";
+}
+
 // Draw the rows from the worker's results: a clear Update / Up-to-date / no-
 // source / unreachable badge per entry, colour-coded so the states don't blur.
 // Installed rows also carry when they were last checked ("· 5m ago").
@@ -8464,6 +8510,16 @@ void MainApplication::AppUpdatesRender() {
         this->layout->SetEmptyState(console_icon("default"), tr(S_APPMAN_EMPTY),
                                     "");
         return;
+    }
+    // Card view is Emulators-only (Apps has no per-entry console to show a
+    // picture of, and stays the plain list it always was). Same 6-wide/
+    // centred-icon geometry as Home's console cards -- these are plain logo
+    // icons, never real art, so poster mode's "no cover" path (centred
+    // rather than stretched) is what we want here too.
+    bool cards = is_emu && g_prefs.card_view;
+    if (cards) {
+        this->layout->SetCardCols(6);
+        this->layout->SetCardPoster(true);
     }
     pu::ui::Color lbl = g_theme->row_text;
     for (size_t i = 0; i < this->appman_list.size(); i++) {
@@ -8543,16 +8599,31 @@ void MainApplication::AppUpdatesRender() {
             clr = onoff_color(false);
             break;
         }
-        this->layout->AddRow2(std::string(e.name), tag, lbl, clr, -1.0f,
-                              console_icon("default"), "", false, pill);
+        if (cards) {
+            // No colour-coded pill in card view (plain AddCard has no per-card
+            // subtitle colour, matching every other card screen) -- the state
+            // text alone still carries "Update to X" / "Up to date" / etc.
+            this->layout->AddCard(std::string(e.name), tag,
+                                  console_icon(emu_console_slug(e.id)), false);
+        } else {
+            this->layout->AddRow2(std::string(e.name), tag, lbl, clr, -1.0f,
+                                  console_icon("default"), "", false, pill);
+        }
     }
     s32 row_count = (s32)this->appman_list.size();
     if (is_emu) {
-        // Trailing action row: register an emulator the bundled catalogue
-        // doesn't know about -- pick its .nro, then set a GitHub repo for it.
-        this->layout->AddRow2(tr(S_APPMAN_ADD_MANUAL), CHEVRON, lbl,
-                              chevron_color(), -1.0f, nullptr, "", false, false);
+        // Trailing action: register an emulator the bundled catalogue doesn't
+        // know about -- pick its .nro, then set a GitHub repo for it.
+        if (cards) {
+            this->layout->AddCard(tr(S_APPMAN_ADD_MANUAL), "", nullptr, false);
+        } else {
+            this->layout->AddRow2(tr(S_APPMAN_ADD_MANUAL), CHEVRON, lbl,
+                                  chevron_color(), -1.0f, nullptr, "", false, false);
+        }
         row_count++;
+    }
+    if (cards) {
+        this->layout->SetCardsMode(true);
     }
     s32 sel = this->appman_sel;
     if (sel >= row_count) {
