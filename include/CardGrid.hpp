@@ -433,8 +433,16 @@ class CardGrid : public pu::ui::elm::Element {
             // OnRender clips it to the card and, when it's too long to fit,
             // marquees it so the whole name is still reachable instead of
             // being permanently cut off.
-            c.t1_tex = pu::ui::render::RenderText(this->font_tiny, cd.title,
-                                                  this->title_clr);
+            // A card carrying a console label (Emulators only -- see
+            // Card::console) gives that label the prominent color/weight
+            // instead of the title -- it's the "which system(s)" answer
+            // readers scan for first across a page of cards that mostly show
+            // the same handful of emulator brand names. Every other poster
+            // card (no console label) keeps the plain title-prominent look.
+            const bool has_con = !cd.console.empty();
+            c.t1_tex = pu::ui::render::RenderText(
+                this->font_tiny, cd.title,
+                has_con ? this->sub_clr : this->title_clr);
             c.t1w = pu::ui::render::GetTextureWidth(c.t1_tex);
             c.t1h = pu::ui::render::GetTextureHeight(c.t1_tex);
         } else {
@@ -459,8 +467,12 @@ class CardGrid : public pu::ui::elm::Element {
             c.sh = pu::ui::render::GetTextureHeight(c.sub_tex);
         }
         if (!cd.console.empty()) {
+            // The prominent color the title above no longer uses (see the
+            // has_con branch above) -- swapping which line gets it is what
+            // actually reads as "this line is the emphasized one" in a UI
+            // with a single font weight to draw from.
             c.con_tex = pu::ui::render::RenderText(this->font_tiny,
-                                                    cd.console, this->sub_clr);
+                                                    cd.console, this->title_clr);
             c.conw = pu::ui::render::GetTextureWidth(c.con_tex);
             c.conh = pu::ui::render::GetTextureHeight(c.con_tex);
         }
@@ -1432,15 +1444,6 @@ class CardGrid : public pu::ui::elm::Element {
                     this->BuildCell(idx);
                 }
                 if (this->poster) {
-                    if (ce.con_tex) {
-                        // Label over the icon art (e.g. an emulator card's
-                        // supported console), centred like the title/subtitle
-                        // below it rather than pinned to the corner. Plain
-                        // text, no pill -- a real icon's baked-in transparent
-                        // padding is what keeps this legible over the art.
-                        drawer->RenderTexture(ce.con_tex,
-                                              cx + (cw - ce.conw) / 2, cy + 10);
-                    }
                     // Poster card: box art (or a centred fallback icon) fills
                     // the top, title + size sit in the band below it. Real
                     // cover art already fills the whole image area, so the
@@ -1457,7 +1460,14 @@ class CardGrid : public pu::ui::elm::Element {
                     // blow well past that budget. Capping by iw_max still
                     // lets it use the full card width if the budget ever
                     // allows it (e.g. fewer columns).
-                    const s32 img_h_budget = ch - 2 * PosterPad - PosterTextH;
+                    // A console-name line (Emulators cards only -- see
+                    // Card::console) adds its own height on top of the fixed
+                    // title+size text band, shrinking the image a bit further
+                    // to make room; every other poster screen leaves con_tex
+                    // null and gets the original budget untouched.
+                    const s32 con_extra = ce.con_tex ? (ce.conh + 12) : 0;
+                    const s32 img_h_budget =
+                        ch - 2 * PosterPad - PosterTextH - con_extra;
                     const s32 iw_max = cw - 2 * PosterPad;
                     s32 iw, ih;
                     if (cd.art) {
@@ -1552,14 +1562,30 @@ class CardGrid : public pu::ui::elm::Element {
                                                   icy - isz / 2, o);
                         }
                     }
-                    // Title sits flush under the image -- keeps it riding
-                    // high in the card instead of drifting toward the
-                    // count/size pill -- which gets a deliberately generous
-                    // gap of its own below (PosterTextH grew to make room
-                    // for both).
+                    // Console name (e.g. an emulator card's supported
+                    // system(s)) sits flush under the image, above the title
+                    // -- in the fixed text band, not overlaid on the image
+                    // itself (the old spot), which real box art painted over
+                    // since the image draws after this text in the same
+                    // frame. Living in the text band instead means it
+                    // survives box art the same way the title does.
                     s32 ty = iy + ih;
                     const s32 band_x = cx + PosterPad;
                     const s32 band_w = cw - 2 * PosterPad;
+                    if (ce.con_tex) {
+                        // Faux-bold: the shared system font has no distinct
+                        // bold face to render with, so this draws the same
+                        // texture twice, 1px apart, to fatten the strokes --
+                        // a cheap, common trick for a single-weight font.
+                        const s32 conx = cx + (cw - ce.conw) / 2;
+                        drawer->RenderTexture(ce.con_tex, conx, ty);
+                        drawer->RenderTexture(ce.con_tex, conx + 1, ty);
+                        ty += ce.conh + 4;
+                    }
+                    // Title follows -- keeps the block riding high in the
+                    // card instead of drifting toward the count/size pill --
+                    // which gets a deliberately generous gap of its own below
+                    // (PosterTextH grew to make room for both).
                     if (ce.t1_tex) {
                         const s32 overflow = ce.t1w - band_w;
                         if (overflow > 0) {
@@ -1578,7 +1604,7 @@ class CardGrid : public pu::ui::elm::Element {
                             drawer->RenderTexture(
                                 ce.t1_tex, cx + (cw - ce.t1w) / 2, ty);
                         }
-                        ty += ce.t1h + 20;
+                        ty += ce.t1h + 16;
                     }
                     if (ce.sub_tex) {
                         s32 sx = cx + (cw - ce.sw) / 2;

@@ -7,6 +7,40 @@ Notes for each release. `release.sh` pulls the section matching the version in
 `VERSION` and attaches it to the GitHub release. Add a `## <version>` section
 here before running a release.
 
+## 2.2.48
+
+**Emulators tab gets real console art, cleaner labels, a touch-input fix, and a new Amiga emulator.**
+
+- Fixed three touch-tap-a-tab handlers and the Queue tab's activity dot, both
+  left pointing at the wrong tab after an earlier tab reorder — tapping a tab
+  (or L/R cycling) now always lands where it visually shows.
+- Fixed several screens' visible "B cancel" / "B disconnect" footer hints not
+  actually responding to a tap — search, the update check, bulk metadata
+  refresh, Import, and the USB-connect screen now honor a tap the same as the
+  physical B button.
+- Emulators tab card view now shows your chosen console box art (Settings >
+  Appearance > box art) on emulator cards, matching the Library/Collections
+  tabs — previously the console label silently disappeared whenever box art
+  was on.
+- The console label (e.g. "PS2", "SNES, NES") now sits above the emulator's
+  name and survives box art; it's the prominent line now, with the emulator
+  name secondary.
+- mGBA's card now correctly reads "GBA, GB, GBC" instead of "Multi"; Flycast
+  and pFBN now show their single flagship system (Dreamcast, Neo Geo) instead
+  of a generic multi-system badge.
+- List view rows now read "Emulator Name (Console)", matching card view's own
+  label.
+- Fixed an emulator added manually before the bundled catalog caught up to it
+  by name (e.g. ARMSX2NX) showing up as two rows — one correct, one stuck on
+  "Multi". Self-heals automatically on next launch.
+- Added **UAE4ALL2-HD**, a from-scratch Amiga emulator with a WHDLoad
+  launcher, HDF/CD32 support, and save states, alongside the existing
+  UAE4ALL2.
+- Desktop companion: the SD Card tab can now download an entire folder to
+  your PC, recursively, mirroring its structure locally — previously only
+  single files could be downloaded. Also removed a stale duplicate
+  "pSNES / pNES" catalog entry.
+
 ## 2.2.22
 
 **Accurate USB 3.0 status, the Switch's own Queue tab visible over USB too, and no more re-copying cover art on every sync.**

@@ -228,6 +228,7 @@
     {"id": "switchident", "name": "SwitchIdent", "kind": "app", "detect": "switchident", "repo": "joel16/SwitchIdent", "asset": ""},
     {"id": "sys-clk-editor", "name": "sys-clk-Editor", "kind": "app", "detect": "sys-clk-editor", "repo": "SunTheCourier/sys-clk-Editor", "asset": ""},
     {"id": "uae4all2", "name": "uae4all2", "kind": "emulator", "detect": "uae4all2", "repo": "rsn8887/uae4all2", "asset": "switch"},
+    {"id": "uae4all2hd", "name": "UAE4ALL2-HD", "kind": "emulator", "detect": "uae4all2hd", "repo": "theheroGAC/UAE4ALL2-HD-SWITCH", "asset": "uae4all2hd"},
     {"id": "y-allarenuts", "name": "Y'allAreNUTs", "kind": "app", "detect": "y-allarenuts", "repo": "3096/nut", "asset": ""},
     {"id": "fizeau", "name": "Fizeau", "kind": "app", "detect": "fizeau", "repo": "averne/Fizeau", "asset": ""},
     {"id": "ticobro", "name": "Ticobro", "kind": "app", "detect": "ticobro", "repo": "StonedModder/Ticobro", "asset": ""},

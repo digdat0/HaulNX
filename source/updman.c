@@ -3,6 +3,7 @@
 #include "jsonutil.h"
 #include "fsutil.h"
 
+#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -71,11 +72,70 @@ int updman_parse_buf(const char *buf, size_t len, UpdSource *out, int max) {
     return parse_sources(buf, len, out, max);
 }
 
+/* True if `haystack_tokens` (a comma-separated detect list, already lowercase
+ * per the "comma-separated lowercase filename substrings" contract on
+ * UpdSource::detect) contains `needle` (one already-lowercased token) as a
+ * substring of any of its own tokens -- lowercased again anyway rather than
+ * trust every caller/user-edited manifest to honor that contract. Mirrors
+ * detect_match()'s own per-token substring rule (source/MainApplication.cpp)
+ * against a filename, but here against another entry's whole detect string. */
+static bool detect_str_contains_token(const char *haystack_tokens,
+                                      const char *needle) {
+    char buf[128];
+    snprintf(buf, sizeof(buf), "%s", haystack_tokens);
+    for (char *p = buf; *p; p++) {
+        *p = (char)tolower((unsigned char)*p);
+    }
+    return strstr(buf, needle) != NULL;
+}
+
+/* True if any comma-separated token in `a` is a substring of `b` (or, by the
+ * loop in the caller trying both directions, vice versa) -- i.e. the two
+ * entries would both claim the exact same installed .nro via detect_match's
+ * substring-per-token rule. Used only to catch a local row that's really a
+ * duplicate of a bundled one shipped under a different id later -- typically
+ * a user's own "Add manually" registration made before HaulNX's catalog
+ * caught up to that emulator by its proper id (e.g. a hand-added "ARMSX2-NX"
+ * row predating the bundled "armsx2nx" one: same installed file, two ids
+ * that don't match by strcasecmp alone -- see reconcile_bundled below). */
+static bool detect_overlaps(const char *a, const char *b) {
+    if (!a[0] || !b[0]) {
+        return false;
+    }
+    char abuf[128];
+    snprintf(abuf, sizeof(abuf), "%s", a);
+    char *save = NULL;
+    for (char *tok = strtok_r(abuf, ",", &save); tok;
+         tok = strtok_r(NULL, ",", &save)) {
+        char t[128];
+        int j = 0;
+        for (char *c = tok; *c && j < (int)sizeof(t) - 1; c++) {
+            if (!isspace((unsigned char)*c)) {
+                t[j++] = (char)tolower((unsigned char)*c);
+            }
+        }
+        t[j] = '\0';
+        if (t[0] && detect_str_contains_token(b, t)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 /* Merge the bundled romfs manifest into an already-loaded on-disk one: a
  * bundled id absent locally is appended, and a local row whose repo is still
  * blank gets repo/asset filled from the bundled row. A local row with its own
  * repo already set is never touched -- shipping corrected/expanded defaults
  * in a later HaulNX release must not clobber a user's own configuration.
+ *
+ * A bundled row that doesn't match any local id by name, but whose detect
+ * string overlaps a local row's (see detect_overlaps above), is the same
+ * "duplicate registration" case under a different id -- adopted in place
+ * (id/name/detect/asset replaced with the bundled row's) rather than
+ * appended, so the app stops showing one installed file as two entries. The
+ * local row's own repo is kept if it had already set one, same as the
+ * plain repo-fill case below.
+ *
  * Returns true if anything changed (caller should persist). */
 static bool reconcile_bundled(UpdSource *out, int *count, int max) {
     size_t blen = 0;
@@ -94,10 +154,20 @@ static bool reconcile_bundled(UpdSource *out, int *count, int max) {
     bool changed = false;
     for (int i = 0; i < bn; i++) {
         int found = -1;
+        bool same_id = false;
         for (int j = 0; j < *count; j++) {
             if (strcasecmp(out[j].id, bundled[i].id) == 0) {
                 found = j;
+                same_id = true;
                 break;
+            }
+        }
+        if (found < 0) {
+            for (int j = 0; j < *count; j++) {
+                if (detect_overlaps(out[j].detect, bundled[i].detect)) {
+                    found = j;
+                    break;
+                }
             }
         }
         if (found < 0) {
@@ -106,6 +176,14 @@ static bool reconcile_bundled(UpdSource *out, int *count, int max) {
             }
             out[*count] = bundled[i];
             (*count)++;
+            changed = true;
+        } else if (!same_id) {
+            char kept_repo[80];
+            snprintf(kept_repo, sizeof(kept_repo), "%s", out[found].repo);
+            out[found] = bundled[i];
+            if (kept_repo[0]) {
+                snprintf(out[found].repo, sizeof(out[found].repo), "%s", kept_repo);
+            }
             changed = true;
         } else if (!out[found].repo[0] && bundled[i].repo[0]) {
             snprintf(out[found].repo, sizeof(out[found].repo), "%s", bundled[i].repo);

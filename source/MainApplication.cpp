@@ -8487,13 +8487,13 @@ static const EmuSystems kEmuSystems[] = {
     {"drastic", {"nds"}, 1},
     {"raikopon", {"3ds"}, 1},
     {"dekopon", {"3ds"}, 1},
-    {"pfbn", {"fbneo", "neo-geo", "arcade"}, 3},
+    {"pfbn", {"neo-geo"}, 1}, // FBNeo's flagship system; also plays arcade
     {"psnes", {"snes"}, 1},
     {"pnes", {"nes"}, 1},
     {"pgba", {"gba"}, 1},
     {"pgen", {"genesis"}, 1},
     {"mame", {"arcade"}, 1},
-    {"flycast", {"dc", "naomi", "atomiswave"}, 3},
+    {"flycast", {"dc"}, 1}, // its flagship system; also plays NAOMI/Atomiswave
     {"duckstation", {"psx"}, 1},
     {"yabasanshiro", {"saturn"}, 1},
     {"nethersx2", {"ps2"}, 1},
@@ -8518,6 +8518,7 @@ static const EmuSystems kEmuSystems[] = {
     {"laines", {"nes"}, 1},
     {"noies", {"nes"}, 1},
     {"uae4all2", {"amiga"}, 1},
+    {"uae4all2hd", {"amiga"}, 1},
     {"fceumm", {"nes"}, 1},
     {"sms-plus-gx", {"master-system"}, 1},
     {"snes9x2010", {"snes"}, 1},
@@ -8574,18 +8575,20 @@ static const char *console_short_name(const char *slug) {
 }
 
 // Emulator card top-left corner label: the short console name for a single-
-// system emulator, "Name, Name" for two, or "Multi" for three or more (or an
-// id with no entry at all -- a multi-system frontend, or unrecognized).
+// system emulator, "Name, Name[, Name]" for two or three (e.g. mGBA's "GBA,
+// GB, GBC"), or "Multi" for an id with no entry at all -- a genuine multi-
+// system frontend (RetroArch, Lakka) or a manager not tied to one console.
 static std::string emu_console_label(const char *id) {
     const EmuSystems *e = emu_systems_find(id);
-    if (!e || e->count >= 3) {
+    if (!e) {
         return tr(S_APPMAN_MULTI_SYS);
     }
-    if (e->count == 1) {
-        return console_short_name(e->slugs[0]);
+    std::string out = console_short_name(e->slugs[0]);
+    for (int i = 1; i < e->count; i++) {
+        out += ", ";
+        out += console_short_name(e->slugs[i]);
     }
-    return std::string(console_short_name(e->slugs[0])) + ", " +
-           console_short_name(e->slugs[1]);
+    return out;
 }
 
 // Draw the rows from the worker's results: a clear Update / Up-to-date / no-
@@ -8699,12 +8702,28 @@ void MainApplication::AppUpdatesRender() {
             // No colour-coded pill in card view (plain AddCard has no per-card
             // subtitle colour, matching every other card screen) -- the state
             // text alone still carries "Update to X" / "Up to date" / etc.
-            this->layout->AddCard(std::string(e.name), tag,
-                                  console_icon(emu_console_icon_slug(e.id)),
-                                  false, false, false, emu_console_label(e.id));
+            // console_display_icon swaps in that console's own SteamGridDB
+            // cover when the user opted in (Manage Consoles > box art) and box
+            // art is on globally -- same helper/fallback chain Home's own
+            // console cards use -- and falls back to the plain badge for a
+            // multi-system entry ("default" slug) same as before.
+            bool is_art = false;
+            pu::sdl2::Texture ic =
+                console_display_icon(emu_console_icon_slug(e.id), &is_art);
+            this->layout->AddCard(std::string(e.name), tag, ic, false, false,
+                                  is_art, emu_console_label(e.id));
         } else {
-            this->layout->AddRow2(std::string(e.name), tag, lbl, clr, -1.0f,
-                                  console_icon("default"), "", false, pill);
+            // Same per-console icon (box art when opted in, else the stock
+            // badge) as card view above -- this used to hardcode "default"
+            // for every row regardless of console. The "Name (Console)"
+            // suffix mirrors card view's own console label (emu_console_label)
+            // so the two views read the same for a given entry.
+            std::string row_name =
+                std::string(e.name) + " (" + emu_console_label(e.id) + ")";
+            this->layout->AddRow2(
+                row_name, tag, lbl, clr, -1.0f,
+                console_display_icon(emu_console_icon_slug(e.id)), "", false,
+                pill);
         }
     }
     s32 row_count = (s32)this->appman_list.size();
