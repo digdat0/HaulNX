@@ -36,8 +36,20 @@ else
 fi
 
 v="$(cat VERSION)"
-repo="$(grep -oE '#define[[:space:]]+UPDATE_REPO[[:space:]]+"[^"]+"' include/config.h \
-        | sed -E 's/.*"([^"]+)".*/\1/')"
+# config.h #ifdef's UPDATE_REPO to a different value for HAULNX_LITE builds
+# (see its own comment there) -- a plain grep for the #define matches BOTH
+# branches and concatenates them into one broken multi-line value. This repo
+# releases the plain (non-Lite) HaulNX.nro, so track ifdef/else state and
+# only take the value from the #else branch.
+repo="$(awk '
+  /^#[[:space:]]*ifdef[[:space:]]+HAULNX_LITE/ { lite=1; next }
+  /^#[[:space:]]*else/                          { lite=0; next }
+  /^#[[:space:]]*endif/                         { lite=0; next }
+  !lite && /#define[[:space:]]+UPDATE_REPO[[:space:]]+"/ {
+    match($0, /"[^"]+"/)
+    print substr($0, RSTART + 1, RLENGTH - 2)
+  }
+' include/config.h)"
 
 if [ -z "$repo" ] || [ "$repo" = "YOURUSER/HaulNX" ]; then
   echo "Set UPDATE_REPO in include/config.h to your real GitHub repo first."
