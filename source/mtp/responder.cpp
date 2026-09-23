@@ -644,6 +644,23 @@ namespace mtp {
                                             "queue_status.json", false,
                                             static_cast<u64>(qst.st_size), qst.st_mtime));
 
+                /* Kept rollback builds (view-only), so a USB companion can show
+                 * the same list GET /backups.json serves over Wi-Fi -- see
+                 * app_backups_write_json's own comment. Same throttle shape as
+                 * queue_status.json above (cheap, but this branch runs on every
+                 * USB micro-op). No restore route exists on either transport. */
+                static time_t s_bak_last = 0;
+                time_t bak_now = time(nullptr);
+                if (bak_now - s_bak_last >= 3) {
+                    app_backups_write_json(BACKUPS_JSON_PATH);
+                    s_bak_last = bak_now;
+                }
+                struct stat bkst;
+                if (stat(BACKUPS_JSON_PATH, &bkst) == 0)
+                    out.push_back(AddOrFind(c, PtpRootParentObject, BACKUPS_JSON_PATH,
+                                            "backups.json", false,
+                                            static_cast<u64>(bkst.st_size), bkst.st_mtime));
+
                 /* Each console's current cover art (Console Art / companion
                  * push), so a USB companion can preview and cache it the same
                  * way GET /consoleart serves it over Wi-Fi -- boxart_lookup

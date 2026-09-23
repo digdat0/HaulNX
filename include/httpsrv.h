@@ -110,6 +110,15 @@ typedef struct {
      * caller writes the body as a NEW app at recv_app_path rather than rejecting it
      * as a missing update target. False for updates and game pushes. */
     bool recv_app_new;
+    /* Inventory mode only: an X-App-Tag header on a streamed app-update push
+     * names the exact GitHub release tag the desktop resolved this body from
+     * (its ghCheck()'s tag). Recorded as the manifest's installed_tag once the
+     * swap lands -- see app_is_up_to_date's comment in MainApplication.cpp for
+     * why: some releases' own NACP DisplayVersion is a placeholder with no
+     * digits at all, so this durable tag is the only reliable way to later
+     * recognize "already on the latest" for them. Empty when the pushing
+     * desktop is old enough not to send it, or for any non-app-update push. */
+    char recv_app_tag[32];
     /* Inventory mode only: an X-Dest-Folder header on a streamed game push (the
      * Library tab's per-game "send to Switch") names the console it came from,
      * e.g. "switch" or "3ds" — the same short target key config.h consoles use.
@@ -280,6 +289,17 @@ int httpsrv_poll(HttpSrv *s);
 /* True while a POST body is arriving; *now / *total (either may be NULL)
  * report the bytes so far and the Content-Length, for a progress line. */
 bool httpsrv_receiving(const HttpSrv *s, size_t *now, size_t *total);
+
+/* True while a GET response body is streaming OUT (a game/file pull, "file" or
+ * "fs_get") -- the pull-side counterpart to httpsrv_receiving, which only ever
+ * sees an upload. A caller that gates background work (the periodic inventory
+ * JSON rebuild, e.g.) on "is a companion actually transferring right now" must
+ * check both: httpsrv_receiving alone reads a mid-download connection as idle,
+ * so a multi-file pull (a folder download) leaves ~15s gaps where that gate
+ * opens and the rebuild's own per-console work competes with this same
+ * render-thread poll loop for the time it needs to promptly accept() the next
+ * file's connection -- see InvServerPoll's `busy` calc. */
+bool httpsrv_sending(const HttpSrv *s);
 
 /* Abort the connection currently in flight (a receive or a pull) but keep the
  * server listening: the in-progress ".part" is removed and the client dropped,

@@ -4,7 +4,9 @@
 #include "extract.h"
 
 #include <switch.h>
+#include <ctype.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -23,6 +25,55 @@ static bool ci_contains(const char *hay, const char *needle) {
         }
     }
     return false;
+}
+
+/* True when `name_lower` (already lowercased) looks like it targets a
+ * platform other than the Switch. A multi-platform repo (HarbourMasters'
+ * Ghostship/Shipwright ports and others like them) ships one release with a
+ * Windows/Linux/macOS/Android zip alongside -- or, on an off release, INSTEAD
+ * of -- the actual Switch build. Without this check, the hint-less archive
+ * fallback below just grabs the first zip a release lists, which can silently
+ * pick e.g. "Ghostship-Windows.zip" as "the update", download it, then fail
+ * to find a .nro inside since there never was one. A name that explicitly
+ * mentions the Switch/NX is always trusted even if it also names another
+ * platform (e.g. a combined "MyApp-Linux-Switch.zip"). */
+/* Whether `word` appears in `s` bounded by non-alnum chars (or the string's
+ * ends) on both sides -- for tokens too short/common to trust as a raw
+ * substring ("mac" would also match "Pacman", "ios" would also match a name
+ * that merely contains those letters in sequence). */
+static bool has_word(const char *s, const char *word) {
+    size_t wl = strlen(word);
+    for (const char *p = strstr(s, word); p; p = strstr(p + 1, word)) {
+        bool left_ok = (p == s) || !isalnum((unsigned char)p[-1]);
+        bool right_ok = !isalnum((unsigned char)p[wl]);
+        if (left_ok && right_ok) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool looks_non_switch_platform(const char *name_lower) {
+    if (strstr(name_lower, "switch") || strstr(name_lower, "-nx") ||
+        strstr(name_lower, "_nx") || strstr(name_lower, "nx-") ||
+        strstr(name_lower, "nx_") || strstr(name_lower, "nx.")) {
+        return false;
+    }
+    /* Long/distinctive enough to trust as a plain substring. */
+    static const char *tokens[] = {
+        "windows", "win32", "win64", ".exe",
+        "linux",   "steamdeck", "appimage", ".deb", ".rpm",
+        "macos",   "darwin", ".dmg", ".pkg",
+        "android", ".apk", ".ipa",
+    };
+    for (size_t i = 0; i < sizeof(tokens) / sizeof(tokens[0]); i++) {
+        if (strstr(name_lower, tokens[i])) {
+            return true;
+        }
+    }
+    /* Short/ambiguous words that need boundary checking. */
+    return has_word(name_lower, "mac") || has_word(name_lower, "osx") ||
+          has_word(name_lower, "ios");
 }
 
 static void parse_ver(const char *s, int *a, int *b, int *c) {
@@ -91,6 +142,17 @@ static void asset_nro_url(const char *body, const jsmntok_t *tok, int rel,
             size_t ln = strlen(name);
             bool is_nro = (ln > 4 && strcasecmp(name + ln - 4, ".nro") == 0);
             bool is_arc = !is_nro && is_archive_name(name);
+            if (is_arc) {
+                char lower[256];
+                size_t k = 0;
+                for (; k < ln && k < sizeof(lower) - 1; k++) {
+                    lower[k] = (char)tolower((unsigned char)name[k]);
+                }
+                lower[k] = '\0';
+                if (looks_non_switch_platform(lower)) {
+                    is_arc = false; /* some other platform's build -- skip */
+                }
+            }
             if (is_nro || is_arc) {
                 char url[1024];
                 json_copy(body, tok,
@@ -152,7 +214,16 @@ bool update_fetch_latest_asset(const char *repo, const char *asset_hint,
     char *body = NULL;
     long code = 0;
     size_t len = 0;
-    for (int a = 0; a < 3; a++) {
+    /* 5 attempts with mildly increasing backoff (was 3 @ flat ~0.7s): a single
+     * repo occasionally reporting "source unreachable" while every other one
+     * in the same batch check succeeds (confirmed against a repo that answers
+     * fine from a normal connection) is consistent with the device hitting a
+     * one-off transient failure right at that repo's turn and then running out
+     * of retries before it cleared -- worth a bit more budget per repo since
+     * this only runs for installed+sourced entries, not the whole catalog. */
+    static const uint64_t backoff_ns[] = {700000000ULL, 1000000000ULL,
+                                          1500000000ULL, 2000000000ULL};
+    for (int a = 0; a < 5; a++) {
         if (attempt) {
             *attempt = a + 1;
         }
@@ -162,7 +233,19 @@ bool update_fetch_latest_asset(const char *repo, const char *asset_hint,
         }
         free(body);
         body = NULL;
-        svcSleepThread(700000000ULL); /* ~0.7s before retrying */
+        /* A rate limit (403/429) won't clear in the few seconds these retries
+         * span -- retrying just burns more of whatever budget is left (worse,
+         * on an unauthenticated 60/hr budget) and risks GitHub's separate
+         * abuse-detection limit on top of it, across a catalog check that can
+         * hit this same endpoint 50+ times in a row. Only transient failures
+         * (a dropped connection, a 5xx, a timeout -- code 0 or 5xx) are worth
+         * another attempt. */
+        if (code == 403 || code == 429) {
+            break;
+        }
+        if (a < 4) {
+            svcSleepThread(backoff_ns[a]);
+        }
     }
     /* Report the last HTTP status so the caller can tell a rate limit (403/429,
      * body present) from an offline device (code stays 0, no response). */

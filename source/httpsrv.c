@@ -486,6 +486,35 @@ static bool sanitize_filename(const char *in, char *out, size_t out_sz) {
     return j > 0;
 }
 
+/* For the X-App-Tag header: a GitHub release tag (e.g. "4.0.0", "v1.2.3-rc1").
+ * Percent-decode, then keep only characters a version tag would plausibly use
+ * -- anything else (this header is desktop-supplied, so trust it no more than
+ * any other client input) drops the whole value rather than truncating into
+ * something that could silently collide with an unrelated real tag. */
+static bool sanitize_tag(const char *in, char *out, size_t out_sz) {
+    size_t o = 0;
+    for (const char *p = in; *p && p[0] != '\r' && p[0] != '\n' &&
+                             o + 1 < out_sz;
+         p++) {
+        char c;
+        if (p[0] == '%' && isxdigit((unsigned char)p[1]) &&
+            isxdigit((unsigned char)p[2])) {
+            char h[3] = {p[1], p[2], '\0'};
+            c = (char)strtol(h, NULL, 16);
+            p += 2;
+        } else {
+            c = p[0];
+        }
+        if (!(isalnum((unsigned char)c) || c == '.' || c == '-' || c == '_' ||
+              c == '+')) {
+            return false;
+        }
+        out[o++] = c;
+    }
+    out[o] = '\0';
+    return o > 0;
+}
+
 /* Like sanitize_filename but for the X-App-Path update target: a full device
  * path to an installed .nro. Percent-decode (keeping the slashes), then require
  * the sdmc:/switch/ prefix and reject any ".." so the write can never escape the
@@ -1100,6 +1129,19 @@ static int respond_simple(HttpSrv *s, int fd, const char *head) {
         if (!send_file(fd, QUEUE_STATUS_PATH, "application/json", NULL)) {
             send_resp(fd, "404 Not Found", "text/plain", "no queue status");
         }
+    } else if (s->mode == HTTPSRV_MODE_INVENTORY &&
+               pl == tl + sizeof("/backups.json") - 1 &&
+               p[0] == '/' && strncmp(p + 1, s->token, tl - 1) == 0 &&
+               strncmp(p + tl, "/backups.json",
+                       sizeof("/backups.json") - 1) == 0) {
+        /* Desktop companion, view-only: every app/emulator's kept rollback
+         * builds (see app_backups_write_json). No restore route exists --
+         * rolling back stays a Switch-menu action. Regenerated fresh on every
+         * GET, same "cheap, do it every time" shape as queue_status.json. */
+        app_backups_write_json(BACKUPS_JSON_PATH);
+        if (!send_file(fd, BACKUPS_JSON_PATH, "application/json", NULL)) {
+            send_resp(fd, "404 Not Found", "text/plain", "no backups");
+        }
     } else if (s->mode == HTTPSRV_MODE_INVENTORY && pl == tl + 20 &&
                p[0] == '/' && strncmp(p + 1, s->token, tl - 1) == 0 &&
                strncmp(p + tl, "/update_sources.json", 20) == 0) {
@@ -1318,10 +1360,15 @@ static int respond_simple(HttpSrv *s, int fd, const char *head) {
         dl[j] = '\0';
         FILE *src = path_allowed(s, path) ? fopen(path, "rb") : NULL;
         long sz = -1;
+        long long mtime = 0;
         if (src) {
             fseek(src, 0, SEEK_END);
             sz = ftell(src); /* long is 64-bit here, so multi-GB games fit */
             fseek(src, 0, SEEK_SET);
+            struct stat st;
+            if (fstat(fileno(src), &st) == 0) {
+                mtime = (long long)st.st_mtime;
+            }
         }
         if (!src || sz < 0) {
             if (src) {
@@ -1330,16 +1377,20 @@ static int respond_simple(HttpSrv *s, int fd, const char *head) {
             send_resp(fd, "404 Not Found", "text/plain", "no file");
         } else {
             /* Send the header now, then hand the body to stream_out over the
-             * following polls — the file never buffers in RAM. */
+             * following polls — the file never buffers in RAM. X-Mtime (Unix
+             * epoch seconds) lets the desktop stamp the downloaded copy with
+             * the Switch's own file date instead of the moment the transfer
+             * finished — see download_file's own handling of this header. */
             char head[384];
             int hn = snprintf(head, sizeof(head),
                               "HTTP/1.1 200 OK\r\n"
                               "Content-Type: application/octet-stream\r\n"
                               "Content-Length: %ld\r\n"
                               "Content-Disposition: attachment; filename=\"%s\"\r\n"
+                              "X-Mtime: %lld\r\n"
                               "Access-Control-Allow-Origin: *\r\n"
                               "Connection: close\r\n\r\n",
-                              sz, dl);
+                              sz, dl, mtime);
             if (!head_ok(hn, sizeof(head)) || !send_all(fd, head, (size_t)hn)) {
                 fclose(src);
                 client_reset(s);
@@ -1385,10 +1436,15 @@ static int respond_simple(HttpSrv *s, int fd, const char *head) {
         dl[j] = '\0';
         FILE *src = sd_path_allowed(s, path) ? fopen(path, "rb") : NULL;
         long sz = -1;
+        long long mtime = 0;
         if (src) {
             fseek(src, 0, SEEK_END);
             sz = ftell(src);
             fseek(src, 0, SEEK_SET);
+            struct stat st;
+            if (fstat(fileno(src), &st) == 0) {
+                mtime = (long long)st.st_mtime;
+            }
         }
         if (!src || sz < 0) {
             if (src) {
@@ -1396,15 +1452,17 @@ static int respond_simple(HttpSrv *s, int fd, const char *head) {
             }
             send_resp(fd, "404 Not Found", "text/plain", "no file");
         } else {
+            /* X-Mtime: see the "file" route's own comment above. */
             char head[384];
             int hn = snprintf(head, sizeof(head),
                               "HTTP/1.1 200 OK\r\n"
                               "Content-Type: application/octet-stream\r\n"
                               "Content-Length: %ld\r\n"
                               "Content-Disposition: attachment; filename=\"%s\"\r\n"
+                              "X-Mtime: %lld\r\n"
                               "Access-Control-Allow-Origin: *\r\n"
                               "Connection: close\r\n\r\n",
-                              sz, dl);
+                              sz, dl, mtime);
             if (!head_ok(hn, sizeof(head)) || !send_all(fd, head, (size_t)hn)) {
                 fclose(src);
                 client_reset(s);
@@ -2228,6 +2286,7 @@ static int client_step(HttpSrv *s) {
             s->recv_app[0] = '\0';      /* cleared unless this is an app-update push */
             s->recv_app_path[0] = '\0';
             s->recv_app_new = false;
+            s->recv_app_tag[0] = '\0';
             s->recv_folder[0] = '\0';   /* cleared unless this is a Library game push */
             s->recv_fs_dest[0] = '\0'; /* cleared unless this is an SD Card tab write */
             /* SD Card tab direct write: X-Fs-Path names the exact destination
@@ -2370,6 +2429,14 @@ static int client_step(HttpSrv *s) {
                 if (s->recv_app_path[0]) {
                     const char *ai = hdr_val(s->head, "x-app-install:");
                     s->recv_app_new = (ai && ai[0] == '1');
+                }
+                /* The exact release tag this body came from (desktop's own
+                 * ghCheck() result) -- recorded as the manifest's
+                 * installed_tag once the swap lands. See recv_app_tag's own
+                 * comment in httpsrv.h. */
+                const char *atag = hdr_val(s->head, "x-app-tag:");
+                if (atag) {
+                    sanitize_tag(atag, s->recv_app_tag, sizeof(s->recv_app_tag));
                 }
                 /* A Library-tab game push carries the console it's filed under
                  * in X-Dest-Folder; an app-update push never sets both, but if
@@ -2764,6 +2831,10 @@ bool httpsrv_receiving(const HttpSrv *s, size_t *now, size_t *total) {
         *total = on ? s->cbody_total : 0;
     }
     return on;
+}
+
+bool httpsrv_sending(const HttpSrv *s) {
+    return s->listen_fd >= 0 && s->client_fd >= 0 && s->src != NULL;
 }
 
 void httpsrv_abort(HttpSrv *s) {

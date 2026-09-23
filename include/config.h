@@ -85,6 +85,12 @@ extern "C" {
 /* Previous builds of updated/installed apps, kept so the manager can roll back:
  * BACKUPS_DIR/<id>/<version>.nro, the two most recent per app. */
 #define BACKUPS_DIR   CONFIG_DIR "/backups"
+/* Read-only view of BACKUPS_DIR for the desktop companion (Apps/Emulators tab:
+ * "kept backups" — view only, no remote restore). Regenerated fresh on every
+ * GET/USB pull, same "cheap, do it every time" shape as QUEUE_STATUS_PATH;
+ * written by app_backups_write_json() (MainApplication.cpp, called from both
+ * httpsrv.c and mtp/responder.cpp, same split as diag_bundle_write). */
+#define BACKUPS_JSON_PATH DATA_DIR "/backups_view.json"
 #define LANG_DIR      CONFIG_DIR "/lang"
 #define CACHE_DIR     CONFIG_DIR "/cache"
 /* Persistent file-hash cache for DAT verification: (path,size,mtime) -> CRC/SHA1,
@@ -351,6 +357,16 @@ void app_migrate_layout(void);
  * torn down, same as a failed export today. Cheap enough (a handful of small
  * text files) to call on every pull, not just a manual export. */
 bool diag_bundle_write(void);
+
+/* Write BACKUPS_JSON_PATH: a read-only summary of every kept backup under
+ * BACKUPS_DIR, one row per app that has any -- {id, name, versions:[...]},
+ * newest first per app, matching list_backups' own ordering. Defined in
+ * MainApplication.cpp (needs the manifest + list_backups helpers already
+ * there); declared here in plain C linkage so both httpsrv.c and
+ * mtp/responder.cpp can call it the same way they call diag_bundle_write.
+ * Desktop-facing only -- the on-device Backups screen still reads
+ * BACKUPS_DIR directly and never touches this file. */
+bool app_backups_write_json(const char *path);
 
 /* Load dl_sources.json; seeds from romfs:/dl_sources.json on first run if the
  * sdmc file is missing. Understands the grouped schema and falls back to the

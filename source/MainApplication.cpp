@@ -707,6 +707,8 @@ static const char *console_full_name(const char *abbr) {
         {"pico8", "PICO-8"},
         {"tamagotchi", "Tamagotchi"},
         {"flash", "Adobe Flash"},
+        {"j2me", "Java ME (J2ME)"},
+        {"v-smile", "VTech V.Smile"},
     };
     for (size_t i = 0; i < sizeof(map) / sizeof(map[0]); i++) {
         if (strcasecmp(abbr, map[i].key) == 0) {
@@ -2663,8 +2665,11 @@ void MainLayout::HideSpinner() { this->spinner->Hide(); }
 void MainLayout::SetCardsMode(bool on) { this->cards_mode = on; }
 void MainLayout::AddCard(const std::string &title, const std::string &subtitle,
                          pu::sdl2::Texture icon, bool pinned, bool dim,
-                         bool art, const std::string &console) {
-    this->grid->AddCard(title, subtitle, icon, pinned, dim, art, console);
+                         bool art, const std::string &console,
+                         bool badge_ring, pu::ui::Color flag_clr,
+                         const std::string &flag_text) {
+    this->grid->AddCard(title, subtitle, icon, pinned, dim, art, console,
+                        badge_ring, flag_clr, flag_text);
 }
 void MainLayout::SetCardCols(s32 n) { this->grid->SetCols(n); }
 void MainLayout::SetCardPoster(bool on) { this->grid->SetPoster(on); }
@@ -5643,7 +5648,21 @@ static bool nro_file_version(const char *path, char *out, size_t out_sz) {
                 size_t m = out_sz - 1 < 0x10 ? out_sz - 1 : 0x10;
                 memcpy(out, dv, m);
                 out[m] = '\0';
-                ok = out[0] != '\0';
+                // Require at least one digit: some builds ship a NACP with a
+                // placeholder DisplayVersion (e.g. an unresolved build-template
+                // string left as just ".."), which isn't a real version at all
+                // -- treating it as one shows garbage like "v.." in the UI
+                // instead of falling back to the "unknown version" wording.
+                ok = false;
+                for (const char *p = out; *p; p++) {
+                    if (*p >= '0' && *p <= '9') {
+                        ok = true;
+                        break;
+                    }
+                }
+                if (!ok) {
+                    out[0] = '\0';
+                }
             }
         }
     }
@@ -6163,8 +6182,21 @@ void MainApplication::InvServerPoll() {
     bool push_cooldown =
         this->inv_push_cd_tick != 0 &&
         armTicksToNs(now - this->inv_push_cd_tick) < 3000000000ULL;
-    bool busy = (this->imp_open && httpsrv_receiving(&this->imp_srv, NULL, NULL)) ||
-                recv || queue_io_active() || this->pxt.running || push_cooldown;
+    // httpsrv_receiving only ever sees an upload (a POST body arriving) -- a
+    // download (GET /file, /fs_get) streams OUT via s->src instead, which it
+    // doesn't check at all. Without httpsrv_sending here, a multi-file folder
+    // download over Wi-Fi reads as "idle" in every gap between one file's
+    // response and the next's request, letting the periodic inventory JSON
+    // rebuild below fire mid-download -- its own per-console work then
+    // competes with this same render-thread poll loop for the time it needs
+    // to promptly accept() the next file, showing up as multi-second stalls
+    // between otherwise-fast individual file transfers. imp_srv has the same
+    // gap: HTTPSRV_MODE_EXPORT ("serve the export, refuse uploads") is a pure
+    // outbound GET stream to a browser, so it needs the same sending check.
+    bool busy = (this->imp_open && (httpsrv_receiving(&this->imp_srv, NULL, NULL) ||
+                                     httpsrv_sending(&this->imp_srv))) ||
+                recv || httpsrv_sending(&this->inv_srv) || queue_io_active() ||
+                this->pxt.running || push_cooldown;
     // Only sweep the filesystem to rebuild the JSON while a companion is actually
     // reading it — i.e. it polled inventory.json within the last 15s (the same
     // window the Tools panel calls "connected"; last_inv_ns is stamped on each
@@ -6560,6 +6592,15 @@ void MainApplication::InvBoxartTick() {
     mtp::SetBoxartStatus(st);
 }
 
+// Defined further down (with update_manifest_detect and friends, once
+// detect_match/updman_load_all/collect_nros are declared). Forward-declared
+// here so InvApplyFile's X-Fs-Extract branch below -- and PushExtractTick's
+// completion of it -- can record an installed_tag for a desktop-pushed app
+// update whose companion files were folded into a folder push.
+static bool record_installed_tag(const std::string &dest, const std::string &tag);
+static void record_installed_tag_in_dir(const std::string &dir,
+                                        const std::string &tag);
+
 // A game streamed to the always-on server (app utility › Device Transfer › Send
 // a game, while connected) landed in the inbox as "<name>.part". Finish it into
 // place so the sorter can file it — the same landing spot a USB/MTP drop uses.
@@ -6570,6 +6611,7 @@ void MainApplication::InvApplyFile() {
     std::string app = this->inv_srv.recv_app;
     std::string apath = this->inv_srv.recv_app_path;
     bool new_app = this->inv_srv.recv_app_new;
+    std::string app_tag = this->inv_srv.recv_app_tag;
     std::string folder = this->inv_srv.recv_folder;
     std::string fsdest = this->inv_srv.recv_fs_dest;
     bool fsextract = this->inv_srv.recv_fs_extract;
@@ -6579,6 +6621,7 @@ void MainApplication::InvApplyFile() {
     this->inv_srv.recv_app[0] = '\0';
     this->inv_srv.recv_app_path[0] = '\0';
     this->inv_srv.recv_app_new = false;
+    this->inv_srv.recv_app_tag[0] = '\0';
     this->inv_srv.recv_folder[0] = '\0';
     this->inv_srv.recv_fs_dest[0] = '\0';
     this->inv_srv.recv_fs_extract = false;
@@ -6656,6 +6699,7 @@ void MainApplication::InvApplyFile() {
             this->pxt_name = name;
             this->pxt_target.clear();
             this->pxt_kind = 1; // SD Card tab folder push, not a console game
+            this->pxt_app_tag = app_tag; // usually empty (plain SD Card tab drop)
             this->pxt_cancel = false;
             if (!this->pxt.Start(&MainApplication::PushExtractThread, this)) {
                 // Couldn't spawn: fall back to doing it inline, same as the
@@ -6673,6 +6717,7 @@ void MainApplication::InvApplyFile() {
                 }
                 if (n > 0) {
                     remove(part.c_str());
+                    record_installed_tag_in_dir(fsdest, app_tag);
                     xfer_log("push       PC unpacked %s -> %s (SD Card tab)",
                              name.c_str(), fsdest.c_str());
                 } else {
@@ -6700,7 +6745,7 @@ void MainApplication::InvApplyFile() {
     // X-App-Install. Write it as a new app rather than treating it as an update.
     if (new_app && !apath.empty() && !fs_exists(apath.c_str())) {
         std::string bn = apath.substr(apath.find_last_of('/') + 1);
-        this->InvApplyEmuNroAt(bn, apath, part, true);
+        this->InvApplyEmuNroAt(bn, apath, part, true, app_tag);
         return;
     }
     // An Emulators/Apps-tab update carries its target in X-App-Path (an exact
@@ -6709,11 +6754,11 @@ void MainApplication::InvApplyFile() {
     // place rather than filing the body in the inbox.
     if (!apath.empty() && fs_exists(apath.c_str())) {
         std::string bn = apath.substr(apath.find_last_of('/') + 1);
-        this->InvApplyEmuNroAt(bn, apath, part);
+        this->InvApplyEmuNroAt(bn, apath, part, false, app_tag);
         return;
     }
     if (!app.empty()) {
-        this->InvApplyEmuNro(app, part);
+        this->InvApplyEmuNro(app, part, app_tag);
         return;
     }
     // A Library-tab push (X-Dest-Folder) names the console it came from. Land it
@@ -6851,6 +6896,8 @@ void MainApplication::PushExtractTick() {
         return;
     }
     if (this->pxt_kind == 1) {
+        record_installed_tag_in_dir(this->pxt_dir, this->pxt_app_tag);
+        this->pxt_app_tag.clear();
         xfer_log("push       PC unpacked %s -> %s (SD Card tab)",
                  this->pxt_name.c_str(), this->pxt_dir.c_str());
         return;
@@ -6866,7 +6913,8 @@ void MainApplication::PushExtractTick() {
 // this replaces a third-party app's own file and takes effect immediately — no
 // staging, no restart.
 void MainApplication::InvApplyEmuNro(const std::string &app,
-                                     const std::string &part) {
+                                     const std::string &part,
+                                     const std::string &tag) {
     std::string dest;
     for (const auto &e : list_dir("sdmc:/switch")) {
         if (e.is_dir) {
@@ -6891,7 +6939,7 @@ void MainApplication::InvApplyEmuNro(const std::string &app,
         this->ToastErr(tr(S_EMU_UPD_MISSING));
         return;
     }
-    this->InvApplyEmuNroAt(app, dest, part);
+    this->InvApplyEmuNroAt(app, dest, part, false, tag);
 }
 
 // Overwrite the .nro at `dest` with the freshly-streamed `part`, after proving
@@ -6900,7 +6948,8 @@ void MainApplication::InvApplyEmuNro(const std::string &app,
 // (X-App-Path) route in InvApplyFile.
 void MainApplication::InvApplyEmuNroAt(const std::string &app,
                                        const std::string &dest,
-                                       const std::string &part, bool fresh) {
+                                       const std::string &part, bool fresh,
+                                       const std::string &tag) {
     // Prove the upload is a real NRO before overwriting a working app.
     if (!looks_like_nro(part.c_str())) {
         remove(part.c_str());
@@ -6955,6 +7004,11 @@ void MainApplication::InvApplyEmuNroAt(const std::string &app,
     if (restore) {
         remove(bak.c_str()); // swap succeeded; drop the backup
     }
+    // Durable fallback for a release whose own NACP can never answer "what
+    // version is this" (see app_is_up_to_date's comment) -- a desktop push
+    // carries the tag it resolved this body from (X-App-Tag), same ground
+    // truth UmiTick records for an on-device install/update.
+    record_installed_tag(dest, tag);
     xfer_log(fresh ? "installed  emulator %s -> v%s (%s)"
                    : "updated    emulator %s -> v%s (%s)",
              app.c_str(), ver, dest.c_str());
@@ -7126,6 +7180,40 @@ static void match_installed(const UpdSource &e,
     }
 }
 
+// Whether an installed app should read as up to date against `latest`, given
+// its raw NACP-read version (`ver`, empty when nro_file_version couldn't parse
+// one) and the manifest's own record of the last tag we ourselves installed it
+// to (`installed_tag`, set by UmiTick below). Some releases (2ship2harkinian,
+// Shipwright, and others like them) ship a NACP whose DisplayVersion is a
+// placeholder with no digits at all -- ver is then ALWAYS empty, no matter
+// what's actually installed, which used to make a real check treat the app as
+// permanently behind right after successfully updating it (the session-only
+// appman_just_updated shortcut papers over this only until the next real
+// check, which explicitly drops it -- see AppChkThread's own comment).
+// installed_tag is durable ground truth for exactly that case: we wrote it
+// ourselves the moment we verified and swapped in that exact release.
+// Compared case-insensitively with a leading "v" ignored on either side,
+// since a tag's own "v" prefix isn't guaranteed to round-trip identically.
+static bool app_is_up_to_date(const std::string &ver,
+                              const std::string &installed_tag,
+                              const char *latest) {
+    if (!ver.empty()) {
+        return version_cmp(ver.c_str(), latest) >= 0;
+    }
+    if (installed_tag.empty()) {
+        return false;
+    }
+    const char *a = installed_tag.c_str();
+    const char *b = latest;
+    if (*a == 'v' || *a == 'V') {
+        a++;
+    }
+    if (*b == 'v' || *b == 'V') {
+        b++;
+    }
+    return strcasecmp(a, b) == 0;
+}
+
 // Backups for one app, newest first, as {version-label, full path}.
 static std::vector<NroFile> list_backups(const std::string &id) {
     std::string dir = std::string(BACKUPS_DIR) + "/" + id;
@@ -7161,6 +7249,29 @@ static bool is_safe_asset_name(const std::string &name) {
     }
     return name.find('/') == std::string::npos &&
           name.find('\\') == std::string::npos;
+}
+
+// Copy every file under `src_dir` (recursively) into `dst_dir`, overwriting
+// whatever is already there, except `skip_path` (an absolute path -- the
+// archive's own .nro, which UmiTick installs separately via fs_move so its
+// source bytes are already spent by the time this runs). Some releases (e.g.
+// 2ship2harkinian, Shipwright) ship the .nro alongside asset packs / loader
+// files it needs at runtime in the SAME folder of the zip; installing only
+// the picked .nro used to silently drop those, leaving a build that "updates"
+// successfully but then can't find its own data.
+static void copy_dir_contents(const std::string &src_dir,
+                              const std::string &dst_dir,
+                              const std::string &skip_path) {
+    for (const auto &e : list_dir(src_dir)) {
+        std::string sp = src_dir + "/" + e.name;
+        std::string dp = dst_dir + "/" + e.name;
+        if (e.is_dir) {
+            copy_dir_contents(sp, dp, skip_path);
+        } else if (sp != skip_path) {
+            fs_ensure_parent(dp.c_str());
+            fs_copy_file(sp.c_str(), dp.c_str());
+        }
+    }
 }
 
 // Copy the current build into BACKUPS_DIR/<id>/<ver>.nro, then keep only the two
@@ -7216,11 +7327,15 @@ static int updman_find(const UpdSource *arr, int cnt, const char *id) {
 // name being force-fed new content forever. detect_match/match_installed key
 // entirely off this string, so without updating it here the very next scan
 // would stop recognizing the renamed file as this row and spawn a duplicate
-// "unmanaged" entry under the new name instead. Best-effort: a manifest
-// hiccup here never blocks the update itself, which has already landed.
+// "unmanaged" entry under the new name instead. `tag`, when non-empty, is
+// also recorded as installed_tag in the same load/save round trip -- see
+// app_is_up_to_date's comment for why that field exists. Best-effort: a
+// manifest hiccup here never blocks the update itself, which has already
+// landed.
 static void update_manifest_detect(const std::string &id,
-                                   const std::string &new_name) {
-    if (id.empty() || new_name.empty()) {
+                                   const std::string &new_name,
+                                   const std::string &tag = std::string()) {
+    if (id.empty() || (new_name.empty() && tag.empty())) {
         return;
     }
     int cnt = 0;
@@ -7230,13 +7345,139 @@ static void update_manifest_detect(const std::string &id,
     }
     int i = updman_find(all, cnt, id.c_str());
     if (i >= 0) {
-        snprintf(all[i].detect, sizeof(all[i].detect), "%s", new_name.c_str());
+        if (!new_name.empty()) {
+            snprintf(all[i].detect, sizeof(all[i].detect), "%s", new_name.c_str());
+        }
+        if (!tag.empty()) {
+            snprintf(all[i].installed_tag, sizeof(all[i].installed_tag), "%s",
+                     tag.c_str());
+        }
         updman_save(all, cnt);
     }
     free(all);
 }
 
 } // namespace
+
+// Find the manifest row whose detect string matches dest's basename and
+// record `tag` as its installed_tag -- the desktop-push counterpart to
+// UmiTick's own on-device install recording it directly by id. A desktop push
+// only ever gives us the installed *path*, not the manifest id, so resolve it
+// the same way match_installed itself would (detect_match against the file
+// name) rather than needing the id threaded through wifi_push too. Best-
+// effort and silent on any miss: an unmatched dest (a plain app push with no
+// manifest row at all) is the common case, not an error.
+static bool record_installed_tag(const std::string &dest, const std::string &tag) {
+    if (dest.empty() || tag.empty()) {
+        return false;
+    }
+    std::string bn = dest.substr(dest.find_last_of('/') + 1);
+    int cnt = 0;
+    UpdSource *all = updman_load_all(&cnt);
+    if (!all) {
+        return false;
+    }
+    bool matched = false;
+    for (int i = 0; i < cnt; i++) {
+        if (detect_match(all[i].detect, bn)) {
+            snprintf(all[i].installed_tag, sizeof(all[i].installed_tag), "%s",
+                     tag.c_str());
+            updman_save(all, cnt);
+            matched = true;
+            break;
+        }
+    }
+    free(all);
+    return matched;
+}
+
+// Folder-push counterpart: `dir` is an install DIRECTORY (X-Fs-Extract landed
+// several files there, not one named file), so the plain basename match above
+// can't work -- try it against every .nro that landed inside instead, since
+// that's what the manifest's detect tokens actually name. Covers the desktop
+// "fold companion files into a zip, push via fsPath+fsExtract" update path
+// (see index.html's updateApp), which otherwise drops installed_tag entirely
+// even though the plain single-.nro push path already records it.
+static void record_installed_tag_in_dir(const std::string &dir,
+                                        const std::string &tag) {
+    if (dir.empty() || tag.empty()) {
+        return;
+    }
+    std::vector<NroFile> nros;
+    collect_nros(dir, 2, nros);
+    for (auto &n : nros) {
+        if (record_installed_tag(n.path, tag)) {
+            return;
+        }
+    }
+}
+
+// Desktop companion, view-only: write BACKUPS_JSON_PATH, one row per app
+// under BACKUPS_DIR that has any kept builds -- {id, name, versions:[{ver,
+// size}]}, newest first per app (list_backups' own order). Declared in
+// config.h with C linkage so httpsrv.c and mtp/responder.cpp can call it the
+// same way they already call diag_bundle_write; no restore path exists here
+// on purpose -- rolling back stays a Switch-menu action (AppRevert), this
+// just lets the desktop show what's available.
+extern "C" bool app_backups_write_json(const char *path) {
+    FILE *f = fopen(path, "wb");
+    if (!f) {
+        return false;
+    }
+    int cnt = 0;
+    UpdSource *all = updman_load_all(&cnt);
+    fputs("{\"apps\":[", f);
+    bool first = true;
+    for (const auto &d : list_dir(BACKUPS_DIR)) {
+        if (!d.is_dir) {
+            continue;
+        }
+        auto baks = list_backups(d.name);
+        if (baks.empty()) {
+            continue;
+        }
+        const char *name = d.name.c_str();
+        const char *detect = "";
+        for (int i = 0; all && i < cnt; i++) {
+            if (strcasecmp(all[i].id, d.name.c_str()) == 0) {
+                name = all[i].name;
+                detect = all[i].detect;
+                break;
+            }
+        }
+        fputs(first ? "\n  {\"id\": " : ",\n  {\"id\": ", f);
+        first = false;
+        json_write_escaped(f, d.name.c_str());
+        fputs(", \"name\": ", f);
+        json_write_escaped(f, name);
+        // Apps tab rows aren't keyed by manifest id client-side (only Emulators
+        // rows are) -- carry the same detect tokens record_installed_tag
+        // matches against so the desktop can associate a backup with a .nro
+        // filename the same way this file already does.
+        fputs(", \"detect\": ", f);
+        json_write_escaped(f, detect);
+        fputs(", \"versions\": [", f);
+        bool vfirst = true;
+        for (const auto &b : baks) {
+            std::string ver = b.name;
+            if (is_nro_name(ver)) {
+                ver = ver.substr(0, ver.size() - 4);
+            }
+            struct stat sb;
+            long long sz =
+                (stat(b.path.c_str(), &sb) == 0) ? (long long)sb.st_size : 0;
+            fputs(vfirst ? "{\"ver\": " : ", {\"ver\": ", f);
+            vfirst = false;
+            json_write_escaped(f, ver.c_str());
+            fprintf(f, ", \"size\": %lld}", sz);
+        }
+        fputs("]}", f);
+    }
+    fputs(first ? "]}" : "\n]}", f);
+    free(all);
+    fclose(f);
+    return true;
+}
 
 // A pushed .nro can arrive zipped (or in any archive extract_archive/RAR3
 // read) instead of raw -- e.g. a build zipped on the PC before the transfer.
@@ -7472,13 +7713,19 @@ void MainApplication::UmiTick(int j) {
     // plain .nro. Empty means "keep dest's existing name" (the ordinary case:
     // almost every app ships the same asset/file name release after release).
     std::string desired_name;
+    // Set only for job.zip: the archive-relative folder the picked .nro was
+    // found in (e.g. "switch/2Ship-Keiichi-Alfa-NX"), so any sibling files in
+    // that same folder can be installed alongside it below. Empty means the
+    // .nro sat at the archive root with nothing beside it.
+    std::string nro_rel_dir;
+    std::string nro_path;
     if (job.zip) {
         exdir = std::string(DL_TMP_DIR) + "/appupd_x" + std::to_string(j);
         fs_rm_rf(exdir.c_str()); // clear any stale extraction
         int nfiles = extract_archive(part.c_str(), exdir.c_str(), NULL, NULL,
                                      NULL);
         remove(part.c_str()); // the downloaded archive is no longer needed
-        std::string nro_path, rel;
+        std::string rel;
         if (nfiles <= 0 || !find_nro_in_dir(exdir, nro_path, rel)) {
             fs_rm_rf(exdir.c_str());
             xfer_log("FAILED     %s %s: no .nro inside the release archive",
@@ -7490,6 +7737,9 @@ void MainApplication::UmiTick(int j) {
         part = nro_path; // install the extracted .nro
         size_t rs = rel.find_last_of('/');
         std::string zip_name = (rs == std::string::npos) ? rel : rel.substr(rs + 1);
+        if (rs != std::string::npos) {
+            nro_rel_dir = rel.substr(0, rs);
+        }
         if (is_safe_asset_name(zip_name)) {
             desired_name = zip_name;
         }
@@ -7523,6 +7773,21 @@ void MainApplication::UmiTick(int j) {
         queue_ext_finish(job.xslot, false, "err");
         job.xslot = -1;
         return;
+    }
+    // Companion files: a release that packs the .nro alongside asset packs /
+    // loader files in the same archive folder needs all of them installed
+    // together, not just the .nro fs_move handles below. dest's directory is
+    // already final here for both a fresh install (set above from the
+    // archive's own switch/ layout) and an update (job.dest's existing
+    // folder) -- a later rename only changes dest's file name, not its
+    // directory. Best-effort: a missing/unreadable companion never blocks the
+    // .nro install itself.
+    if (job.zip && !exdir.empty()) {
+        std::string src_dir = nro_rel_dir.empty() ? exdir : (exdir + "/" + nro_rel_dir);
+        std::string dest_dir = dest.substr(0, dest.find_last_of('/'));
+        if (!dest_dir.empty()) {
+            copy_dir_contents(src_dir, dest_dir, nro_path);
+        }
     }
     // An update (never a fresh install, which already names its own dest
     // above) whose release names its file differently than what's currently
@@ -7580,10 +7845,14 @@ void MainApplication::UmiTick(int j) {
     }
     if (renaming) {
         remove(old_dest.c_str()); // superseded by dest under the new name
-        update_manifest_detect(job.id, desired_name);
         xfer_log("renamed    %s -> %s (release file name changed)",
                  old_dest.c_str(), dest.c_str());
     }
+    // Record the tag we just verified and installed regardless of whether the
+    // file got renamed -- app_is_up_to_date's durable fallback for a release
+    // whose NACP never carries a real (digit-containing) version string.
+    update_manifest_detect(job.id, renaming ? desired_name : std::string(),
+                           job.tag);
     if (!exdir.empty()) {
         fs_rm_rf(exdir.c_str()); // drop the rest of the unpacked archive
     }
@@ -7960,10 +8229,16 @@ bool MainApplication::AppEntryMenu(size_t idx) {
         opts.push_back(tr(S_APPMAN_INSTALL_CHECK));
         acts.push_back(5);
     }
-    // Always offer an explicit release check (this is the version check that used
-    // to run automatically on open).
-    opts.push_back(tr(S_APPMAN_CHECK_UPDATES));
-    acts.push_back(4);
+    // Offer an explicit release check (this is the version check that used to
+    // run automatically on open) -- only when there's something installed to
+    // check a version against. A not-installed entry has no installed
+    // version to compare, so "Check for updates" would just silently re-do
+    // the same release lookup "Install..."/"Install vX" above already does
+    // inline; showing it here would be a redundant, confusing option.
+    if (installed) {
+        opts.push_back(tr(S_APPMAN_CHECK_UPDATES));
+        acts.push_back(4);
+    }
     if (!list_backups(e.id).empty()) {
         opts.push_back(tr(S_APPMAN_REVERT));
         acts.push_back(2);
@@ -8136,8 +8411,10 @@ void MainApplication::GotoAppUpdates(uint8_t kind) {
     if (this->appman_kind != kind) {
         // Switching sections (Emulators <-> Apps, which used to mean picking
         // a different hub row and always landed on row 0): don't carry over a
-        // scroll position that belonged to the other, differently-sized list.
+        // scroll position -- or a search filter -- that belonged to the
+        // other, differently-sized list.
         this->appman_sel = 0;
+        this->appman_search.clear();
     }
     this->appman_kind = kind;
     this->appchk_net = false; // open = local versions only, no network
@@ -8171,7 +8448,15 @@ void MainApplication::AppScanAll() {
         this->appchk_cancel = true;
         this->appchk.Join();
     }
-    this->appman_sel = this->layout->Sel(); // keep the cursor where it was
+    // Keep the cursor on the same entry: Sel() is a row position (a search
+    // filter can make that differ from a real appman_list index), so it has
+    // to go through appman_visible -- see the Screen::AppUpdates input case.
+    {
+        s32 row = this->layout->Sel();
+        if (row >= 0 && (size_t)row < this->appman_visible.size()) {
+            this->appman_sel = (s32)this->appman_visible[row];
+        }
+    }
     this->appchk_net = true;
     char sub0[128];
     snprintf(sub0, sizeof(sub0), "%s   %s", tr(S_APPMAN_CHECKING),
@@ -8183,7 +8468,12 @@ void MainApplication::AppScanAll() {
     this->appchk_idx = 0;
     this->appchk_total = 0;
     if (!this->appchk.Start(&MainApplication::AppChkThread, this)) {
+        // Couldn't spawn a thread: ran inline above, so mirror AppChkTick's
+        // own completion steps here too (sort the fresh results) instead of
+        // skipping them on this fallback.
         AppChkThread(this);
+        this->appchk.Join(); // no-op (never started), but matches AppChkTick's shape
+        this->AppSortList();
         this->AppUpdatesRender();
     }
 }
@@ -8290,10 +8580,10 @@ void MainApplication::AppChkThread(void *arg) {
                     if (self->appman_just_updated.count(list[i].id)) {
                         state[i] = APST_UPTODATE;
                     } else {
-                        int cmp = ver[i].empty()
-                                      ? -1
-                                      : version_cmp(ver[i].c_str(), latest[i].c_str());
-                        state[i] = (cmp < 0) ? APST_UPDATE : APST_UPTODATE;
+                        state[i] = app_is_up_to_date(ver[i], list[i].installed_tag,
+                                                     latest[i].c_str())
+                                       ? APST_UPTODATE
+                                       : APST_UPDATE;
                     }
                 }
             }
@@ -8389,8 +8679,9 @@ void MainApplication::AppChkThread(void *arg) {
                     // entry menu's "Install vX" option can offer it.
                     state[i] = APST_NOTINST;
                 } else {
-                    int cmp = ver[i].empty() ? -1 : version_cmp(ver[i].c_str(), tag);
-                    state[i] = (cmp < 0) ? APST_UPDATE : APST_UPTODATE;
+                    state[i] = app_is_up_to_date(ver[i], list[i].installed_tag, tag)
+                                   ? APST_UPTODATE
+                                   : APST_UPDATE;
                 }
                 self->appman_checked_at[list[i].id] = (uint64_t)time(NULL);
                 stamped = true;
@@ -8418,6 +8709,70 @@ void MainApplication::AppChkThread(void *arg) {
     self->appchk.done = true;
 }
 
+// Permute a parallel appman_* vector into `order` (order[i] names which old
+// index now belongs at row i) -- shared by every vector AppSortList reorders,
+// so they can't drift out of alignment with each other.
+template <typename T>
+static void apply_order(std::vector<T> &v, const std::vector<size_t> &order) {
+    std::vector<T> out;
+    out.reserve(order.size());
+    for (size_t i : order) {
+        out.push_back(std::move(v[i]));
+    }
+    v = std::move(out);
+}
+
+// Reorders appman_list/state/ver/ipath/latest/url/asset together by
+// appman_sort (Minus on Screen::AppUpdates cycles it), keeping the currently
+// selected entry selected across the reorder by id rather than snapping to
+// whatever row now sits at the old index. AppChkThread already sorts
+// alphabetically before publishing, so a stable sort on top of that keeps
+// ties reading alphabetically within each bucket -- "updates first" doesn't
+// scramble the updates themselves.
+void MainApplication::AppSortList() {
+    size_t n = this->appman_list.size();
+    if (n < 2) {
+        return;
+    }
+    std::string keep_id;
+    if (this->appman_sel >= 0 && (size_t)this->appman_sel < n) {
+        keep_id = this->appman_list[this->appman_sel].id;
+    }
+    std::vector<size_t> order(n);
+    for (size_t i = 0; i < n; i++) {
+        order[i] = i;
+    }
+    if (this->appman_sort != 0) {
+        int sort_mode = this->appman_sort;
+        const auto &state = this->appman_state;
+        auto bucket = [sort_mode](int8_t st) -> int {
+            if (sort_mode == 1) { // updates first
+                return (st == APST_UPDATE) ? 0 : 1;
+            }
+            return (st == APST_NOTINST) ? 1 : 0; // installed first
+        };
+        std::stable_sort(order.begin(), order.end(),
+                         [&](size_t a, size_t b) {
+                             return bucket(state[a]) < bucket(state[b]);
+                         });
+    }
+    apply_order(this->appman_list, order);
+    apply_order(this->appman_state, order);
+    apply_order(this->appman_ver, order);
+    apply_order(this->appman_ipath, order);
+    apply_order(this->appman_latest, order);
+    apply_order(this->appman_url, order);
+    apply_order(this->appman_asset, order);
+    if (!keep_id.empty()) {
+        for (size_t i = 0; i < n; i++) {
+            if (keep_id == this->appman_list[i].id) {
+                this->appman_sel = (s32)i;
+                break;
+            }
+        }
+    }
+}
+
 // Per-frame while the check runs: show (n/total) progress under the spinner;
 // build the list once it lands.
 void MainApplication::AppChkTick() {
@@ -8433,6 +8788,7 @@ void MainApplication::AppChkTick() {
     }
     this->appchk.Join();
     this->layout->HideSpinner();
+    this->AppSortList();
     this->AppUpdatesRender();
 }
 
@@ -8522,6 +8878,9 @@ static const EmuSystems kEmuSystems[] = {
     {"fceumm", {"nes"}, 1},
     {"sms-plus-gx", {"master-system"}, 1},
     {"snes9x2010", {"snes"}, 1},
+    {"ppsspp-nx", {"psp"}, 1},
+    {"freej2me", {"j2me"}, 1},
+    {"dsmile", {"v-smile"}, 1},
 };
 static const EmuSystems *emu_systems_find(const char *id) {
     for (size_t i = 0; i < sizeof(kEmuSystems) / sizeof(kEmuSystems[0]); i++) {
@@ -8532,11 +8891,55 @@ static const EmuSystems *emu_systems_find(const char *id) {
     return NULL;
 }
 
+// Lowercase alphanumerics only, minus a trailing "nro" -- so a hand-added row
+// named "ARMSX2-NX" or detected by "armsx2nx.nro" normalizes to the same
+// "armsx2nx" as the bundled id.
+static void emu_norm(const char *in, char *out, size_t n) {
+    size_t j = 0;
+    for (; *in && j + 1 < n; in++) {
+        if (isalnum((unsigned char)*in)) {
+            out[j++] = (char)tolower((unsigned char)*in);
+        }
+    }
+    out[j] = 0;
+    if (j > 3 && strcmp(out + j - 3, "nro") == 0) {
+        out[j - 3] = 0;
+    }
+}
+// Like emu_systems_find(id) but also recognizes an entry that isn't under the
+// bundled id -- e.g. a user's own "Add manually" row for the same emulator --
+// by its name or a detect token, so it still gets its console + icon.
+static const EmuSystems *emu_systems_for(const UpdSource &e) {
+    if (const EmuSystems *s = emu_systems_find(e.id)) {
+        return s;
+    }
+    char keys[8][64];
+    int nk = 0;
+    emu_norm(e.name, keys[nk++], sizeof(keys[0]));
+    char dbuf[128];
+    snprintf(dbuf, sizeof(dbuf), "%s", e.detect);
+    char *save = NULL;
+    for (char *tok = strtok_r(dbuf, ",", &save); tok && nk < 8;
+         tok = strtok_r(NULL, ",", &save)) {
+        emu_norm(tok, keys[nk++], sizeof(keys[0]));
+    }
+    for (size_t i = 0; i < sizeof(kEmuSystems) / sizeof(kEmuSystems[0]); i++) {
+        char tid[64];
+        emu_norm(kEmuSystems[i].id, tid, sizeof(tid));
+        for (int k = 0; k < nk; k++) {
+            if (keys[k][0] && strcmp(keys[k], tid) == 0) {
+                return &kEmuSystems[i];
+            }
+        }
+    }
+    return NULL;
+}
+
 // console_icon() only falls back to its "default" badge for an unrecognized
 // non-empty key, not a NULL one -- this names it explicitly for a 0- or 2+-
 // system entry, same as an id the table above doesn't recognize at all.
-static const char *emu_console_icon_slug(const char *id) {
-    const EmuSystems *e = emu_systems_find(id);
+static const char *emu_console_icon_slug(const UpdSource &src) {
+    const EmuSystems *e = emu_systems_for(src);
     return (e && e->count == 1) ? e->slugs[0] : "default";
 }
 
@@ -8565,6 +8968,7 @@ static const char *console_short_name(const char *slug) {
         {"game-and-watch", "G&W"}, {"zx-spectrum", "ZX Spectrum"},
         {"amiga", "Amiga"},       {"master-system", "Master System"},
         {"fbneo", "FBNeo"},       {"neo-geo", "Neo Geo"},
+        {"j2me", "J2ME"},         {"v-smile", "V.Smile"},
     };
     for (size_t i = 0; i < sizeof(map) / sizeof(map[0]); i++) {
         if (strcasecmp(slug, map[i].slug) == 0) {
@@ -8578,8 +8982,8 @@ static const char *console_short_name(const char *slug) {
 // system emulator, "Name, Name[, Name]" for two or three (e.g. mGBA's "GBA,
 // GB, GBC"), or "Multi" for an id with no entry at all -- a genuine multi-
 // system frontend (RetroArch, Lakka) or a manager not tied to one console.
-static std::string emu_console_label(const char *id) {
-    const EmuSystems *e = emu_systems_find(id);
+static std::string emu_console_label(const UpdSource &src) {
+    const EmuSystems *e = emu_systems_for(src);
     if (!e) {
         return tr(S_APPMAN_MULTI_SYS);
     }
@@ -8598,16 +9002,41 @@ void MainApplication::AppUpdatesRender() {
     bool is_emu = (this->appman_kind == UPD_KIND_EMU);
     // Emulators is a top-level tab root (no B-back, tabs are on L/R) while
     // Apps was opened from Settings (B does go back) -- the footer hint has
-    // to match which one this is.
-    this->layout->SetSubtitle(tr(is_emu ? S_APPMAN_LIST_HINT_EMU
-                                        : S_APPMAN_LIST_HINT));
+    // to match which one this is. While a search filter is active, both
+    // share one hint instead (B's meaning is the same either way -- clear
+    // the search, see the Screen::AppUpdates input case): it used to append
+    // the raw query on a second line, but that -- on top of an already-tight
+    // footer -- could push it into wrapping onto a third line depending on
+    // how long a query someone typed. The active term is still visible in
+    // the Tools menu's own Search row and in the filtered list itself, so
+    // the footer doesn't need to repeat it.
+    std::string sub = !this->appman_search.empty()
+        ? tr(S_APPMAN_LIST_HINT_SEARCH)
+        : tr(is_emu ? S_APPMAN_LIST_HINT_EMU : S_APPMAN_LIST_HINT);
+    this->layout->SetSubtitle(sub);
     this->layout->ClearMenu();
-    // Apps with nothing installed is a genuine empty state (there's nothing on
-    // the card to manage). Emulators always has the bundled catalogue rows
-    // plus the trailing "Add manually" action below, so it's never truly empty.
-    if (this->appman_list.empty() && !is_emu) {
-        this->layout->SetEmptyState(console_icon("default"), tr(S_APPMAN_EMPTY),
-                                    "");
+    // Which appman_list indices are actually shown, in order -- every input
+    // handler below reads a row position off the list and must go through
+    // appman_visible[row] to get back a real appman_list index, since a
+    // search filter makes row position and list index diverge.
+    this->appman_visible.clear();
+    for (size_t i = 0; i < this->appman_list.size(); i++) {
+        if (this->appman_search.empty() ||
+            ci_contains(this->appman_list[i].name, this->appman_search.c_str())) {
+            this->appman_visible.push_back(i);
+        }
+    }
+    // Nothing installed (Apps) or nothing matching an active search (either
+    // kind) is a genuine empty state -- there's nothing on the screen to
+    // manage or act on. Emulators used to keep a trailing "Add manually"
+    // action rendering here specifically so a search for an uncatalogued
+    // emulator still had somewhere to go; that action now lives in the
+    // Tools menu (Y, reachable regardless of what's on screen), so this can
+    // early-return for both kinds again.
+    if (this->appman_visible.empty()) {
+        this->layout->SetEmptyState(
+            console_icon("default"),
+            tr(this->appman_list.empty() ? S_APPMAN_EMPTY : S_EMPTY), "");
         return;
     }
     // Card view is Emulators-only (Apps has no per-entry console to show a
@@ -8621,7 +9050,7 @@ void MainApplication::AppUpdatesRender() {
         this->layout->SetCardPoster(true);
     }
     pu::ui::Color lbl = g_theme->row_text;
-    for (size_t i = 0; i < this->appman_list.size(); i++) {
+    for (size_t i : this->appman_visible) {
         const auto &e = this->appman_list[i];
         int8_t st = (i < this->appman_state.size()) ? this->appman_state[i]
                                                      : (int8_t)APST_NOTINST;
@@ -8687,7 +9116,11 @@ void MainApplication::AppUpdatesRender() {
             break;
         case APST_RATELIMIT:
             tag = tr(S_APPMAN_RATE_LIMITED);
-            clr = attention_color();
+            // Was attention_color() -- the same amber a genuine update pill
+            // uses, so a rate-limited row after a big check (very reachable
+            // against GitHub's unauthenticated limit on a 40+-entry catalogue)
+            // could look exactly like one that actually had something new.
+            clr = warn_red();
             break;
         case APST_OFFLINE:
             tag = tr(S_APPMAN_OFFLINE);
@@ -8699,9 +9132,6 @@ void MainApplication::AppUpdatesRender() {
             break;
         }
         if (cards) {
-            // No colour-coded pill in card view (plain AddCard has no per-card
-            // subtitle colour, matching every other card screen) -- the state
-            // text alone still carries "Update to X" / "Up to date" / etc.
             // console_display_icon swaps in that console's own SteamGridDB
             // cover when the user opted in (Manage Consoles > box art) and box
             // art is on globally -- same helper/fallback chain Home's own
@@ -8709,39 +9139,73 @@ void MainApplication::AppUpdatesRender() {
             // multi-system entry ("default" slug) same as before.
             bool is_art = false;
             pu::sdl2::Texture ic =
-                console_display_icon(emu_console_icon_slug(e.id), &is_art);
+                console_display_icon(emu_console_icon_slug(e), &is_art);
+            // A status dot restores the at-a-glance signal list view's
+            // colored pill gives (plain AddCard has no per-card subtitle
+            // colour) -- only for states actually worth a second look; up to
+            // date/not installed/unchecked are the routine majority and stay
+            // dot-free. badge_ring rings the icon for an entry with no single
+            // console of its own (a real multi-system frontend, or one the
+            // table below doesn't recognize), so it isn't mistaken for a
+            // real single-console icon at a glance.
+            // A border (plus, for a genuine update, a top banner naming it)
+            // restores the at-a-glance signal list view's colored pill gives
+            // -- plain AddCard has no per-card subtitle colour. Rate-limited
+            // and unreachable/offline all get the SAME border colour as each
+            // other (not attention_color(), which is reserved for a genuine
+            // update) -- they used to share attention_color() with a real
+            // update, so a rate-limited entry after a big bulk check could
+            // look exactly like one that actually had something new.
+            pu::ui::Color flag_clr(0, 0, 0, 0);
+            std::string flag_text;
+            if (st == APST_UPDATE) {
+                flag_clr = attention_color();
+                flag_text = tr(S_APPMAN_UPDATE_AVAILABLE);
+            } else if (st == APST_ERR || st == APST_OFFLINE ||
+                      st == APST_RATELIMIT) {
+                flag_clr = warn_red();
+            }
+            bool badge_ring = !emu_systems_for(e);
             this->layout->AddCard(std::string(e.name), tag, ic, false, false,
-                                  is_art, emu_console_label(e.id));
-        } else {
+                                  is_art, emu_console_label(e), badge_ring,
+                                  flag_clr, flag_text);
+        } else if (is_emu) {
             // Same per-console icon (box art when opted in, else the stock
             // badge) as card view above -- this used to hardcode "default"
             // for every row regardless of console. The "Name (Console)"
             // suffix mirrors card view's own console label (emu_console_label)
-            // so the two views read the same for a given entry.
+            // so the two views read the same for a given entry. Apps have no
+            // console at all -- see the plain AddRow2 below -- so this whole
+            // branch is Emulators-only.
             std::string row_name =
-                std::string(e.name) + " (" + emu_console_label(e.id) + ")";
+                std::string(e.name) + " (" + emu_console_label(e) + ")";
             this->layout->AddRow2(
                 row_name, tag, lbl, clr, -1.0f,
-                console_display_icon(emu_console_icon_slug(e.id)), "", false,
+                console_display_icon(emu_console_icon_slug(e)), "", false,
                 pill);
-        }
-    }
-    s32 row_count = (s32)this->appman_list.size();
-    if (is_emu) {
-        // Trailing action: register an emulator the bundled catalogue doesn't
-        // know about -- pick its .nro, then set a GitHub repo for it.
-        if (cards) {
-            this->layout->AddCard(tr(S_APPMAN_ADD_MANUAL), "", nullptr, false);
         } else {
-            this->layout->AddRow2(tr(S_APPMAN_ADD_MANUAL), CHEVRON, lbl,
-                                  chevron_color(), -1.0f, nullptr, "", false, false);
+            this->layout->AddRow2(std::string(e.name), tag, lbl, clr, -1.0f,
+                                  console_icon("default"), "", false, pill);
         }
-        row_count++;
     }
+    // "Add manually" (register an emulator the bundled catalogue doesn't
+    // know about) used to be a trailing action row here; it now lives in the
+    // Tools menu (Y > AppToolsMenu, Emulators only) instead, reachable
+    // regardless of what's on screen rather than tied to the end of the list.
+    s32 row_count = (s32)this->appman_visible.size();
     if (cards) {
         this->layout->SetCardsMode(true);
     }
-    s32 sel = this->appman_sel;
+    // appman_sel is a real appman_list index (see its declaration) -- find
+    // where that entry landed among the currently-visible rows so a filtered
+    // view still lands the cursor on the same entry instead of row 0.
+    s32 sel = 0;
+    for (size_t r = 0; r < this->appman_visible.size(); r++) {
+        if (this->appman_visible[r] == (size_t)this->appman_sel) {
+            sel = (s32)r;
+            break;
+        }
+    }
     if (sel >= row_count) {
         sel = row_count - 1;
     }
@@ -8749,6 +9213,198 @@ void MainApplication::AppUpdatesRender() {
         sel = 0;
     }
     this->layout->SetSel(sel);
+}
+
+// "Update all" in the Tools menu (Y > AppToolsMenu): meant to be reached
+// after a Check-all (X or the menu's own Check-all row) has actually found
+// something -- there's no dedicated button for it (B/X/Y/A were already
+// spoken for on this screen, and Plus/L/R turned out to be handled globally
+// before the per-screen input switch ever runs, so binding it directly to a
+// button never actually fires -- see the Tools-menu comment for the full
+// story). Confirms, then queues every entry that's installed, sourced, and
+// has a cached release newer than what's on the SD card -- the exact same
+// condition AppEntryMenu's own "Update to X" option checks (see
+// have_release/cmp there), just for every row at once instead of one at a
+// time. A fresh (not-yet-installed) release is deliberately excluded -- this
+// is "catch me up", not "install everything in the catalogue".
+void MainApplication::AppUpdateAll() {
+    int n = 0;
+    for (size_t i = 0; i < this->appman_list.size(); i++) {
+        if (this->appman_state[i] == APST_UPDATE &&
+            !this->appman_ipath[i].empty() && !this->appman_url[i].empty()) {
+            n++;
+        }
+    }
+    if (n == 0) {
+        this->Toast(tr(S_APPMAN_UPDATE_ALL_NONE));
+        return;
+    }
+    char msg[128];
+    snprintf(msg, sizeof(msg), tr(S_APPMAN_UPDATE_ALL_CONFIRM), n);
+    if (!this->Confirm(tr(S_APPMAN_UPDATE_ALL), msg)) {
+        return;
+    }
+    this->appman_bulk_pending.clear();
+    for (size_t i = 0; i < this->appman_list.size(); i++) {
+        if (this->appman_state[i] == APST_UPDATE &&
+            !this->appman_ipath[i].empty() && !this->appman_url[i].empty()) {
+            this->appman_bulk_pending.push_back(this->appman_list[i].id);
+        }
+    }
+    this->AppBulkPump();
+}
+
+// Starts queued bulk updates (see AppUpdateAll) into every currently-free
+// UmiJob slot -- called once right after queuing, then again from PollXfers
+// each time a slot frees up, so a queue bigger than UMI_MAX drains over time
+// instead of the excess silently never starting. Looks each id back up in
+// appman_list by id rather than storing indices, since a recheck or resort
+// (the Tools menu's Sort row) between pumps could have moved or invalidated it.
+void MainApplication::AppBulkPump() {
+    while (!this->appman_bulk_pending.empty()) {
+        int slot = -1;
+        for (int j = 0; j < UMI_MAX; j++) {
+            if (!this->umi_jobs[j].task.running) {
+                slot = j;
+                break;
+            }
+        }
+        if (slot < 0) {
+            break; // all slots busy -- PollXfers calls this again once one frees
+        }
+        std::string id = this->appman_bulk_pending.front();
+        this->appman_bulk_pending.erase(this->appman_bulk_pending.begin());
+        size_t idx = SIZE_MAX;
+        for (size_t i = 0; i < this->appman_list.size(); i++) {
+            if (id == this->appman_list[i].id) {
+                idx = i;
+                break;
+            }
+        }
+        // Skip rather than abort the whole queue: a recheck/revert/source
+        // change between pumps can legitimately make one entry stale (no
+        // longer an update, or gone from the list) without invalidating the
+        // rest of the batch.
+        if (idx == SIZE_MAX || this->appman_state[idx] != APST_UPDATE ||
+            this->appman_url[idx].empty()) {
+            continue;
+        }
+        this->UmiStart(this->appman_list[idx], this->appman_url[idx],
+                       this->appman_latest[idx], this->appman_ipath[idx],
+                       this->appman_ver[idx], false, this->appman_asset[idx]);
+    }
+}
+
+// Y on Screen::AppUpdates: list-level actions, as opposed to A's per-entry
+// menu -- sort, check all, update all, search, and (Emulators only) add
+// manually. Opens from the right like every other Tools panel (see the
+// global ToolsMenu). Used to be four separate hardware bindings (Minus for
+// sort, X for check-all, Y for a single-entry recheck redundant with A's own
+// menu, and a Plus binding for update-all that turned out to be dead code --
+// Plus is caught globally before the per-screen input switch ever runs) --
+// folding them into one menu is what actually made room for Search, which
+// had nowhere left to go. Rows are appended (not fixed slots) because two of
+// them are conditional -- Update all only when there's something to update,
+// Clear search only while a filter is active -- so each row's menu index is
+// captured as it's pushed instead of hardcoded, the same pattern search's
+// own Clear row already used before this rewrite.
+void MainApplication::AppToolsMenu() {
+    bool is_emu = (this->appman_kind == UPD_KIND_EMU);
+    const char *sort_label = this->appman_sort == 1 ? tr(S_APPMAN_TOOLS_SORT_UPDATES)
+                             : this->appman_sort == 2 ? tr(S_APPMAN_TOOLS_SORT_INSTALLED)
+                                                      : tr(S_APPMAN_TOOLS_SORT_NAME);
+    char sort_row[96];
+    snprintf(sort_row, sizeof(sort_row), "%s: %s", tr(S_SORT), sort_label);
+    std::string search_row = this->appman_search.empty()
+        ? std::string(tr(S_APPMAN_SEARCH))
+        : std::string(tr(S_APPMAN_SEARCH)) + ": " + this->appman_search;
+
+    // Update all only makes sense once a check has actually run (no row is
+    // still sitting at the pre-check APST_UNCHECKED default) AND that check
+    // found something -- otherwise it's offering an action that can only
+    // ever respond "nothing to do", so leave it out of the menu entirely
+    // rather than show a row that always no-ops.
+    bool has_unchecked = false, has_update = false;
+    for (int8_t st : this->appman_state) {
+        if (st == APST_UNCHECKED) {
+            has_unchecked = true;
+        } else if (st == APST_UPDATE) {
+            has_update = true;
+        }
+    }
+    bool can_update_all = !this->appman_state.empty() && !has_unchecked && has_update;
+    bool has_clear = !this->appman_search.empty();
+
+    std::vector<std::string> opts;
+    int idx_sort = (int)opts.size();
+    opts.push_back(sort_row);
+    int idx_check = (int)opts.size();
+    opts.push_back(tr(S_APPMAN_TOOLS_CHECK_ALL));
+    int idx_update_all = -1;
+    if (can_update_all) {
+        idx_update_all = (int)opts.size();
+        opts.push_back(tr(S_APPMAN_UPDATE_ALL));
+    }
+    int idx_search = (int)opts.size();
+    opts.push_back(search_row);
+    int idx_clear = -1;
+    if (has_clear) {
+        idx_clear = (int)opts.size();
+        opts.push_back(tr(S_APPMAN_SEARCH_CLEAR));
+    }
+    int idx_add_manual = -1;
+    if (is_emu) {
+        idx_add_manual = (int)opts.size();
+        opts.push_back(tr(S_APPMAN_ADD_MANUAL));
+    }
+
+    // The entry currently selected (a real appman_list index, not a row
+    // position -- see appman_sel's declaration), captured before the menu
+    // opens: Sort and Search both need it afterward so the same entry stays
+    // selected through a resort/refilter instead of snapping to row 0.
+    s32 row = this->layout->Sel();
+    size_t cur_idx = (row >= 0 && (size_t)row < this->appman_visible.size())
+                        ? this->appman_visible[row] : 0;
+
+    int r = this->SideMenu(tr(S_TOOLS), opts, 0, "", false, /*from_left=*/false,
+                           console_icon("default"), nullptr, 0);
+    if (r == idx_sort) { // Sort: an explicit 3-way pick (not a blind cycle) so
+                          // the menu always shows which modes exist, not just
+                          // whichever is active.
+        int cr = this->CreateShowDialog(
+            tr(S_SORT), "",
+            {tr(S_APPMAN_TOOLS_SORT_NAME), tr(S_APPMAN_TOOLS_SORT_UPDATES),
+             tr(S_APPMAN_TOOLS_SORT_INSTALLED), tr(S_CANCEL)},
+            true, {}, style_dialog);
+        if (cr == 0 || cr == 1 || cr == 2) {
+            this->appman_sort = cr;
+            this->appman_sel = (s32)cur_idx;
+            this->AppSortList();
+            this->AppUpdatesRender();
+        }
+    } else if (r == idx_check) { // Check all against GitHub
+        this->AppScanAll();
+    } else if (idx_update_all >= 0 && r == idx_update_all) {
+        this->AppUpdateAll();
+    } else if (r == idx_search) { // swkbd, filters by name (see
+                                   // AppUpdatesRender's appman_visible);
+                                   // empty text clears it same as Clear search
+        char buf[64];
+        snprintf(buf, sizeof(buf), "%s", this->appman_search.c_str());
+        char out[64] = "";
+        if (prompt(tr(S_APPMAN_SEARCH), buf, out, sizeof(out))) {
+            this->appman_search = out;
+            this->appman_sel = (s32)cur_idx;
+            this->AppUpdatesRender();
+        }
+    } else if (idx_clear >= 0 && r == idx_clear) {
+        this->appman_search.clear();
+        this->appman_sel = (s32)cur_idx;
+        this->AppUpdatesRender();
+    } else if (idx_add_manual >= 0 && r == idx_add_manual) {
+        this->AppAddManual();
+    }
+    // else dismissed (B)
 }
 
 // Re-check a single entry in place, instead of re-pulling the whole list from
@@ -8796,9 +9452,9 @@ void MainApplication::AppRecheckOne(size_t idx) {
             rel_url = url;
             rel_asset = asset;
             st = ipath.empty() ? APST_NOTINST
-                 : (ver.empty() || version_cmp(ver.c_str(), tag) < 0)
-                     ? APST_UPDATE
-                     : APST_UPTODATE;
+                 : app_is_up_to_date(ver, e.installed_tag, tag)
+                     ? APST_UPTODATE
+                     : APST_UPDATE;
             this->AppMarkChecked(e.id); // stamp "checked just now"
             this->appman_net_cache[this->appman_kind][e.id] = {latest, rel_url,
                                                                 rel_asset};
@@ -8920,6 +9576,12 @@ void MainApplication::PollXfers() {
         } else {
             this->UmiTick(j); // joins, validates, backs up, swaps, finishes
         }
+    }
+    // A Plus "update all" queue bigger than UMI_MAX slots: start whatever now
+    // fits after the Join()s just above may have freed one. No-op instantly
+    // when the queue is empty (the common case).
+    if (!this->appman_bulk_pending.empty()) {
+        this->AppBulkPump();
     }
     // Background unpack for a Wi-Fi push landed in a console folder (see
     // InvApplyFile) -- no Queue-tab item and no live progress to mirror, since
@@ -18700,44 +19362,53 @@ void MainApplication::HandleInput(u64 down, u64 held,
     }
 
     case Screen::AppUpdates: {
-        // Emulator/app list. It loads with versions only (no auto-scan); the user
-        // checks for updates explicitly: X checks every entry, Y checks the
-        // selected one, A opens that entry's action menu (which also has a "Check
-        // for updates" option). Emulators is this screen's home when kind is
-        // UPD_KIND_EMU -- a top-level tab root, no B-back, tabs are on L/R.
-        // Apps (UPD_KIND_APP) was opened from Settings, so B returns there.
-        // A trailing "Add manually" row (emulators only) opens the .nro picker.
+        // Emulator/app list. It loads with versions only (no auto-scan); the
+        // user checks for updates explicitly, A opens that entry's action
+        // menu (which also has its own "Check for updates", so there's no
+        // separate single-entry shortcut here), Y opens the list-level Tools
+        // menu (sort / check all / update all / search / add manually --
+        // see AppToolsMenu), which is also where "check all" and (Emulators
+        // only) "Add manually" now live -- there's no X binding or trailing
+        // list row for either anymore. Emulators is this screen's home when
+        // kind is UPD_KIND_EMU -- a top-level tab root, no B-back, tabs are
+        // on L/R. Apps (UPD_KIND_APP) was opened from Settings, so B returns
+        // there. Either way, B clears an active search filter first (one
+        // more B after that does whatever B normally does) -- the common
+        // "back also cancels search" convention, and the only way to get
+        // back to the unfiltered list for Emulators, which otherwise has no
+        // B-back at all.
+        //
+        // `sel` from here on is always a ROW position (what's actually on
+        // screen, after any search filter); this->appman_visible[sel] is the
+        // real appman_list index a row position maps to. appman_sel itself
+        // always stores that real index (see its declaration) so a filtered
+        // view, a resort, or a rebuild can all still find the same entry
+        // again instead of landing on whatever row 0 now is.
         bool is_emu = (this->appman_kind == UPD_KIND_EMU);
-        s32 add_row = is_emu ? (s32)this->appman_list.size() : -1;
         if (down & HidNpadButton_B) {
-            if (!is_emu) {
+            if (!this->appman_search.empty()) {
+                this->appman_search.clear();
+                this->AppUpdatesRender();
+            } else if (!is_emu) {
                 this->layout->ClearEmptyState();
                 this->GotoSettings();
                 this->layout->SetSel(7); // "App Updates" row -- see GotoSettings' kEntries
             }
-        } else if (down & HidNpadButton_X) {
-            this->AppScanAll(); // check them all against GitHub
         } else if (down & HidNpadButton_Y) {
-            s32 sel = this->layout->Sel();
-            if (sel >= 0 && sel < (s32)this->appman_list.size()) {
-                this->AppRecheckOne(sel); // check just this one
-            }
+            this->AppToolsMenu();
         } else if (down & HidNpadButton_A) {
             s32 sel = this->layout->Sel();
-            if (sel >= 0 && sel == add_row) {
-                this->AppAddManual();
-                return;
-            }
-            if (sel >= 0 && sel < (s32)this->appman_list.size()) {
-                this->appman_sel = sel; // restored by the render below
-                bool changed = this->AppEntryMenu((size_t)sel);
+            if (sel >= 0 && sel < (s32)this->appman_visible.size()) {
+                size_t idx = this->appman_visible[sel];
+                this->appman_sel = (s32)idx; // restored by the render below
+                bool changed = this->AppEntryMenu(idx);
                 // "Check for updates", a source edit, or a revert warrants a fresh
                 // network check, and only for that one entry. A plain cancel keeps
                 // the cached list (no re-pull). An install/update jumps to the
                 // Queue tab, so the screen check below skips the rebuild entirely.
                 if (this->screen == Screen::AppUpdates) {
                     if (changed) {
-                        this->AppRecheckOne(sel);
+                        this->AppRecheckOne(idx);
                     } else {
                         this->AppUpdatesRender();
                     }

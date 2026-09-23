@@ -7,6 +7,54 @@ Notes for each release. `release.sh` pulls the section matching the version in
 `VERSION` and attaches it to the GitHub release. Add a `## <version>` section
 here before running a release.
 
+## 2.3.0
+
+**Desktop companion reorganized (separate Emulators and Apps tabs, DAT Files and Device Transfer under Settings), new emulators and consoles, and a round of security and reliability fixes.**
+
+### Emulators and consoles
+
+- New emulators: **PPSSPP-NX**, **FreeJ2ME** and **D.Smile NX**.
+- New consoles: **Java ME (J2ME)** and **VTech V.Smile**, hidden by default. Their
+  folders are created and they show up in the library and settings lists.
+- Removed the round border that appeared around some emulator card icons
+  (FreeJ2ME, Lakka, ppsspp-nx, psnes/pnes, retroarch, sccm-retro, tico).
+- ARMSX2-NX (and any hand-added row for the same emulator) now gets its PS2
+  label and icon even when it isn't registered under the bundled id.
+
+### Desktop companion
+
+- Emulators and Apps are now two separate top-level tabs. Search, sort and the
+  add buttons sit on the heading row, and each tab has a **Save sources**
+  button that writes the sources to a JSON file you choose (name pre-filled).
+  The push/load-from-Switch sync panel is on both tabs. The old separate
+  emulator-repo and app-repo settings panes were merged into these tabs.
+- DAT Files and Device Transfer moved into Settings as sub-tabs.
+- Renames: "HaulNX Switch", "Queue" and "Library (PC)".
+- The Apps tab works without a connected Switch, lets you add and remove app
+  sources, and the catalog view can now **install apps that aren't on the
+  Switch** with a ⬇ button (Wi-Fi, same as emulator installs).
+- Security: archive.org credentials are only ever sent to the real
+  archive.org host (previously any URL that merely contained the text could
+  receive them). The archive.org secret-key field is masked. A collection
+  entry that points downloads at a non-archive.org mirror now asks for
+  confirmation, and non-http(s) URLs are refused.
+- Reliability: a USB write that stalls now reports an error instead of
+  silently skipping a byte and corrupting the file; malformed ROM headers no
+  longer crash the app; Library pushes are serialized with other Switch
+  requests so they can't collide with inventory polls; the DAT tab no longer
+  keeps re-rendering after you leave Settings; custom consoles get their PC
+  folders, and one bad folder name no longer blocks the rest; the archive.org
+  file list ignores stale responses; "Update all" re-enables when it
+  finishes; the low-space warning fires when the SD card is actually full.
+- Confirmations added when removing an app/emulator source override or
+  clearing a single history entry.
+- Cleanup: one shared IP/port parser, idle inventory polls no longer rebuild
+  the page, outdated-app checks are cached, and stale tab names in hint text
+  are updated.
+
+Also rolls up assorted Switch-side refinements since 2.2.48 (card grid,
+inventory server and update manager) and new translation strings.
+
 ## 2.2.48
 
 **Emulators tab gets real console art, cleaner labels, a touch-input fix, and a new Amiga emulator.**

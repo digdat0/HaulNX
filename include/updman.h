@@ -22,6 +22,17 @@ typedef struct {
     char detect[128]; /* comma-separated lowercase filename substrings */
     char repo[80];    /* "owner/name" GitHub repo; empty = no update source set */
     char asset[48];   /* lowercase .nro asset hint when a release ships several */
+    /* The GitHub tag we ourselves last successfully installed/updated this app
+     * to (set by UmiTick, source/MainApplication.cpp). Some releases (e.g.
+     * 2ship2harkinian, Shipwright) ship a NACP whose DisplayVersion is a
+     * placeholder with no digits at all -- nro_file_version then can't read a
+     * real version off the installed file, ever, no matter what's actually
+     * installed. This is the durable fallback ground truth for that case:
+     * "we personally verified and swapped in this exact tag", checked when a
+     * fresh disk rescan can't read a version, instead of always assuming the
+     * app is behind. Empty = never recorded (older manifest, or never
+     * installed through HaulNX). */
+    char installed_tag[32];
 } UpdSource;
 
 /* Load the manifest into out[] (up to `max` rows). On first run, when the

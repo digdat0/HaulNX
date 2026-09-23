@@ -59,6 +59,23 @@ class CardGrid : public pu::ui::elm::Element {
         // Set true (see console_display_icon's "HaulNX" case) to draw that
         // texture visibly smaller within the same slot instead.
         bool logo_icon = false;
+        // Poster mode, fallback (non-art) icon only: a thin ring behind the
+        // icon marking it as the generic "no single console" badge, so it
+        // doesn't read identically to a real single-console icon at a glance
+        // (e.g. the Emulators tab's multi-system frontends/unrecognized
+        // entries, which share the same plain "default" badge texture a
+        // genuinely-broken lookup would also fall back to).
+        bool badge_ring = false;
+        // Poster mode only: a colored border around the whole card (alpha 0 =
+        // none), optionally paired with a banner strip of `flag_text` across
+        // the top when that's non-empty. Lets a screen like Emulators flag
+        // "needs attention" (an update, an error) clearly enough to read at a
+        // glance across a grid of icons -- list view already gets this from
+        // its colored pill, which plain AddCard has no room for. A plain
+        // border with no text (the error family: unreachable/offline/rate-
+        // limited) still flags the card without claiming an update exists.
+        pu::ui::Color flag_clr{0, 0, 0, 0};
+        std::string flag_text;
     };
 
   private:
@@ -67,8 +84,11 @@ class CardGrid : public pu::ui::elm::Element {
         pu::sdl2::Texture t2_tex; // title line 2 (word-wrapped overflow)
         pu::sdl2::Texture sub_tex;
         pu::sdl2::Texture con_tex = nullptr; // poster-mode corner label (Card::console)
+        pu::sdl2::Texture sub2_tex = nullptr; // poster-mode subtitle, wrapped line 2
+        pu::sdl2::Texture flag_tex = nullptr; // poster-mode top banner (Card::flag_text)
         s32 t1w, t1h, t2w, t2h, sw, sh;
         s32 conw = 0, conh = 0;
+        s32 s2w = 0, s2h = 0, flagw = 0, flagh = 0;
         // Set once BuildCell has actually rasterized this cell's text. A
         // freshly (re)sized cache starts every cell unbuilt regardless of
         // aggregate-init order, since this has its own default -- see
@@ -251,6 +271,12 @@ class CardGrid : public pu::ui::elm::Element {
             }
             if (c.con_tex) {
                 pu::ui::render::DeleteTexture(c.con_tex);
+            }
+            if (c.sub2_tex) {
+                pu::ui::render::DeleteTexture(c.sub2_tex);
+            }
+            if (c.flag_tex) {
+                pu::ui::render::DeleteTexture(c.flag_tex);
             }
             if (c.st_tex) {
                 pu::ui::render::DeleteTexture(c.st_tex);
@@ -460,11 +486,37 @@ class CardGrid : public pu::ui::elm::Element {
             }
         }
         if (!cd.subtitle.empty()) {
-            c.sub_tex = pu::ui::render::RenderText(
-                this->poster ? this->font_tiny : this->font_sub, cd.subtitle,
-                this->sub_clr, max_tw);
-            c.sw = pu::ui::render::GetTextureWidth(c.sub_tex);
-            c.sh = pu::ui::render::GetTextureHeight(c.sub_tex);
+            if (this->poster) {
+                // Word-wrapped to two lines instead of RenderText's own
+                // ellipsis-truncate -- a state line like "Up to date (v1.2.3)"
+                // routinely overflows a 6-wide card's width, and truncating
+                // it mid-version-number is worse than just wrapping.
+                std::string l1, l2;
+                this->SplitTitle(cd.subtitle, this->font_tiny, (s32)max_tw, l1,
+                                 l2);
+                c.sub_tex = pu::ui::render::RenderText(this->font_tiny, l1,
+                                                       this->sub_clr, max_tw);
+                c.sw = pu::ui::render::GetTextureWidth(c.sub_tex);
+                c.sh = pu::ui::render::GetTextureHeight(c.sub_tex);
+                if (!l2.empty()) {
+                    c.sub2_tex = pu::ui::render::RenderText(
+                        this->font_tiny, l2, this->sub_clr, max_tw);
+                    c.s2w = pu::ui::render::GetTextureWidth(c.sub2_tex);
+                    c.s2h = pu::ui::render::GetTextureHeight(c.sub2_tex);
+                }
+            } else {
+                c.sub_tex = pu::ui::render::RenderText(
+                    this->font_sub, cd.subtitle, this->sub_clr, max_tw);
+                c.sw = pu::ui::render::GetTextureWidth(c.sub_tex);
+                c.sh = pu::ui::render::GetTextureHeight(c.sub_tex);
+            }
+        }
+        if (!cd.flag_text.empty()) {
+            c.flag_tex = pu::ui::render::RenderText(this->font_tiny,
+                                                     cd.flag_text,
+                                                     pu::ui::Color(255, 255, 255, 255));
+            c.flagw = pu::ui::render::GetTextureWidth(c.flag_tex);
+            c.flagh = pu::ui::render::GetTextureHeight(c.flag_tex);
         }
         if (!cd.console.empty()) {
             // The prominent color the title above no longer uses (see the
@@ -789,8 +841,14 @@ class CardGrid : public pu::ui::elm::Element {
     void AddCard(const std::string &title, const std::string &subtitle,
                  pu::sdl2::Texture icon, bool pinned = false,
                  bool dim = false, bool art = false,
-                 const std::string &console = "") {
+                 const std::string &console = "",
+                 bool badge_ring = false,
+                 pu::ui::Color flag_clr = pu::ui::Color(0, 0, 0, 0),
+                 const std::string &flag_text = "") {
         Card c{title, subtitle, console, icon, pinned, dim, art};
+        c.badge_ring = badge_ring;
+        c.flag_clr = flag_clr;
+        c.flag_text = flag_text;
         this->cards.push_back(c);
         this->dirty = true;
     }
@@ -1278,6 +1336,16 @@ class CardGrid : public pu::ui::elm::Element {
                     drawer->RenderCircleFill(this->glow_clr, cx + 16, cy + 16,
                                              5);
                 }
+                if (cd.flag_clr.a > 0) {
+                    // Same 3px-outline technique as the multi-select border
+                    // above -- a whole-card border reads at a glance across a
+                    // grid of small icons in a way a corner dot didn't.
+                    for (s32 t = 0; t < 3; t++) {
+                        drawer->RenderRoundedRectangle(
+                            cd.flag_clr, cx + t, cy + t, cw - 2 * t,
+                            ch - 2 * t, CardRadius - t > 4 ? CardRadius - t : 4);
+                    }
+                }
                 if (cd.queue) {
                     Cell &qc = this->cache[idx];
                     // Corner labels: console name top-left, status top-right,
@@ -1531,6 +1599,9 @@ class CardGrid : public pu::ui::elm::Element {
                             }
                             const s32 icx = ix + iw / 2;
                             const s32 icy = iy + ih / 2;
+                            // badge_ring used to draw a flat outline here for
+                            // the generic "no single console" badge -- looked
+                            // like a stray border around the icon, removed.
                             // Selected: same soft green glow bloom the plain
                             // icon+text card gives its icon -- lost when
                             // these console/settings cards moved to poster
@@ -1561,6 +1632,25 @@ class CardGrid : public pu::ui::elm::Element {
                             drawer->RenderTexture(cd.icon, icx - isz / 2,
                                                   icy - isz / 2, o);
                         }
+                    }
+                    if (ce.flag_tex) {
+                        // A solid ribbon across the top, drawn after (so it
+                        // sits on top of) the icon/art above -- inset from
+                        // flag_clr's own 3px border so it never overlaps it.
+                        const s32 fh = ce.flagh + 10;
+                        drawer->RenderRoundedRectangleFill(
+                            cd.flag_clr, cx + 3, cy + 3, cw - 6, fh,
+                            CardRadius - 3 > 4 ? CardRadius - 3 : 4);
+                        // Square off the bottom corners of the ribbon (the
+                        // rounded fill above rounds all four) so it reads as
+                        // flush with the card edges below it, not a floating
+                        // rounded pill.
+                        drawer->RenderRectangleFill(cd.flag_clr, cx + 3,
+                                                    cy + 3 + fh / 2, cw - 6,
+                                                    fh / 2);
+                        drawer->RenderTexture(ce.flag_tex,
+                                              cx + (cw - ce.flagw) / 2,
+                                              cy + 3 + (fh - ce.flagh) / 2);
                     }
                     // Console name (e.g. an emulator card's supported
                     // system(s)) sits flush under the image, above the title
@@ -1607,13 +1697,31 @@ class CardGrid : public pu::ui::elm::Element {
                         ty += ce.t1h + 16;
                     }
                     if (ce.sub_tex) {
-                        s32 sx = cx + (cw - ce.sw) / 2;
                         s32 padx = 10, pady = 4;
-                        drawer->RenderRoundedRectangleFill(
-                            this->pill_clr, sx - padx, ty - pady,
-                            ce.sw + 2 * padx, ce.sh + 2 * pady,
-                            (ce.sh + 2 * pady) / 2);
-                        drawer->RenderTexture(ce.sub_tex, sx, ty);
+                        if (ce.sub2_tex) {
+                            // Two lines: a fixed corner radius reads as a
+                            // rounded box, not the single-line capsule shape
+                            // (half its own height) that a taller box would
+                            // stretch into an odd pill/oval.
+                            s32 bw = (ce.sw > ce.s2w ? ce.sw : ce.s2w) + 2 * padx;
+                            s32 gap = 2;
+                            s32 bh = ce.sh + ce.s2h + gap + 2 * pady;
+                            s32 bx = cx + (cw - bw) / 2;
+                            drawer->RenderRoundedRectangleFill(
+                                this->pill_clr, bx, ty - pady, bw, bh, 12);
+                            drawer->RenderTexture(
+                                ce.sub_tex, cx + (cw - ce.sw) / 2, ty);
+                            drawer->RenderTexture(ce.sub2_tex,
+                                                  cx + (cw - ce.s2w) / 2,
+                                                  ty + ce.sh + gap);
+                        } else {
+                            s32 sx = cx + (cw - ce.sw) / 2;
+                            drawer->RenderRoundedRectangleFill(
+                                this->pill_clr, sx - padx, ty - pady,
+                                ce.sw + 2 * padx, ce.sh + 2 * pady,
+                                (ce.sh + 2 * pady) / 2);
+                            drawer->RenderTexture(ce.sub_tex, sx, ty);
+                        }
                     }
                     continue;
                 }

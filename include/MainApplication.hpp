@@ -611,7 +611,9 @@ class MainLayout : public pu::ui::Layout {
     void AddCard(const std::string &title, const std::string &subtitle,
                  pu::sdl2::Texture icon, bool pinned = false,
                  bool dim = false, bool art = false,
-                 const std::string &console = "");
+                 const std::string &console = "", bool badge_ring = false,
+                 pu::ui::Color flag_clr = pu::ui::Color(0, 0, 0, 0),
+                 const std::string &flag_text = "");
     // Column count for the grid (default 4; ClearMenu resets it back).
     // Installed's game-list poster view narrows this to 6-7.
     void SetCardCols(s32 n);
@@ -766,7 +768,24 @@ class MainApplication : public pu::ui::Application {
     std::vector<std::pair<int, int>> help_hits; // Screen::HelpSearch rows, in list
                               // order: {category, index into that category's array}
     std::vector<UpdSource> appman_list; // entries shown on Screen::AppUpdates
-    s32 appman_sel = 0;      // selection to restore after the list is (re)built
+    // A real index into appman_list (never a visible-row position) naming the
+    // entry that should stay selected across a rebuild -- AppSortList (by id)
+    // and every input handler below set this; AppUpdatesRender is the only
+    // place that turns it into an actual row position, via appman_visible.
+    s32 appman_sel = 0;
+    // Minus cycles this on Screen::AppUpdates: 0 = name (the plain alphabetical
+    // order AppChkThread already sorts into), 1 = updates-available first,
+    // 2 = installed first. Shared by Apps and Emulators; stable within each
+    // bucket, so ties keep reading alphabetically -- see AppSortList.
+    int appman_sort = 0;
+    // Tools-menu search filter (name substring, case-insensitive; empty = no
+    // filter) and the resulting appman_list indices actually shown -- set by
+    // AppUpdatesRender each build. Every input handler that reads a row
+    // position off the list must go through appman_visible[row] to get back
+    // a real appman_list index, since a filter can make row position and
+    // list index diverge.
+    std::string appman_search;
+    std::vector<size_t> appman_visible;
     int picker_console = -1; // ROM-folder picker target: -1 = the ROM root, else
                              // the console index whose custom install folder is
                              // being chosen (returns to that console's screen)
@@ -875,6 +894,11 @@ class MainApplication : public pu::ui::Application {
     };
     static const int UMI_MAX = 4; // concurrent emulator/app installs
     UmiJob umi_jobs[UMI_MAX];
+    // "Update all" (Plus on Screen::AppUpdates): manifest ids still waiting
+    // for a free UmiJob slot. Ids, not indices -- appman_list can be resorted
+    // (Minus) or rechecked between pumps, which would silently point a stale
+    // index at the wrong row. See AppUpdateAll/AppBulkPump.
+    std::vector<std::string> appman_bulk_pending;
 
     // One in-flight "revert from backup" copy (AppRevert/AppRevertThread/
     // AppRevertTick). A single slot, not a pool like UmiJob's -- revert is a
@@ -1205,6 +1229,12 @@ class MainApplication : public pu::ui::Application {
     // it and files each into DATS_DIR by its own header, then removes the
     // staging folder.
     int pxt_kind = 0;
+    // kind 1 only: the app version tag (X-App-Tag) that rode along with this
+    // folder push, carried here because InvApplyFile's own copy goes out of
+    // scope long before this async extract's completion tick runs. Recorded
+    // as the matched manifest row's installed_tag once the .nro inside
+    // pxt_dir is known (see PushExtractTick / record_installed_tag_in_dir).
+    std::string pxt_app_tag;
     std::atomic<bool> pxt_cancel{false};
     bool imp_open = false;
     bool usb_open = false; // true while the embedded-MTP connect screen is up
@@ -1559,9 +1589,11 @@ class MainApplication : public pu::ui::Application {
 
     void InvBoxartTick(); // per frame from InvServerPoll: start/reap the above
     // overwrite an installed emulator's .nro in place (Emulators-tab update)
-    void InvApplyEmuNro(const std::string &app, const std::string &part);
+    void InvApplyEmuNro(const std::string &app, const std::string &part,
+                       const std::string &tag = std::string());
     void InvApplyEmuNroAt(const std::string &app, const std::string &dest,
-                          const std::string &part, bool fresh = false);
+                          const std::string &part, bool fresh = false,
+                          const std::string &tag = std::string());
     void LiveRecvBegin();      // a live-link push started: add a queue-tab item + jump
     void LiveRecvTick(size_t now, size_t total); // push its progress into the queue item
     void LiveRecvEnd(bool ok = true); // push finished: mark the queue item done/failed
@@ -1583,6 +1615,10 @@ class MainApplication : public pu::ui::Application {
     void AppUpdatesRender(); // build the list rows from the check results
     void AppScanAll();     // X on the list: re-run with the network check on
     void AppRecheckOne(size_t idx); // re-check just one entry (no full re-pull)
+    void AppSortList();    // reorders appman_* by appman_sort
+    void AppUpdateAll();   // confirm, then queue every pending update
+    void AppBulkPump();    // starts queued updates into free UmiJob slots
+    void AppToolsMenu();   // Y: list-level actions -- sort, check all, update all, search
     bool AppEntryMenu(size_t idx);       // one entry's actions; true if it changed
     void AppMarkChecked(const std::string &id); // stamp+persist an entry's check time
     std::string AppCheckedLabel(const std::string &id); // "checked 5m ago" / ""

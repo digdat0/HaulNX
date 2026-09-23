@@ -279,7 +279,10 @@ static bool console_is_new(const char *name) {
          * homebrew; off by default for the same reason as wiiu above.
          * ("vita" was here too until 2026-08-30, when it got a proper
          * console icon and was moved to the default-shown set below.) */
-        "amiga", "zx-spectrum", "chip8", "pico8", "tamagotchi", "flash"};
+        "amiga", "zx-spectrum", "chip8", "pico8", "tamagotchi", "flash",
+        /* emulator-only, no established ROM source -- off by default like the
+         * rest of this niche-homebrew tail */
+        "j2me", "v-smile"};
     for (size_t i = 0; i < sizeof(added) / sizeof(added[0]); i++) {
         if (strcasecmp(name, added[i]) == 0) {
             return true;

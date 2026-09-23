@@ -949,6 +949,11 @@ enum {
     S_SUB_NRO_PICKER,     /* Add-emulator-manually file browser button hints */
     S_APPMAN_LIST_HINT,   /* section list footer hint */
     S_APPMAN_LIST_HINT_EMU, /* Emulators-tab variant: no B-back (top-level tab), L/R tabs instead */
+    S_APPMAN_LIST_HINT_SEARCH, /* footer hint while a search filter is active (both kinds share one,
+                                * since B's "clear search" meaning is the same either way) -- kept
+                                * the same short shape as the two above (never appends a second line
+                                * or the raw query) so an active search can't push the already-tight
+                                * footer into wrapping */
     S_APPMAN_INSTALLED,   /* list status: installed (version unknown) */
     S_APPMAN_NOT_INSTALLED, /* list status: not installed */
     S_APPMAN_NO_SOURCE,   /* list status suffix: no update source set */
@@ -987,6 +992,16 @@ enum {
     S_APPMAN_PUSH_NOCONN, /* dialog: connect a companion (Wi-Fi or USB) first */
     S_APPMAN_UNCHECKED,   /* list status: installed+sourced, not yet checked */
     S_APPMAN_CHECK_UPDATES, /* entry menu action: check GitHub for a newer release */
+    S_APPMAN_TOOLS_CHECK_ALL, /* Tools-menu row label: check every entry (distinct wording from the single-entry action above) */
+    S_APPMAN_UPDATE_ALL,    /* Tools-menu row + confirm dialog title: bulk-update every pending entry */
+    S_APPMAN_UPDATE_ALL_CONFIRM, /* confirm dialog body, %d = how many entries have an update available */
+    S_APPMAN_UPDATE_ALL_NONE,    /* toast: Update all picked but nothing currently needs an update */
+    S_APPMAN_TOOLS_SORT_NAME,      /* Tools-menu Sort row's current-mode suffix: plain alphabetical */
+    S_APPMAN_TOOLS_SORT_UPDATES,   /* Tools-menu Sort row's current-mode suffix: updates-available first */
+    S_APPMAN_TOOLS_SORT_INSTALLED, /* Tools-menu Sort row's current-mode suffix: installed first */
+    S_APPMAN_SEARCH,        /* Tools-menu row label (and keyboard prompt title): filter the list by name */
+    S_APPMAN_SEARCH_CLEAR,  /* Tools-menu row, shown only while a search filter is active */
+    S_APPMAN_UPDATE_AVAILABLE, /* card-view top banner text: this entry has a pending update */
     S_APPMAN_SOURCE_LINE, /* entry menu body: "Source: owner/repo" under the name */
     S_APPMAN_PATH_LINE,   /* entry menu body: "Path: sdmc:/switch/..." under the source line, only when installed */
     S_APPMAN_INSTALLED_LINE, /* entry menu body: "Installed: vX" under the path line, only when installed + version known */

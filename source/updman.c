@@ -40,6 +40,8 @@ static int parse_sources(const char *js, size_t len, UpdSource *out, int max) {
             copy_field(js, tok, child, "detect", s->detect, sizeof(s->detect));
             copy_field(js, tok, child, "repo", s->repo, sizeof(s->repo));
             copy_field(js, tok, child, "asset", s->asset, sizeof(s->asset));
+            copy_field(js, tok, child, "installed_tag", s->installed_tag,
+                      sizeof(s->installed_tag));
             char kind[16];
             copy_field(js, tok, child, "kind", kind, sizeof(kind));
             s->kind = (strcasecmp(kind, "app") == 0) ? UPD_KIND_APP : UPD_KIND_EMU;
@@ -249,6 +251,10 @@ bool updman_save(const UpdSource *arr, int count) {
         json_write_escaped(f, s->repo);
         fputs(", \"asset\": ", f);
         json_write_escaped(f, s->asset);
+        if (s->installed_tag[0]) {
+            fputs(", \"installed_tag\": ", f);
+            json_write_escaped(f, s->installed_tag);
+        }
         fputs(i + 1 < count ? "},\n" : "}\n", f);
     }
     fputs("  ]\n}\n", f);
