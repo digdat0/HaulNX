@@ -347,6 +347,8 @@
   "manage_bulk_done": "%d konsol diperbarui",
   "hide_from_page": "Sembunyikan dari halaman ini",
   "github_token": "Token API GitHub: %s",
+  "gh_token_expired": "Token kedaluwarsa",
+  "gh_token_expired_msg": "GitHub menolak token API Anda (kedaluwarsa atau dicabut). Pemeriksaan pembaruan kini berjalan tanpa token dan akan terkena batas GitHub 60 per jam. Ganti token di Pengaturan › Kredensial Akun.",
   "redownload": "Unduh ulang",
   "cancel_download": "Batalkan unduhan",
   "queue_busy_prompt": "Item ini tampak macet. Apa yang ingin kamu lakukan?",

@@ -24,13 +24,19 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $extOps = Join-Path $root 'src-tauri\src\ext_ops.rs'
 $localExt = Join-Path $root 'src\local-ext.js'
-$extOpsAway = "$extOps.public-build-aside"
-$localExtAway = "$localExt.public-build-aside"
+# Park the extras OUTSIDE src/ and src-tauri/src/. They used to be renamed in
+# place (src/local-ext.js -> src/local-ext.js.public-build-aside), but Tauri
+# embeds every file under src/ whatever its name, so local-ext.js shipped
+# inside the exe under the renamed name in every public/Lite build.
+$asideDir = Join-Path $root '.build-aside-public'
+$extOpsAway = Join-Path $asideDir 'ext_ops.rs'
+$localExtAway = Join-Path $asideDir 'local-ext.js'
 
 $movedExtOps = $false
 $movedLocalExt = $false
 
 try {
+    New-Item -ItemType Directory -Force $asideDir | Out-Null
     if (Test-Path $extOps) {
         Move-Item $extOps $extOpsAway -Force
         $movedExtOps = $true
@@ -52,6 +58,17 @@ try {
 
     $exe = Join-Path $root 'src-tauri\target-public\release\haulnx-app-utility.exe'
     if (-not (Test-Path $exe)) { throw "build succeeded but $exe is missing" }
+    # Refuse to publish an exe that still carries either extra (or anything
+    # parked by an older version of this script): Tauri keeps asset names as
+    # plain text in the binary, and a compiled ext_ops.rs leaves its path in
+    # panic locations.
+    $bytes = [IO.File]::ReadAllBytes($exe)
+    $text = [Text.Encoding]::ASCII.GetString($bytes)
+    foreach ($needle in @('local-ext', 'build-aside', 'ext_ops.rs')) {
+        if ($text.Contains($needle)) {
+            throw "refusing to publish: $exe contains '$needle' (a local-only file leaked into the build)"
+        }
+    }
     $out = Join-Path $root 'HaulNX-AppUtility.exe'
     Copy-Item $exe $out -Force
     Write-Host "Public exe written to $out"

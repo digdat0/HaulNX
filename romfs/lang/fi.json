@@ -347,6 +347,8 @@
   "manage_bulk_done": "Päivitettiin %d konsolia",
   "hide_from_page": "Piilota tältä sivulta",
   "github_token": "GitHub API -tunnus: %s",
+  "gh_token_expired": "Token vanhentunut",
+  "gh_token_expired_msg": "GitHub hylkäsi API-tokenisi (vanhentunut tai peruttu). Päivitystarkistukset toimivat nyt ilman sitä ja osuvat GitHubin 60 tunnissa -rajaan. Vaihda token kohdassa Asetukset › Tilin tunnistetiedot.",
   "redownload": "Lataa uudelleen",
   "cancel_download": "Peruuta lataus",
   "queue_busy_prompt": "Tämä kohde vaikuttaa jumittuneelta. Mitä haluat tehdä?",

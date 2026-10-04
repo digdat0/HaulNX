@@ -108,6 +108,8 @@
     {"id": "ppsspp-nx", "name": "PPSSPP-NX", "kind": "emulator", "detect": "ppsspp-nx,ppsspp_nx", "repo": "NaGaa95/ppsspp-nx", "asset": "ppsspp"},
     {"id": "freej2me", "name": "FreeJ2ME", "kind": "emulator", "detect": "freej2me,j2me", "repo": "MiaouMeowMiaou/j2me-for-switch", "asset": "j2me"},
     {"id": "dsmile", "name": "D.Smile NX", "kind": "emulator", "detect": "dsmile", "repo": "1timewire1/D.Smile_nx", "asset": "dsmile_switch"},
+    {"id": "system22-nx", "name": "System22-NX", "kind": "emulator", "detect": "system22-nx,system22", "repo": "r4dius/system22-nx", "asset": "system22"},
+    {"id": "supermodel-nx", "name": "Supermodel-NX", "kind": "emulator", "detect": "supermodel", "repo": "toniisound/supermodel-nx", "asset": "supermodel"},
     {"id": "mgba", "name": "mGBA", "kind": "emulator", "detect": "mgba", "repo": "mgba-emu/mgba", "asset": "switch"},
     {"id": "melonds", "name": "melonDS", "kind": "emulator", "detect": "melonds", "repo": "ArcDelta/melonDS", "asset": "melonds"},
     {"id": "drastic", "name": "DraStic", "kind": "emulator", "detect": "drastic", "repo": "NaGaa95/DrasticDS_nx", "asset": "drasticds"},

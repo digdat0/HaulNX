@@ -347,6 +347,8 @@
   "manage_bulk_done": "%d consoles bijgewerkt",
   "hide_from_page": "Verbergen van deze pagina",
   "github_token": "GitHub API-token: %s",
+  "gh_token_expired": "Token verlopen",
+  "gh_token_expired_msg": "GitHub heeft je API-token geweigerd (verlopen of ingetrokken). Updatecontroles draaien nu zonder token en bereiken de limiet van 60 per uur van GitHub. Vervang het token in Instellingen › Accountgegevens.",
   "redownload": "Opnieuw downloaden",
   "cancel_download": "Download annuleren",
   "queue_busy_prompt": "Dit item lijkt vast te zitten. Wat wil je doen?",

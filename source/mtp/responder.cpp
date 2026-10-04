@@ -712,9 +712,18 @@ namespace mtp {
                  * queue_status.json since it should feel live while a search
                  * is running. */
                 static time_t s_boxstat_last = 0;
+                static int s_boxstat_key = -1;
                 time_t boxstat_now = time(nullptr);
-                if (boxstat_now - s_boxstat_last >= 1) {
-                    mtp::BoxartStatus bst = mtp::GetBoxartStatus();
+                mtp::BoxartStatus bst = mtp::GetBoxartStatus();
+                /* Rewrite at once when the running/done state changed, not just
+                 * on the 1s throttle -- otherwise a poll right after a new
+                 * request reads the previous run's done:true file and takes its
+                 * stale result (see ApplyPendingBoxartReqs in mtp.cpp). */
+                int boxstat_key = (bst.search_running ? 1 : 0) | (bst.search_done ? 2 : 0) |
+                                  (bst.pick_running ? 4 : 0) | (bst.pick_done ? 8 : 0) |
+                                  (bst.pick_ok ? 16 : 0) | (bst.search_count << 5);
+                if (boxstat_now - s_boxstat_last >= 1 || boxstat_key != s_boxstat_key) {
+                    s_boxstat_key = boxstat_key;
                     FILE *bf = fopen(BOXART_STATUS_PATH, "wb");
                     if (bf) {
                         fprintf(bf,
@@ -749,8 +758,7 @@ namespace mtp {
                  * ones exist as root objects, one stat() per candidate slot,
                  * only while a completed search actually has results. */
                 {
-                    mtp::BoxartStatus bst = mtp::GetBoxartStatus();
-                    if (bst.search_done) {
+                    if (bst.search_done) { /* same snapshot as the status file above */
                         for (int i = 0; i < bst.search_count && i < BOXART_MAX_CANDIDATES; i++) {
                             char tpath[768], tname[32];
                             snprintf(tpath, sizeof(tpath), "%s/%d.png", BOXART_TMP_DIR, i);
@@ -1107,7 +1115,8 @@ namespace mtp {
                      * anywhere reachable by traversal, regardless of the SD Card
                      * toggle. Mirrors the same guard SetObjectPropValue's rename
                      * already applies to newname. */
-                    if (!fname[0] || strchr(fname, '/') || strchr(fname, '\\')) {
+                    if (!fname[0] || strchr(fname, '/') || strchr(fname, '\\') ||
+                        strcmp(fname, ".") == 0 || strcmp(fname, "..") == 0) {
                         RC(c, PtpResponseCode_NoValidObjectInfo, trans); return;
                     }
 
@@ -1127,6 +1136,18 @@ namespace mtp {
 
                     char full[1040];
                     snprintf(full, sizeof(full), "%s/%s", pdir, fname);
+
+                    /* ObjectInfo's size field is 32-bit, so a file of 4 GiB or
+                     * more arrives as 0xFFFFFFFF ("unknown"). SendObject would
+                     * take that as the real size and stop reading at 4 GiB --
+                     * a cut-off file acked as a success, with the rest of the
+                     * data left on the pipe. Refuse it up front instead: the
+                     * desktop blocks these before sending, and Explorer shows
+                     * its own "too large" error. */
+                    if (format != PtpObjectFormatCode_Association && csize == 0xFFFFFFFFu) {
+                        mtp_log("usb        refused %s: 4 GiB or larger", fname);
+                        RC(c, PtpResponseCode_ObjectTooLarge, trans); return;
+                    }
 
                     if (format == PtpObjectFormatCode_Association) {
                         fs_mkdir_p(full);
@@ -1265,6 +1286,12 @@ namespace mtp {
                     if (ok && expected > 0) ftruncate(fileno(f), static_cast<off_t>(expected));
 
                     bool cancelled = false;
+                    /* SD write failed (card full, FAT32's 4 GiB cap, ...). Like a
+                     * cancel, keep READING the host's remaining bytes and just
+                     * stop writing them: breaking out early left the rest of the
+                     * file on the bulk pipe, which the next command read as
+                     * garbage -- the link desynced until a replug. */
+                    bool wfail = false;
                     while (ok) {
                         /* Kick off the next read (into the other buffer) before
                          * spending time on the SD write, so they overlap. Only
@@ -1286,21 +1313,25 @@ namespace mtp {
                          * copy in Windows Explorer behaves -- the link stays up. */
                         if (!cancelled && XferCancelRequested()) cancelled = true;
 
-                        if (ok && !cancelled && len && fwrite(data, 1, len, f) != len) ok = false;
+                        if (ok && !cancelled && !wfail && len && fwrite(data, 1, len, f) != len) {
+                            wfail = true;
+                            mtp_log("usb        SD write failed at %llu bytes (card full?); draining the rest",
+                                    (unsigned long long)written);
+                        }
                         written += len;
-                        if (!cancelled) XferUpdate(written);
+                        if (!cancelled && !wfail) XferUpdate(written);
 
                         if (!posted) break;
 
                         u32 got = 0;
                         if (!ReadReap(c, nurb, &got)) { ok = false; break; }
-                        if (!ok) break;   /* SD write failed while this read flew */
+                        if (!ok) break;
                         cur  = nxt;
                         data = bufs[cur];
                         len  = got;
                         last_read = got;
                     }
-                    if (cancelled) ok = false; /* drained clean; still fails the transfer */
+                    if (cancelled || wfail) ok = false; /* drained clean; still fails the transfer */
                     /* Trim the preallocated tail if the transfer ended short. */
                     if (ok && written != expected) { fflush(f); ftruncate(fileno(f), static_cast<off_t>(written)); }
                     fclose(f);
@@ -1313,7 +1344,8 @@ namespace mtp {
                         remove(c->pending.path);
                         Obj *o = FindHandle(c, c->pending.handle);
                         if (o) o->parent = 0xFFFFFFFEu;
-                        if (!c->stopping) RC(c, PtpResponseCode_IncompleteTransfer, trans);
+                        if (!c->stopping)
+                            RC(c, wfail ? PtpResponseCode_StoreFull : PtpResponseCode_IncompleteTransfer, trans);
                         XferEnd(false);
                         c->pending.active = false;
                         return;
@@ -1508,8 +1540,14 @@ namespace mtp {
                     *slash = '\0';
                     char newpath[1040];
                     snprintf(newpath, sizeof(newpath), "%s/%s", dir, newname);
+                    /* An occupied target is refused rather than clobbered -- except a
+                     * pure case change ("mario.zip" -> "Mario.zip"): FAT matches names
+                     * case-insensitively, so stat() finds the file itself there. Same
+                     * exemption the Wi-Fi mv/fs_mv routes make (httpsrv.c). */
                     struct stat exists_st;
-                    if (stat(newpath, &exists_st) == 0) { RC(c, PtpResponseCode_AccessDenied, trans); return; }
+                    if (strcasecmp(o->path, newpath) != 0 && stat(newpath, &exists_st) == 0) {
+                        RC(c, PtpResponseCode_AccessDenied, trans); return;
+                    }
                     if (rename(o->path, newpath) != 0) { RC(c, PtpResponseCode_GeneralError, trans); return; }
                     SetObjPath(o, newpath);
                     snprintf(o->name, sizeof(o->name), "%s", newname);

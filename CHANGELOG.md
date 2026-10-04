@@ -7,6 +7,93 @@ Notes for each release. `release.sh` pulls the section matching the version in
 `VERSION` and attaches it to the GitHub release. Add a `## <version>` section
 here before running a release.
 
+## 2.3.5
+
+**Two new arcade emulators, plus a reliability and safety release: Wi-Fi and USB transfers, unpacking, cover-art search and the desktop's file actions were combed for bugs, and every one found is fixed.**
+
+### Emulators and consoles
+
+- New emulators: **System22-NX** (Namco System 22) and **Supermodel-NX**
+  (Sega Model 3), with install/update support on the Switch and in the
+  desktop's Emulators tab.
+- New consoles: **Namco System 22** and **Sega Model 3**, hidden by default
+  like the other emulator-only systems. Their folders are created and they
+  show up in the library and settings lists.
+
+### GitHub token
+
+- An expired or revoked GitHub token no longer breaks update checks on the
+  Switch: they fall back to running without it, and you get a notice to
+  replace the token in Settings › Account Credentials.
+
+### Data safety
+
+- An unpack that's interrupted (quitting the app, the USB link stopping) or
+  hits a truncated/corrupt archive now **keeps the original archive** instead
+  of deleting it next to a half-extracted game.
+- Unpacking over a file that already exists no longer destroys it when the
+  new copy fails — the replacement is written aside and only swapped in once
+  complete.
+- Files over 4 GB are now blocked over USB with a clear message (USB/MTP
+  can't carry them; use Wi-Fi with an exFAT card). Previously a large USB
+  send could arrive cut off at 4 GB. The Switch also refuses them itself, so
+  dragging one in with Explorer shows "too large" instead.
+- Folder uploads no longer silently skip dot-folders such as
+  `switch/.overlays` (Tesla/Ultrahand overlays) — this affected SD Card folder
+  uploads and multi-file app installs.
+- Folder uploads containing a file of 4 GB or more now work over Wi-Fi.
+
+### Wi-Fi and USB transfers
+
+- A full SD card during a **USB** push no longer breaks the connection until
+  you replug — you get a "card full" error and the link stays up.
+- A full SD card during a **Wi-Fi** push now says so, instead of "the Switch
+  dropped the transfer" followed by up to three automatic re-sends of the
+  whole file.
+- Several archives, folders or DAT batches pushed back to back over Wi-Fi now
+  unpack one after another in the background. Previously the second one froze
+  the Switch until the first finished, and could skip the first one's final
+  step (DATs not filed, app version not recorded).
+- Large DATs (over 16 MB) can now be pushed on their own; every DAT push goes
+  as a streamed zip.
+- Empty (0-byte) files can now be uploaded over Wi-Fi.
+- Deleting a folder-style game (e.g. a PS Vita dump) over Wi-Fi now works.
+- Renaming a file to a different capitalization over USB now works.
+- Renaming onto a name that's already taken by a folder now gives a clear
+  "already exists" message instead of a generic failure.
+- New Folder at the SD card root over Wi-Fi now creates it in the right place.
+- Switch-side downloads recover automatically when a server can't resume a
+  partial download, instead of failing until the partial file was deleted by
+  hand.
+
+### Desktop companion
+
+- Security: console names from an imported collection file are now escaped,
+  so a crafted `dl_sources.json` can't run code inside the app.
+- All Switch actions (rename, move, delete, SD Card browsing, new folder) now
+  wait their turn in the shared request queue instead of colliding with an
+  in-flight transfer or inventory poll.
+- Sending a game folder from the Library explains what's missing (Full SD
+  card access off, or no folder set up for that console); "Push all" sends the
+  plain files and skips folders with one note.
+- Clearer download errors: a refused or missing file on the Switch says so,
+  instead of suggesting archive.org keys.
+- Downloads no longer leave stray `.part` files behind after a failure, and
+  two files sharing a name but different extensions (`.cue`/`.bin`) no longer
+  collide mid-download over USB.
+- A failed app update no longer leaves a copy of the release in your temp
+  folder.
+
+### Switch app
+
+- Cover-art searches from the desktop (including **Fill Missing Art**) can no
+  longer crash or freeze the Switch when a new search starts before the
+  previous one finished, and a USB search no longer returns the previous
+  search's results.
+- Background tasks are now all shut down cleanly on exit, fixing another
+  source of the intermittent "an error occurred" when quitting.
+- Removed unused queue-control endpoints from the Wi-Fi server.
+
 ## 2.3.0
 
 **Desktop companion reorganized (separate Emulators and Apps tabs, DAT Files and Device Transfer under Settings), new emulators and consoles, and a round of security and reliability fixes.**

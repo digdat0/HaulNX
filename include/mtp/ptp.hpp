@@ -111,6 +111,7 @@ namespace mtp {
         PtpResponseCode_SessionAlreadyOpen          = 0x201E,
         PtpResponseCode_InvalidObjectPropCode       = 0xA801,
         PtpResponseCode_InvalidObjectPropFormat     = 0xA802,
+        PtpResponseCode_ObjectTooLarge              = 0xA809, /* MTP: exceeds the store's per-object limit */
         PtpResponseCode_ObjectPropNotSupported      = 0xA80A,
     };
 

@@ -413,6 +413,13 @@ int extract_archive(const char *src, const char *dest_dir, extract_cb cb,
     int overwrites = 0;
     int skipped = 0;        /* entries the filesystem wouldn't take — see below */
     bool disk_fail = false; /* couldn't write to SD (full?) — don't claim done */
+    /* The walk stopped short of the archive's end, or an entry's data was bad:
+     * a cancel (app exit / USB stop), a truncated or corrupt archive. Some files
+     * may have landed, but not all of them -- report failure so no caller
+     * deletes the source archive believing it was fully unpacked (every caller
+     * removes it on a positive count). FAT-rejected names (`skipped`) are a
+     * known, logged per-entry loss and still count as complete. */
+    bool incomplete = false;
     char last_dir[EX_PATH_MAX] = {0}; /* cache: skip mkdir_p when dir repeats */
     /* Benchmark accounting: decompressed bytes actually handed to the writer, and
      * a wall-clock start for the whole archive. Cheap to keep even when the bench
@@ -428,9 +435,25 @@ int extract_archive(const char *src, const char *dest_dir, extract_cb cb,
         if (rc != ARCHIVE_OK && rc != ARCHIVE_WARN) {
             ex_log("extract: header rc=%d in %s: %s", rc, src,
                    archive_error_string(a));
+            incomplete = true; /* truncated/corrupt: entries past here never came out */
             break;
         }
         if (archive_entry_filetype(entry) == AE_IFDIR) {
+            /* Keep the archive's folder structure faithful, empty folders
+             * included (a release's roms/ or config/ the app expects to exist). */
+            const char *dname = archive_entry_pathname(entry);
+            char drel[1024];
+            char dout[EX_PATH_MAX];
+            if (dname && sanitize_rel(dname, drel, sizeof(drel))) {
+                size_t dl = strlen(drel);
+                while (dl > 0 && drel[dl - 1] == '/') {
+                    drel[--dl] = '\0';
+                }
+                if (dl > 0 && snprintf(dout, sizeof(dout), "%s/%s", dest_dir,
+                                       drel) < (int)sizeof(dout)) {
+                    fs_mkdir_p(dout);
+                }
+            }
             continue;
         }
         const char *name = archive_entry_pathname(entry);
@@ -473,9 +496,16 @@ int extract_archive(const char *src, const char *dest_dir, extract_cb cb,
                               ? (la_int64_t)archive_entry_size(entry)
                               : -1;
 
-        bool existed = false;
+        /* Replacing an existing file: write the new copy beside it and swap it in
+         * only once it's complete. Opening the original with O_TRUNC meant a
+         * corrupt entry (or a cancel/full card) emptied the user's existing file
+         * and then the error path deleted it -- the old copy lost for nothing. */
+        bool existed = fs_exists(out);
+        char wpath[EX_PATH_MAX + 8];
+        snprintf(wpath, sizeof(wpath), existed ? "%s.hxtmp" : "%s", out);
+        bool wexisted = false;
         FILE *f = ex_open_out(
-            out, (off_t)(tun.prealloc && emax > 0 ? emax : 0), &existed);
+            wpath, (off_t)(tun.prealloc && emax > 0 ? emax : 0), &wexisted);
         if (!f) {
             /* One entry the filesystem won't accept: a name FAT rejects, a path
              * too deep for fs_mkdir_p, a reserved name. That is this entry's
@@ -566,10 +596,17 @@ int extract_archive(const char *src, const char *dest_dir, extract_cb cb,
         }
         w.f = NULL;
         if (!write_ok) {
-            remove(out);
+            remove(wpath); /* never `out` when it existed: the original stays */
+            incomplete = true;
             if (cancelled || disk_fail) {
                 break; /* cancelled, or SD failed: the rest would fail too */
             }
+            continue;
+        }
+        if (existed && (remove(out) != 0 || rename(wpath, out) != 0)) {
+            ex_log("extract: couldn't replace %s", out);
+            remove(wpath);
+            incomplete = true;
             continue;
         }
         count++;
@@ -578,6 +615,7 @@ int extract_archive(const char *src, const char *dest_dir, extract_cb cb,
         }
         if (cb && !cb(userdata, rel, count,
                       (uint64_t)archive_filter_bytes(a, -1))) {
+            incomplete = true; /* cancelled between entries */
             break;
         }
     }
@@ -597,9 +635,10 @@ int extract_archive(const char *src, const char *dest_dir, extract_cb cb,
     if (out_overwrites) {
         *out_overwrites = overwrites;
     }
-    ex_log("extract: %s -> %d file(s) (%d overwritten, %d skipped) into %s%s",
+    ex_log("extract: %s -> %d file(s) (%d overwritten, %d skipped) into %s%s%s",
            src, count, overwrites, skipped, dest_dir,
-           disk_fail ? " [DISK WRITE FAILED]" : "");
+           disk_fail ? " [DISK WRITE FAILED]" : "",
+           incomplete && !disk_fail ? " [INCOMPLETE]" : "");
 
     /* One line per archive so A/B runs diff cleanly. Records the settings in
      * effect alongside the number, so a log left over from an earlier config is
@@ -623,8 +662,9 @@ int extract_archive(const char *src, const char *dest_dir, extract_cb cb,
         }
     }
     archive_read_free(a);
-    /* A disk write failure means the extraction is incomplete even if some
-     * files landed: report failure so the caller keeps the archive instead of
-     * deleting it and claiming success. */
-    return disk_fail ? -1 : count;
+    /* A disk write failure, a cancel or a truncated/corrupt archive all mean
+     * the extraction is incomplete even if some files landed: report failure
+     * so the caller keeps the archive instead of deleting it and claiming
+     * success. */
+    return (disk_fail || incomplete) ? -1 : count;
 }

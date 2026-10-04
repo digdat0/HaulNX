@@ -347,6 +347,8 @@
   "manage_bulk_done": "%d konzol frissítve",
   "hide_from_page": "Elrejtés erről az oldalról",
   "github_token": "GitHub API token: %s",
+  "gh_token_expired": "A token lejárt",
+  "gh_token_expired_msg": "A GitHub elutasította az API-tokenedet (lejárt vagy visszavonták). A frissítésellenőrzések most nélküle futnak, és elérik a GitHub óránkénti 60-as korlátját. Cseréld le a tokent: Beállítások › Fiókadatok.",
   "redownload": "Újratöltés",
   "cancel_download": "Letöltés megszakítása",
   "queue_busy_prompt": "Ez az elem elakadtnak tűnik. Mit szeretnél tenni?",

@@ -347,6 +347,8 @@
   "manage_bulk_done": "已更新 %d 個主機",
   "hide_from_page": "從此頁面隱藏",
   "github_token": "GitHub API 權杖：%s",
+  "gh_token_expired": "權杖已過期",
+  "gh_token_expired_msg": "GitHub 拒絕了您的 API 權杖(已過期或遭撤銷)。更新檢查現在不帶權杖執行,會觸及 GitHub 每小時 60 次的限制。請在 設定 › 帳號憑證 中更換權杖。",
   "redownload": "重新下載",
   "cancel_download": "取消下載",
   "queue_busy_prompt": "此項目似乎卡住了。你想怎麼做？",

@@ -700,6 +700,8 @@ static const char *console_full_name(const char *abbr) {
         {"naomi", "Sega NAOMI"},
         {"arcade", "Arcade"},
         {"fbneo", "FinalBurn Neo"},
+        {"system22", "Namco System 22"},
+        {"model3", "Sega Model 3"},
         // Homebrew / misc systems
         {"amiga", "Commodore Amiga"},
         {"zx-spectrum", "Sinclair ZX Spectrum"},
@@ -4750,8 +4752,11 @@ void MainApplication::GotoAccount() {
                           b ? tr(S_SET) : tr(S_UNSET), lbl, onoff_color(b)); // 0
 #endif
     bool gh = g_creds.github_token[0] != '\0';
+    bool gh_bad = gh && net_github_token_rejected();
     this->layout->AddRow2(settings_label(tr(S_GITHUB_TOKEN)),
-                          gh ? tr(S_SET) : tr(S_UNSET), lbl, onoff_color(gh)); // 1 (0 in Lite)
+                          gh_bad ? tr(S_GH_TOKEN_EXPIRED)
+                                 : (gh ? tr(S_SET) : tr(S_UNSET)),
+                          lbl, onoff_color(gh && !gh_bad)); // 1 (0 in Lite)
     bool sgdb = g_creds.steamgriddb_key[0] != '\0';
     this->layout->AddRow2(settings_label(tr(S_STEAMGRIDDB_KEY)),
                           sgdb ? tr(S_SET) : tr(S_UNSET), lbl,
@@ -6196,7 +6201,7 @@ void MainApplication::InvServerPoll() {
     bool busy = (this->imp_open && (httpsrv_receiving(&this->imp_srv, NULL, NULL) ||
                                      httpsrv_sending(&this->imp_srv))) ||
                 recv || httpsrv_sending(&this->inv_srv) || queue_io_active() ||
-                this->pxt.running || push_cooldown;
+                this->pxt.running || !this->pxt_queue.empty() || push_cooldown;
     // Only sweep the filesystem to rebuild the JSON while a companion is actually
     // reading it — i.e. it polled inventory.json within the last 15s (the same
     // window the Tools panel calls "connected"; last_inv_ns is stamped on each
@@ -6500,19 +6505,13 @@ void MainApplication::InvBoxartTick() {
             this->inv_srv.boxsearch_done = false;
         }
     }
-    if (this->inv_srv.boxsearch_req_target[0]) {
-        this->inv_boxsearch_target = this->inv_srv.boxsearch_req_target;
-        this->inv_boxsearch_query = this->inv_srv.boxsearch_req_query;
-        this->inv_srv.boxsearch_req_target[0] = '\0';
-        this->inv_srv.boxsearch_req_query[0] = '\0';
-        this->inv_boxsearch.Join(); // reap any prior run first, belt & suspenders
-        if (!this->inv_boxsearch.Start(&MainApplication::InvBoxartSearchThread,
-                                       this)) {
-            InvBoxartSearchThread(this); // no worker available: run inline
+    // Publish a finished search's results. Skipped while a newer search is
+    // already waiting: the companion polling for THAT one must not see this
+    // older run's results flagged done.
+    auto reap_search = [this]() {
+        if (this->inv_srv.boxsearch_req_target[0]) {
+            return;
         }
-    }
-    if (this->inv_boxsearch.running && this->inv_boxsearch.done) {
-        this->inv_boxsearch.Join();
         this->inv_srv.boxsearch_count =
             (int)this->inv_boxsearch_results.size();
         for (size_t i = 0;
@@ -6523,20 +6522,68 @@ void MainApplication::InvBoxartTick() {
         }
         this->inv_srv.boxsearch_running = false;
         this->inv_srv.boxsearch_done = true;
-    }
-
-    if (this->inv_srv.boxpick_req_target[0]) {
-        this->inv_boxpick_target = this->inv_srv.boxpick_req_target;
-        this->inv_boxpick_index = this->inv_srv.boxpick_req_index;
-        this->inv_srv.boxpick_req_target[0] = '\0';
-        this->inv_boxpick.Join();
-        if (!this->inv_boxpick.Start(&MainApplication::InvBoxartPickThread,
-                                     this)) {
-            InvBoxartPickThread(this);
-        }
+    };
+    // Reap finished workers BEFORE starting anything, so a request that came
+    // in while one was running starts this same frame.
+    if (this->inv_boxsearch.running && this->inv_boxsearch.done) {
+        this->inv_boxsearch.Join();
+        reap_search();
     }
     if (this->inv_boxpick.running && this->inv_boxpick.done) {
         this->inv_boxpick.Join();
+        this->InvBoxartPickReap();
+    }
+    // One SteamGridDB job at a time. A new request used to Join() the running
+    // one right here -- freezing the UI thread (and this server's accept())
+    // for the rest of that network round trip -- after already overwriting
+    // the query/target strings the worker was still reading, and a pick could
+    // read inv_boxsearch_results while a search thread rewrote it. Now a
+    // request that arrives mid-job just waits in its req_* slot (a newer one
+    // replaces it) until the worker is reaped above.
+    bool box_busy = this->inv_boxsearch.running || this->inv_boxpick.running;
+    if (!box_busy && this->inv_srv.boxsearch_req_target[0]) {
+        this->inv_boxsearch_target = this->inv_srv.boxsearch_req_target;
+        this->inv_boxsearch_query = this->inv_srv.boxsearch_req_query;
+        this->inv_srv.boxsearch_req_target[0] = '\0';
+        this->inv_srv.boxsearch_req_query[0] = '\0';
+        if (!this->inv_boxsearch.Start(&MainApplication::InvBoxartSearchThread,
+                                       this)) {
+            // No worker available: run inline and publish now -- the reap
+            // above keys off .running, which an inline run never sets.
+            InvBoxartSearchThread(this);
+            reap_search();
+        }
+        box_busy = this->inv_boxsearch.running;
+    }
+    if (!box_busy && this->inv_srv.boxpick_req_target[0]) {
+        this->inv_boxpick_target = this->inv_srv.boxpick_req_target;
+        this->inv_boxpick_index = this->inv_srv.boxpick_req_index;
+        this->inv_srv.boxpick_req_target[0] = '\0';
+        if (!this->inv_boxpick.Start(&MainApplication::InvBoxartPickThread,
+                                     this)) {
+            InvBoxartPickThread(this);
+            this->InvBoxartPickReap();
+        }
+    }
+    mtp::BoxartStatus st;
+    st.search_running = this->inv_srv.boxsearch_running;
+    st.search_done = this->inv_srv.boxsearch_done;
+    st.search_count = this->inv_srv.boxsearch_count;
+    for (int i = 0; i < BOXART_MAX_CANDIDATES; i++) {
+        st.search_w[i] = this->inv_srv.boxsearch_w[i];
+        st.search_h[i] = this->inv_srv.boxsearch_h[i];
+    }
+    st.pick_running = this->inv_srv.boxpick_running;
+    st.pick_done = this->inv_srv.boxpick_done;
+    st.pick_ok = this->inv_srv.boxpick_ok;
+    mtp::SetBoxartStatus(st);
+}
+
+// UI thread: apply a finished companion pick (config, texture cache, toast)
+// and publish its outcome. Shared by InvBoxartTick's reap of the worker and
+// its inline no-thread fallback.
+void MainApplication::InvBoxartPickReap() {
+    {
         bool ok = this->inv_boxpick_ok;
         if (ok) {
             ConsoleGroup *g =
@@ -6574,22 +6621,14 @@ void MainApplication::InvBoxartTick() {
             xfer_log("FAILED     PC console-art pick for %s",
                      this->inv_boxpick_target.c_str());
         }
-        this->inv_srv.boxpick_ok = ok;
-        this->inv_srv.boxpick_running = false;
-        this->inv_srv.boxpick_done = true;
+        // A newer pick already waiting: leave its running/!done status alone
+        // so the companion polling for it doesn't read this one's outcome.
+        if (!this->inv_srv.boxpick_req_target[0]) {
+            this->inv_srv.boxpick_ok = ok;
+            this->inv_srv.boxpick_running = false;
+            this->inv_srv.boxpick_done = true;
+        }
     }
-    mtp::BoxartStatus st;
-    st.search_running = this->inv_srv.boxsearch_running;
-    st.search_done = this->inv_srv.boxsearch_done;
-    st.search_count = this->inv_srv.boxsearch_count;
-    for (int i = 0; i < BOXART_MAX_CANDIDATES; i++) {
-        st.search_w[i] = this->inv_srv.boxsearch_w[i];
-        st.search_h[i] = this->inv_srv.boxsearch_h[i];
-    }
-    st.pick_running = this->inv_srv.boxpick_running;
-    st.pick_done = this->inv_srv.boxpick_done;
-    st.pick_ok = this->inv_srv.boxpick_ok;
-    mtp::SetBoxartStatus(st);
 }
 
 // Defined further down (with update_manifest_detect and friends, once
@@ -6600,6 +6639,8 @@ void MainApplication::InvBoxartTick() {
 static bool record_installed_tag(const std::string &dest, const std::string &tag);
 static void record_installed_tag_in_dir(const std::string &dir,
                                         const std::string &tag);
+static void push_app_apply(const std::string &stage, const std::string &dest_dir);
+static void backup_nro_before_replace(const std::string &path);
 
 // A game streamed to the always-on server (app utility › Device Transfer › Send
 // a game, while connected) landed in the inbox as "<name>.part". Finish it into
@@ -6639,32 +6680,11 @@ void MainApplication::InvApplyFile() {
     // Checked ahead of the fsdest branch since a DAT bulk push never sets
     // recv_fs_dest at all.
     if (dat_bulk) {
-        std::string stage = std::string(DATS_DIR) + "/_bulk_incoming";
-        fs_rm_rf(stage.c_str()); // clear any stale leftover from an aborted prior bulk push
-        fs_mkdir_p(stage.c_str());
-        if (this->pxt.running) {
-            this->pxt.Join();
-        }
-        this->pxt_path = part;
-        this->pxt_dir = stage;
-        this->pxt_name = name;
-        this->pxt_target.clear();
-        this->pxt_kind = 2;
-        this->pxt_cancel = false;
-        if (!this->pxt.Start(&MainApplication::PushExtractThread, this)) {
-            // Couldn't spawn: fall back to doing it inline, same as the other
-            // two extract paths above.
-            int ow = 0;
-            int n = extract_archive(part.c_str(), stage.c_str(), NULL, NULL, &ow);
-            if (n > 0) {
-                remove(part.c_str());
-                this->PushExtractApplyDatBulk();
-            } else {
-                xfer_log("FAILED     PC DAT bulk push: couldn't unpack %s",
-                         name.c_str());
-                fs_rm_rf(stage.c_str());
-            }
-        }
+        // The staging folder is cleared when the job actually starts (see
+        // PushExtractStartNext), not here -- a previous batch may still be
+        // unpacking into it.
+        this->PushExtractQueue(part, std::string(DATS_DIR) + "/_bulk_incoming",
+                               name, "", 2, "");
         return;
     }
     // SD Card tab direct write (X-Fs-Path): move the finished temp straight to
@@ -6688,47 +6708,22 @@ void MainApplication::InvApplyFile() {
         // InvServerPoll -- and with it httpsrv_poll's accept() -- for the
         // whole unzip.
         if (fsextract) {
-            fs_mkdir_p(fsdest.c_str());
-            if (this->pxt.running) {
-                // Shouldn't happen -- the desktop sends one folder at a time --
-                // but don't drop this extract if it somehow does.
-                this->pxt.Join();
+            // A release that's laid out from the SD root (switch/<app>/...) is
+            // extracted straight into the card root; extract joins paths with a
+            // '/', so name the root "sdmc:" rather than "sdmc:/" to avoid "sdmc://x".
+            while (fsdest.size() > 6 && fsdest.back() == '/') {
+                fsdest.pop_back();
             }
-            this->pxt_path = part;
-            this->pxt_dir = fsdest;
-            this->pxt_name = name;
-            this->pxt_target.clear();
-            this->pxt_kind = 1; // SD Card tab folder push, not a console game
-            this->pxt_app_tag = app_tag; // usually empty (plain SD Card tab drop)
-            this->pxt_cancel = false;
-            if (!this->pxt.Start(&MainApplication::PushExtractThread, this)) {
-                // Couldn't spawn: fall back to doing it inline, same as the
-                // game-push path below.
-                int ow = 0;
-                int n = extract_archive(part.c_str(), fsdest.c_str(), NULL, NULL,
-                                        &ow);
-                if (n <= 0) {
-                    size_t nl = name.size();
-                    if (nl > 4 && strcasecmp(name.c_str() + nl - 4, ".rar") == 0) {
-                        ow = 0;
-                        n = rar3_extract(part.c_str(), fsdest.c_str(), NULL, NULL,
-                                         &ow);
-                    }
-                }
-                if (n > 0) {
-                    remove(part.c_str());
-                    record_installed_tag_in_dir(fsdest, app_tag);
-                    xfer_log("push       PC unpacked %s -> %s (SD Card tab)",
-                             name.c_str(), fsdest.c_str());
-                } else {
-                    xfer_log("FAILED     PC SD-card folder push: couldn't unpack "
-                             "%s into %s",
-                             name.c_str(), fsdest.c_str());
-                }
+            if (fsdest == "sdmc:/") {
+                fsdest = "sdmc:";
             } else {
-                xfer_log("push       PC unpacking %s -> %s (SD Card tab)",
-                         name.c_str(), fsdest.c_str());
+                fs_mkdir_p(fsdest.c_str());
             }
+            // kind 1: SD Card tab folder push (app_tag usually empty -- set
+            // only for an Apps-tab install/update of a multi-file release).
+            this->PushExtractQueue(part, fsdest, name, "", 1, app_tag);
+            xfer_log("push       PC unpacking %s -> %s (SD Card tab)",
+                     name.c_str(), fsdest.c_str());
             return;
         }
         if (!fs_move(part.c_str(), fsdest.c_str())) {
@@ -6796,33 +6791,11 @@ void MainApplication::InvApplyFile() {
             // service it and got reset instead. A total failure just leaves the
             // raw archive sitting in the console folder.
             if (is_archive_name(name.c_str())) {
-                if (this->pxt.running) {
-                    // Shouldn't happen -- Wi-Fi pushes are serialized by the
-                    // desktop's push queue -- but don't drop the extract if it
-                    // somehow does; finish the prior job before starting this one.
-                    this->pxt.Join();
-                }
-                this->pxt_path = fdest;
-                this->pxt_dir = dir;
-                this->pxt_name = name;
-                this->pxt_target = g->target;
-                this->pxt_kind = 0; // a console game archive
-                this->pxt_cancel = false;
-                if (!this->pxt.Start(&MainApplication::PushExtractThread, this)) {
-                    // Couldn't spawn: fall back to doing it inline, same as before.
-                    int ow = 0;
-                    int n = extract_archive(fdest.c_str(), dir.c_str(), NULL, NULL, &ow);
-                    if (n <= 0) {
-                        size_t nl = name.size();
-                        if (nl > 4 && strcasecmp(name.c_str() + nl - 4, ".rar") == 0) {
-                            ow = 0;
-                            n = rar3_extract(fdest.c_str(), dir.c_str(), NULL, NULL, &ow);
-                        }
-                    }
-                    if (n > 0) {
-                        remove(fdest.c_str());
-                    }
-                }
+                // kind 0: a console game archive. Queued behind any unpack
+                // still running -- the desktop's push queue only waits for the
+                // upload's 200, not for this unzip, so a Library "push all"
+                // of archives does land here back to back.
+                this->PushExtractQueue(fdest, dir, name, g->target, 0, "");
             }
             xfer_log("push       PC game %s -> %s", name.c_str(), g->target);
             this->inv_last_gen_ns = 0; // the console's install count changed
@@ -6865,19 +6838,37 @@ bool MainApplication::PushExtractProgress(void *ud, const char *entry, int done,
 void MainApplication::PushExtractThread(void *arg) {
     auto self = static_cast<MainApplication *>(arg);
     int ow = 0;
-    int n = extract_archive(self->pxt_path.c_str(), self->pxt_dir.c_str(),
+    // An app install/update pushed from the desktop (it carries X-App-Tag) is
+    // unpacked to a staging folder first and then applied like an on-device
+    // update: files it would overwrite are kept as the rollback backup and
+    // existing config/roms/saves files are left alone. Everything else
+    // (SD Card tab folder drops, games) extracts straight into place.
+    bool app_push = self->pxt_kind == 1 && !self->pxt_app_tag.empty();
+    std::string stage = std::string(DL_TMP_DIR) + "/pushstage";
+    if (app_push) {
+        fs_rm_rf(stage.c_str());
+        fs_mkdir_p(stage.c_str());
+    }
+    const std::string &out = app_push ? stage : self->pxt_dir;
+    int n = extract_archive(self->pxt_path.c_str(), out.c_str(),
                             &MainApplication::PushExtractProgress, self, &ow);
     // Same libarchive->RAR3 fallback the inline path used.
     if (n <= 0) {
         size_t nl = self->pxt_name.size();
         if (nl > 4 && strcasecmp(self->pxt_name.c_str() + nl - 4, ".rar") == 0) {
             ow = 0;
-            n = rar3_extract(self->pxt_path.c_str(), self->pxt_dir.c_str(),
+            n = rar3_extract(self->pxt_path.c_str(), out.c_str(),
                              &MainApplication::PushExtractProgress, self, &ow);
         }
     }
     if (n > 0) {
+        if (app_push) {
+            push_app_apply(stage, self->pxt_dir);
+        }
         remove(self->pxt_path.c_str());
+    }
+    if (app_push) {
+        fs_rm_rf(stage.c_str());
     }
     self->pxt.done = true;
 }
@@ -6893,17 +6884,63 @@ void MainApplication::PushExtractTick() {
     this->pxt.Join();
     if (this->pxt_kind == 2) {
         this->PushExtractApplyDatBulk();
-        return;
-    }
-    if (this->pxt_kind == 1) {
+    } else if (this->pxt_kind == 1) {
         record_installed_tag_in_dir(this->pxt_dir, this->pxt_app_tag);
         this->pxt_app_tag.clear();
         xfer_log("push       PC unpacked %s -> %s (SD Card tab)",
                  this->pxt_name.c_str(), this->pxt_dir.c_str());
+    } else {
+        xfer_log("push       PC game %s unpacked -> %s", this->pxt_name.c_str(),
+                 this->pxt_target.c_str());
+    }
+    this->PushExtractStartNext();
+}
+
+// Queue one unpack job (see pxt_queue's comment) and start it at once if the
+// worker is idle.
+void MainApplication::PushExtractQueue(const std::string &path,
+                                       const std::string &dir,
+                                       const std::string &name,
+                                       const std::string &target, int kind,
+                                       const std::string &app_tag) {
+    PxtJob job;
+    job.path = path;
+    job.dir = dir;
+    job.name = name;
+    job.target = target;
+    job.kind = kind;
+    job.app_tag = app_tag;
+    this->pxt_queue.push_back(job);
+    this->PushExtractStartNext();
+}
+
+// Start the oldest queued job if no unpack is running. Without a worker
+// thread it runs inline and finishes through PushExtractTick (which then
+// starts the next one), so every job still gets its kind-specific finish.
+void MainApplication::PushExtractStartNext() {
+    if (this->pxt.running || this->pxt_queue.empty()) {
         return;
     }
-    xfer_log("push       PC game %s unpacked -> %s", this->pxt_name.c_str(),
-             this->pxt_target.c_str());
+    PxtJob job = this->pxt_queue.front();
+    this->pxt_queue.pop_front();
+    this->pxt_path = job.path;
+    this->pxt_dir = job.dir;
+    this->pxt_name = job.name;
+    this->pxt_target = job.target;
+    this->pxt_kind = job.kind;
+    this->pxt_app_tag = job.app_tag;
+    this->pxt_cancel = false;
+    if (job.kind == 2) {
+        // DAT batch staging: clear any leftover from an aborted earlier batch.
+        // Safe now -- the previous batch (if any) was fully applied by
+        // PushExtractTick before this job could start.
+        fs_rm_rf(job.dir.c_str());
+        fs_mkdir_p(job.dir.c_str());
+    }
+    if (!this->pxt.Start(&MainApplication::PushExtractThread, this)) {
+        PushExtractThread(this); // sets pxt.done; Join() below is a no-op
+        this->PushExtractTick();
+    }
 }
 
 // An emulator .nro pushed for an in-place update (app utility › Emulators ›
@@ -6977,6 +7014,8 @@ void MainApplication::InvApplyEmuNroAt(const std::string &app,
     }
     if (fresh) {
         fs_ensure_parent(dest.c_str());
+    } else {
+        backup_nro_before_replace(dest); // the Backups screen can roll back to it
     }
     // Park the current build at <dest>.bak rather than deleting it outright, so a
     // failed or interrupted write can be rolled back to a working app. Cleared on
@@ -7251,43 +7290,179 @@ static bool is_safe_asset_name(const std::string &name) {
           name.find('\\') == std::string::npos;
 }
 
-// Copy every file under `src_dir` (recursively) into `dst_dir`, overwriting
-// whatever is already there, except `skip_path` (an absolute path -- the
-// archive's own .nro, which UmiTick installs separately via fs_move so its
-// source bytes are already spent by the time this runs). Some releases (e.g.
-// 2ship2harkinian, Shipwright) ship the .nro alongside asset packs / loader
-// files it needs at runtime in the SAME folder of the zip; installing only
-// the picked .nro used to silently drop those, leaving a build that "updates"
-// successfully but then can't find its own data.
-static void copy_dir_contents(const std::string &src_dir,
-                              const std::string &dst_dir,
-                              const std::string &skip_path) {
+// Folder names a release's own default files must never overwrite once the user
+// has them (their settings, ROMs, saves) -- only matters on an update.
+static bool is_user_data_dir(const std::string &name) {
+    static const char *names[] = {"config", "roms", "rom", "save", "saves",
+                                  "savedata", "nvram"};
+    for (const char *n : names) {
+        if (strcasecmp(name.c_str(), n) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Copy everything under `src_dir` (recursively) into `dst_dir`, folder
+// structure intact -- empty folders too -- overwriting whatever is already
+// there, except `skip_path` (an absolute path -- the archive's own .nro, which
+// UmiTick installs separately via fs_move so its source bytes are already spent
+// by the time this runs). Releases (2ship2harkinian, Shipwright, System22-NX...)
+// ship the .nro alongside asset packs / data folders it needs at runtime;
+// installing only the picked .nro used to silently drop those, leaving a build
+// that "updates" successfully but then can't find its own data. With
+// `keep_user_data`, a file already present under a config/roms/saves-style
+// folder is left alone so an update never resets the user's own data.
+//
+// With `bak_root`, a file the copy would overwrite is first MOVED to
+// bak_root/<its path relative to the SD root> (so a rollback can put every
+// replaced file back), and every file the copy CREATES is listed in `newlist`
+// (so a rollback can delete what the update added). The move is undone if the
+// copy itself then fails. An already-present backup of a file is never replaced:
+// the first one kept is the true original.
+struct TreeCopy {
+    std::string skip_path;       // absolute path never copied (installed separately)
+    bool keep_user_data = false; // leave existing config/roms/saves files alone
+    std::string bak_root;        // non-empty: keep a copy of everything overwritten
+    std::string no_bak_path;     // overwritten file here isn't kept (the .nro has its own backup)
+    FILE *newlist = nullptr;     // with bak_root: one created path per line
+};
+
+// "sdmc:/switch/app/x.bin" -> "switch/app/x.bin"
+static std::string sd_rel(const std::string &p) {
+    size_t i = (p.compare(0, 5, "sdmc:") == 0) ? 5 : 0;
+    while (i < p.size() && p[i] == '/') {
+        i++;
+    }
+    return p.substr(i);
+}
+
+static void copy_tree_all(const std::string &src_dir, const std::string &dst_dir,
+                          const TreeCopy &o, bool in_user_dir = false) {
+    fs_mkdir_p(dst_dir.c_str());
     for (const auto &e : list_dir(src_dir)) {
         std::string sp = src_dir + "/" + e.name;
         std::string dp = dst_dir + "/" + e.name;
         if (e.is_dir) {
-            copy_dir_contents(sp, dp, skip_path);
-        } else if (sp != skip_path) {
+            copy_tree_all(sp, dp, o, in_user_dir || is_user_data_dir(e.name));
+        } else if (sp != o.skip_path) {
+            bool exists = fs_exists(dp.c_str());
+            if (o.keep_user_data && in_user_dir && exists) {
+                continue;
+            }
             fs_ensure_parent(dp.c_str());
-            fs_copy_file(sp.c_str(), dp.c_str());
+            std::string bp;
+            bool moved = false;
+            if (!o.bak_root.empty()) {
+                if (!exists) {
+                    if (o.newlist) {
+                        fprintf(o.newlist, "%s\n", dp.c_str());
+                    }
+                } else if (dp != o.no_bak_path) {
+                    bp = o.bak_root + "/" + sd_rel(dp);
+                    if (!fs_exists(bp.c_str())) {
+                        fs_ensure_parent(bp.c_str());
+                        moved = fs_move(dp.c_str(), bp.c_str());
+                    }
+                }
+            }
+            if (!fs_copy_file(sp.c_str(), dp.c_str()) && moved) {
+                fs_move(bp.c_str(), dp.c_str()); // keep the old file in place
+            }
         }
     }
 }
 
-// Copy the current build into BACKUPS_DIR/<id>/<ver>.nro, then keep only the two
-// most recent. Best-effort: a backup problem never blocks the update itself.
-static void backup_keep2(const std::string &id, const std::string &cur_path,
-                         const std::string &cur_ver) {
-    if (id.empty() || cur_path.empty() || !fs_exists(cur_path.c_str())) {
-        return;
-    }
+// Rollback backups live beside each other under BACKUPS_DIR/<id>/:
+//   <ver>.nro    the build that was replaced
+//   <ver>.files/ every other file the update overwrote, at its SD-relative path
+//   <ver>.new    paths the update created (one per line), removed on rollback
+static std::string backup_label(const std::string &cur_ver) {
     std::string ver = cur_ver.empty() ? "unknown" : cur_ver;
     for (auto &c : ver) {
         if (c == '/' || c == '\\' || c == ':') {
             c = '_';
         }
     }
-    std::string dest = std::string(BACKUPS_DIR) + "/" + id + "/" + ver + ".nro";
+    return ver;
+}
+static std::string backup_stem(const std::string &id, const std::string &label) {
+    return std::string(BACKUPS_DIR) + "/" + id + "/" + label;
+}
+
+// Delete one backup: its .nro and the .files/.new that go with it.
+static void backup_remove_nro(const std::string &nro_path) {
+    std::string stem = nro_path;
+    if (is_nro_name(stem)) {
+        stem.resize(stem.size() - 4);
+    }
+    remove(nro_path.c_str());
+    fs_rm_rf((stem + ".files").c_str());
+    remove((stem + ".new").c_str());
+}
+
+static uint64_t tree_bytes(const std::string &dir) {
+    uint64_t total = 0;
+    for (const auto &e : list_dir(dir)) {
+        std::string p = dir + "/" + e.name;
+        if (e.is_dir) {
+            total += tree_bytes(p);
+        } else {
+            struct stat sb;
+            if (stat(p.c_str(), &sb) == 0) {
+                total += (uint64_t)sb.st_size;
+            }
+        }
+    }
+    return total;
+}
+
+// Size of everything one backup holds (the .nro plus its extra files).
+static uint64_t backup_total_bytes(const std::string &nro_path) {
+    std::string stem = nro_path;
+    if (is_nro_name(stem)) {
+        stem.resize(stem.size() - 4);
+    }
+    struct stat sb;
+    uint64_t sz = (stat(nro_path.c_str(), &sb) == 0) ? (uint64_t)sb.st_size : 0;
+    return sz + tree_bytes(stem + ".files");
+}
+
+// copy_tree_all that also keeps the overwritten files as the rollback backup for
+// `id` at `cur_ver` (the version being replaced). id empty = no backup.
+static void copy_tree_backed(const std::string &src_dir, const std::string &dst_dir,
+                             const std::string &skip_path, bool keep_user_data,
+                             const std::string &id, const std::string &cur_ver,
+                             const std::string &no_bak_path) {
+    TreeCopy o;
+    o.skip_path = skip_path;
+    o.keep_user_data = keep_user_data;
+    o.no_bak_path = no_bak_path;
+    std::string stem;
+    if (!id.empty()) {
+        stem = backup_stem(id, backup_label(cur_ver));
+        o.bak_root = stem + ".files";
+        fs_ensure_parent((stem + ".new").c_str());
+        o.newlist = fopen((stem + ".new").c_str(), "ab");
+    }
+    copy_tree_all(src_dir, dst_dir, o);
+    if (o.newlist) {
+        fclose(o.newlist);
+    }
+}
+
+// Copy the current build into BACKUPS_DIR/<id>/<ver>.nro, then keep only the two
+// most recent (each with its .files/.new). Best-effort: a backup problem never
+// blocks the update itself.
+// `protect` (a rollback's own source .nro) is never pruned, or rolling back to the
+// oldest kept build would delete it right before restoring from it.
+static void backup_keep2(const std::string &id, const std::string &cur_path,
+                         const std::string &cur_ver,
+                         const std::string &protect = std::string()) {
+    if (id.empty() || cur_path.empty() || !fs_exists(cur_path.c_str())) {
+        return;
+    }
+    std::string dest = backup_stem(id, backup_label(cur_ver)) + ".nro";
     fs_ensure_parent(dest.c_str());
     if (!fs_exists(dest.c_str())) {
         fs_copy_file(cur_path.c_str(), dest.c_str());
@@ -7295,8 +7470,83 @@ static void backup_keep2(const std::string &id, const std::string &cur_path,
     // Prune to 2 newest.
     auto baks = list_backups(id);
     for (size_t i = 2; i < baks.size(); i++) {
-        remove(baks[i].path.c_str());
+        if (baks[i].path != protect) {
+            backup_remove_nro(baks[i].path);
+        }
     }
+    // Drop .files/.new left behind with no .nro (e.g. a backup that never got one).
+    std::string dir = std::string(BACKUPS_DIR) + "/" + id;
+    for (const auto &e : list_dir(dir)) {
+        size_t dot = e.name.rfind('.');
+        if (dot == std::string::npos) {
+            continue;
+        }
+        std::string ext = e.name.substr(dot);
+        if (ext == ".files" || ext == ".new") {
+            if (!fs_exists((dir + "/" + e.name.substr(0, dot) + ".nro").c_str())) {
+                fs_rm_rf((dir + "/" + e.name).c_str());
+            }
+        }
+    }
+}
+
+// Rollback of the extra files: put back what the update overwrote (<ver>.files),
+// then take away what it created (<ver>.new) -- except under config/roms/saves-
+// style folders. What this undoes is itself kept under (id, cur_ver), so the
+// rollback can be reversed. `target_stem` is BACKUPS_DIR/<id>/<ver> of the build
+// being restored.
+static void backup_restore_files(const std::string &target_stem,
+                                 const std::string &id,
+                                 const std::string &cur_ver) {
+    std::string files = target_stem + ".files";
+    std::string newl = target_stem + ".new";
+    std::string cur_stem = backup_stem(id, backup_label(cur_ver));
+    // Restoring a backup over itself (same label) would shuffle its own files.
+    bool keep_cur = !id.empty() && cur_stem != target_stem;
+    if (fs_exists(files.c_str())) {
+        copy_tree_backed(files, "sdmc:", "", false, keep_cur ? id : "", cur_ver, "");
+    }
+    FILE *f = fopen(newl.c_str(), "rb");
+    if (!f) {
+        return;
+    }
+    char line[2048];
+    while (fgets(line, sizeof(line), f)) {
+        std::string p = line;
+        while (!p.empty() && (p.back() == '\n' || p.back() == '\r')) {
+            p.pop_back();
+        }
+        if (p.compare(0, 6, "sdmc:/") != 0 || !fs_exists(p.c_str())) {
+            continue;
+        }
+        bool user = false; // never delete into the user's own data folders
+        size_t from = 6;
+        while (from < p.size()) {
+            size_t sl = p.find('/', from);
+            std::string comp = p.substr(from, sl == std::string::npos ? sl : sl - from);
+            if (sl != std::string::npos && is_user_data_dir(comp)) {
+                user = true;
+            }
+            if (sl == std::string::npos) {
+                break;
+            }
+            from = sl + 1;
+        }
+        if (user) {
+            continue;
+        }
+        if (keep_cur) {
+            std::string bp = cur_stem + ".files/" + sd_rel(p);
+            if (!fs_exists(bp.c_str())) {
+                fs_ensure_parent(bp.c_str());
+                if (fs_move(p.c_str(), bp.c_str())) {
+                    continue;
+                }
+            }
+        }
+        remove(p.c_str());
+    }
+    fclose(f);
 }
 
 // Load the shared manifest into a malloc'd UpdSource[UPD_MAX] array (caller
@@ -7404,12 +7654,74 @@ static void record_installed_tag_in_dir(const std::string &dir,
         return;
     }
     std::vector<NroFile> nros;
-    collect_nros(dir, 2, nros);
+    // A card-root extract (switch/<app>/...) buries the .nro a level or two
+    // deeper than a plain app-folder one.
+    if (dir == "sdmc:") {
+        collect_nros("sdmc:/switch", 4, nros);
+    } else {
+        collect_nros(dir, 2, nros);
+    }
     for (auto &n : nros) {
         if (record_installed_tag(n.path, tag)) {
             return;
         }
     }
+}
+
+// A release the desktop pushed as a folder (zip + X-Fs-Extract), already
+// unpacked into `stage`. Work out whether it replaces an installed app -- the
+// manifest row matching its .nro's name, with that .nro already present where
+// the release will put it -- and if so back up the old .nro and every file
+// about to be overwritten (and note what is new) before copying the tree into
+// `dest_dir`, leaving existing config/roms/saves files untouched. Otherwise it
+// is a fresh install and just copies. Runs on the extract worker thread.
+static std::string manifest_id_for_nro(const std::string &bn) {
+    std::string id;
+    int cnt = 0;
+    UpdSource *all = updman_load_all(&cnt);
+    for (int i = 0; all && i < cnt; i++) {
+        if (detect_match(all[i].detect, bn)) {
+            id = all[i].id;
+            break;
+        }
+    }
+    free(all);
+    return id;
+}
+
+static std::string nro_ver_or_empty(const std::string &path) {
+    char v[24];
+    return (nro_file_version(path.c_str(), v, sizeof(v)) && v[0]) ? v : "";
+}
+
+// Keep the installed .nro (as <ver>.nro under its manifest id) before a desktop
+// push replaces it -- the on-device updater's backup_keep2, for pushes. Silent
+// when the file matches no manifest row.
+static void backup_nro_before_replace(const std::string &path) {
+    if (!fs_exists(path.c_str())) {
+        return;
+    }
+    std::string id = manifest_id_for_nro(path.substr(path.find_last_of('/') + 1));
+    if (!id.empty()) {
+        backup_keep2(id, path, nro_ver_or_empty(path));
+    }
+}
+
+static void push_app_apply(const std::string &stage, const std::string &dest_dir) {
+    std::string id, old_nro, old_ver;
+    std::string nro_path, rel;
+    if (find_nro_in_dir(stage, nro_path, rel)) {
+        std::string old_path = dest_dir + "/" + rel; // "sdmc:" + "/switch/..." for a card-root push
+        if (fs_exists(old_path.c_str())) {
+            id = manifest_id_for_nro(rel.substr(rel.find_last_of('/') + 1));
+            old_nro = old_path;
+        }
+    }
+    if (!id.empty()) {
+        old_ver = nro_ver_or_empty(old_nro);
+        backup_keep2(id, old_nro, old_ver);
+    }
+    copy_tree_backed(stage, dest_dir, "", !id.empty(), id, old_ver, old_nro);
 }
 
 // Desktop companion, view-only: write BACKUPS_JSON_PATH, one row per app
@@ -7463,9 +7775,7 @@ extern "C" bool app_backups_write_json(const char *path) {
             if (is_nro_name(ver)) {
                 ver = ver.substr(0, ver.size() - 4);
             }
-            struct stat sb;
-            long long sz =
-                (stat(b.path.c_str(), &sb) == 0) ? (long long)sb.st_size : 0;
+            long long sz = (long long)backup_total_bytes(b.path);
             fputs(vfirst ? "{\"ver\": " : ", {\"ver\": ", f);
             vfirst = false;
             json_write_escaped(f, ver.c_str());
@@ -7572,9 +7882,7 @@ void MainApplication::GotoBackups() {
             if (is_nro_name(ver)) {
                 ver = ver.substr(0, ver.size() - 4); // drop ".nro"
             }
-            struct stat sb;
-            uint64_t sz =
-                (stat(b.path.c_str(), &sb) == 0) ? (uint64_t)sb.st_size : 0;
+            uint64_t sz = backup_total_bytes(b.path); // .nro + its extra files
             total += sz;
             this->layout->AddRow2(d.name + std::string("  ·  ") + ver,
                                   human_size(sz), g_theme->row_text,
@@ -7719,6 +8027,11 @@ void MainApplication::UmiTick(int j) {
     // .nro sat at the archive root with nothing beside it.
     std::string nro_rel_dir;
     std::string nro_path;
+    // Which extracted subtree (comp_src, absolute) maps onto which SD folder
+    // (comp_dst, "sdmc:" = the card root), so EVERY file in the archive lands
+    // with its folder structure intact -- not just whatever sat beside the .nro.
+    // Empty = nothing besides the .nro to install.
+    std::string comp_src, comp_dst;
     if (job.zip) {
         exdir = std::string(DL_TMP_DIR) + "/appupd_x" + std::to_string(j);
         fs_rm_rf(exdir.c_str()); // clear any stale extraction
@@ -7743,22 +8056,83 @@ void MainApplication::UmiTick(int j) {
         if (is_safe_asset_name(zip_name)) {
             desired_name = zip_name;
         }
-        if (job.fresh) {
-            std::string low = rel;
-            for (char &c : low) {
-                c = (char)tolower((unsigned char)c);
+        std::string low = rel;
+        for (char &c : low) {
+            c = (char)tolower((unsigned char)c);
+        }
+        size_t cut = std::string::npos;
+        if (low.compare(0, 7, "switch/") == 0) {
+            cut = 0;
+        } else {
+            size_t p = low.find("/switch/");
+            if (p != std::string::npos) {
+                cut = p + 1;
             }
-            size_t cut = std::string::npos;
-            if (low.compare(0, 7, "switch/") == 0) {
-                cut = 0;
+        }
+        if (job.fresh) {
+            if (cut != std::string::npos) {
+                // The archive is laid out from the SD root (switch/<app>/...).
+                dest = "sdmc:/" + rel.substr(cut);
+                comp_src = cut ? exdir + "/" + rel.substr(0, cut - 1) : exdir;
+                comp_dst = "sdmc:";
+            } else if (nro_rel_dir.empty()) {
+                // The .nro sits at the archive root. If anything else shipped
+                // beside it (config/, roms/, icons/...) keep the whole release
+                // together in its own sdmc:/switch/<name>/ folder -- the layout
+                // such releases document -- instead of strewing it across
+                // sdmc:/switch. A lone .nro goes straight into sdmc:/switch.
+                bool extras = false;
+                for (const auto &x : list_dir(exdir)) {
+                    if (x.is_dir || x.name != zip_name) {
+                        extras = true;
+                        break;
+                    }
+                }
+                std::string stem = zip_name;
+                if (stem.size() > 4 &&
+                    strcasecmp(stem.c_str() + stem.size() - 4, ".nro") == 0) {
+                    stem.erase(stem.size() - 4);
+                }
+                if (extras && is_safe_asset_name(stem)) {
+                    comp_dst = "sdmc:/switch/" + stem;
+                    comp_src = exdir;
+                    dest = comp_dst + "/" + zip_name;
+                } else {
+                    dest = "sdmc:/switch/" + rel;
+                }
             } else {
-                size_t p = low.find("/switch/");
-                if (p != std::string::npos) {
-                    cut = p + 1;
+                // Wrapped in its own folder (e.g. myapp/myapp.nro): the archive
+                // root is the contents of sdmc:/switch.
+                dest = "sdmc:/switch/" + rel;
+                comp_src = exdir;
+                comp_dst = "sdmc:/switch";
+            }
+        } else {
+            // An update: dest is the installed .nro. Map the archive root so its
+            // whole tree lands where this install lives, as long as the
+            // installed folder matches the archive's own layout; otherwise fall
+            // back to just the .nro's own folder.
+            std::string dest_dir = dest.substr(0, dest.find_last_of('/'));
+            if (nro_rel_dir.empty()) {
+                comp_src = exdir;
+                comp_dst = dest_dir;
+            } else {
+                std::string ld = dest_dir, lr = "/" + nro_rel_dir;
+                for (char &c : ld) {
+                    c = (char)tolower((unsigned char)c);
+                }
+                for (char &c : lr) {
+                    c = (char)tolower((unsigned char)c);
+                }
+                if (ld.size() > lr.size() &&
+                    ld.compare(ld.size() - lr.size(), lr.size(), lr) == 0) {
+                    comp_src = exdir;
+                    comp_dst = dest_dir.substr(0, dest_dir.size() - lr.size());
+                } else {
+                    comp_src = exdir + "/" + nro_rel_dir;
+                    comp_dst = dest_dir;
                 }
             }
-            dest = (cut != std::string::npos) ? ("sdmc:/" + rel.substr(cut))
-                                              : ("sdmc:/switch/" + rel);
         }
     } else if (is_safe_asset_name(job.asset)) {
         desired_name = job.asset;
@@ -7774,20 +8148,18 @@ void MainApplication::UmiTick(int j) {
         job.xslot = -1;
         return;
     }
-    // Companion files: a release that packs the .nro alongside asset packs /
-    // loader files in the same archive folder needs all of them installed
-    // together, not just the .nro fs_move handles below. dest's directory is
-    // already final here for both a fresh install (set above from the
-    // archive's own switch/ layout) and an update (job.dest's existing
-    // folder) -- a later rename only changes dest's file name, not its
-    // directory. Best-effort: a missing/unreadable companion never blocks the
-    // .nro install itself.
-    if (job.zip && !exdir.empty()) {
-        std::string src_dir = nro_rel_dir.empty() ? exdir : (exdir + "/" + nro_rel_dir);
-        std::string dest_dir = dest.substr(0, dest.find_last_of('/'));
-        if (!dest_dir.empty()) {
-            copy_dir_contents(src_dir, dest_dir, nro_path);
-        }
+    // Everything else in the archive: install the whole release tree, folder
+    // structure preserved (see comp_src/comp_dst above), not just the .nro
+    // fs_move handles below. dest is already final here for both a fresh
+    // install and an update -- a later rename only changes dest's file name,
+    // not its directory. Best-effort: a missing/unreadable file never blocks
+    // the .nro install itself.
+    // An update keeps every file it overwrites (and lists what it adds) as part of
+    // the rollback backup next to the .nro one -- see backup_keep2 below.
+    if (job.zip && !exdir.empty() && !comp_src.empty() && !comp_dst.empty()) {
+        bool keep = !job.fresh && !job.id.empty() && fs_exists(dest.c_str());
+        copy_tree_backed(comp_src, comp_dst, nro_path, !job.fresh,
+                         keep ? job.id : std::string(), job.bakver, "");
     }
     // An update (never a fresh install, which already names its own dest
     // above) whose release names its file differently than what's currently
@@ -8052,7 +8424,7 @@ void MainApplication::AppRevert(const UpdSource &e) {
 // do inline. arg is &this->revert_job.
 void MainApplication::AppRevertThread(void *arg) {
     auto job = static_cast<RevertJob *>(arg);
-    backup_keep2(job->id, job->dest, job->cur_ver);
+    backup_keep2(job->id, job->dest, job->cur_ver, job->src);
     remove(job->bak.c_str());
     job->restore_bak = fs_move(job->dest.c_str(), job->bak.c_str());
     bool ok = fs_copy_file_progress(job->src.c_str(), job->dest.c_str(),
@@ -8061,8 +8433,17 @@ void MainApplication::AppRevertThread(void *arg) {
         if (job->restore_bak) {
             fs_move(job->bak.c_str(), job->dest.c_str());
         }
-    } else if (job->restore_bak) {
-        remove(job->bak.c_str());
+    } else {
+        if (job->restore_bak) {
+            remove(job->bak.c_str());
+        }
+        // The .nro is back; now the rest of that build's files (and removal of
+        // what the newer one added). What this replaces is kept for undoing it.
+        std::string stem = job->src;
+        if (is_nro_name(stem)) {
+            stem.resize(stem.size() - 4);
+        }
+        backup_restore_files(stem, job->id, job->cur_ver);
     }
     job->ok = ok;
     job->task.done = true;
@@ -8790,6 +9171,16 @@ void MainApplication::AppChkTick() {
     this->layout->HideSpinner();
     this->AppSortList();
     this->AppUpdatesRender();
+    // The check itself still worked (net.c retries a rejected token
+    // anonymously), but anonymous is capped at 60/hr, so say so once.
+    static bool gh_warned = false;
+    if (!net_github_token_rejected()) {
+        gh_warned = false;
+    } else if (!gh_warned) {
+        gh_warned = true;
+        this->CreateShowDialog(tr(S_GH_TOKEN_EXPIRED), tr(S_GH_TOKEN_EXPIRED_MSG),
+                               {tr(S_OK)}, true, {}, style_dialog);
+    }
 }
 
 // Stamp an entry as checked-just-now and persist it, so its row reads "checked
@@ -8881,6 +9272,8 @@ static const EmuSystems kEmuSystems[] = {
     {"ppsspp-nx", {"psp"}, 1},
     {"freej2me", {"j2me"}, 1},
     {"dsmile", {"v-smile"}, 1},
+    {"system22-nx", {"system22"}, 1},
+    {"supermodel-nx", {"model3"}, 1},
 };
 static const EmuSystems *emu_systems_find(const char *id) {
     for (size_t i = 0; i < sizeof(kEmuSystems) / sizeof(kEmuSystems[0]); i++) {
@@ -8969,6 +9362,7 @@ static const char *console_short_name(const char *slug) {
         {"amiga", "Amiga"},       {"master-system", "Master System"},
         {"fbneo", "FBNeo"},       {"neo-geo", "Neo Geo"},
         {"j2me", "J2ME"},         {"v-smile", "V.Smile"},
+        {"system22", "Sys22"},    {"model3", "Model 3"},
     };
     for (size_t i = 0; i < sizeof(map) / sizeof(map[0]); i++) {
         if (strcasecmp(slug, map[i].slug) == 0) {
@@ -19228,7 +19622,7 @@ void MainApplication::HandleInput(u64 down, u64 held,
             s32 i = this->layout->Sel();
             if (i >= 0 && i < (s32)this->backup_rows.size() &&
                 this->Confirm(tr(S_DELETE), this->backup_rows[i].second, true)) {
-                remove(this->backup_rows[i].first.c_str());
+                backup_remove_nro(this->backup_rows[i].first);
                 this->Toast(tr(S_DELETED));
                 s32 keep = i;
                 this->GotoBackups();
@@ -19242,7 +19636,7 @@ void MainApplication::HandleInput(u64 down, u64 held,
                 this->ConfirmDanger(tr(S_CLEAR_BACKUPS),
                                     tr(S_CLEAR_BACKUPS_CONFIRM))) {
                 for (const auto &b : this->backup_rows) {
-                    remove(b.first.c_str());
+                    backup_remove_nro(b.first);
                 }
                 this->Toast(tr(S_CLEARED));
                 this->GotoBackups();
@@ -19259,7 +19653,7 @@ void MainApplication::HandleInput(u64 down, u64 held,
                 for (auto it = marks.rbegin(); it != marks.rend(); ++it) {
                     s32 idx = *it;
                     if (idx >= 0 && idx < (s32)this->backup_rows.size()) {
-                        remove(this->backup_rows[idx].first.c_str());
+                        backup_remove_nro(this->backup_rows[idx].first);
                     }
                 }
                 char t[32];
@@ -20864,6 +21258,7 @@ void MainApplication::Shutdown() {
     this->isearch_discard = true;
     this->arch_discard = true;
     this->pxt_cancel = true;
+    this->pxt_queue.clear(); // never start a queued unpack on the way out
     // EVERY background worker must be joined before the process exits, or libnx
     // faults on the still-running thread — the intermittent "an error occurred"
     // seen on exit and, more often, on update→restart (the app-update / emulator
@@ -20875,7 +21270,8 @@ void MainApplication::Shutdown() {
                       &this->meta, &this->search, &this->isearch, &this->arch,
                       &this->mv, &this->notes, &this->vfy, &this->tidy,
                       &this->lgf, &this->pxt, &this->boxart, &this->boxart_auto,
-                      &this->boxman}) {
+                      &this->boxman, &this->boxpick, &this->inv_boxsearch,
+                      &this->inv_boxpick, &this->revert_job.task}) {
         t->Join();
     }
     for (auto &job : this->umi_jobs) job.task.Join();

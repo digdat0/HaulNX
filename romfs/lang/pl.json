@@ -347,6 +347,8 @@
   "manage_bulk_done": "Zaktualizowano %d konsol",
   "hide_from_page": "Ukryj z tej strony",
   "github_token": "Token API GitHub: %s",
+  "gh_token_expired": "Token wygasł",
+  "gh_token_expired_msg": "GitHub odrzucił Twój token API (wygasł lub został unieważniony). Sprawdzanie aktualizacji działa teraz bez niego i trafi na limit GitHuba 60 na godzinę. Wymień token w Ustawienia › Dane logowania do kont.",
   "redownload": "Pobierz ponownie",
   "cancel_download": "Anuluj pobieranie",
   "queue_busy_prompt": "Ten element wygląda na zablokowany. Co chcesz zrobić?",

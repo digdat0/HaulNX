@@ -347,6 +347,8 @@
   "manage_bulk_done": "%d konsoler uppdaterade",
   "hide_from_page": "Dölj från den här sidan",
   "github_token": "GitHub API-token: %s",
+  "gh_token_expired": "Token har gått ut",
+  "gh_token_expired_msg": "GitHub avvisade din API-token (utgången eller återkallad). Uppdateringskontroller körs nu utan den och når GitHubs gräns på 60 per timme. Byt token i Inställningar › Kontouppgifter.",
   "redownload": "Ladda ner igen",
   "cancel_download": "Avbryt nedladdning",
   "queue_busy_prompt": "Det här objektet verkar ha fastnat. Vad vill du göra?",

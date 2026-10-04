@@ -92,8 +92,13 @@ int rar3_extract(const char *src, const char *dest_dir, extract_cb cb,
             break;
         }
 
+        /* Replacing an existing file: decode into a temp beside it and swap it
+         * in only once complete, so a decode failure or cancel can't empty and
+         * then delete the user's existing copy (see extract.c's same rule). */
         bool existed = fs_exists(out);
-        FILE *f = fopen(out, "wb");
+        char wpath[2048 + 8];
+        snprintf(wpath, sizeof(wpath), existed ? "%s.hxtmp" : "%s", out);
+        FILE *f = fopen(wpath, "wb");
         if (!f) {
             r3_log("rar3: cannot write %s", out);
             ok = false;
@@ -134,7 +139,13 @@ int rar3_extract(const char *src, const char *dest_dir, extract_cb cb,
              * same here so the caller's "extraction incomplete, raw archive
              * kept" fallback doesn't also leave a bogus placeholder file next
              * to it for the user to trip over. */
-            remove(out);
+            remove(wpath); /* never the original when one existed */
+            ok = false;
+            break;
+        }
+        if (existed && (remove(out) != 0 || rename(wpath, out) != 0)) {
+            r3_log("rar3: couldn't replace %s", out);
+            remove(wpath);
             ok = false;
             break;
         }

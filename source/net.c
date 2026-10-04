@@ -48,8 +48,16 @@ static Mutex g_get_mtx;
 /* Optional GitHub PAT, attached as a Bearer header on api.github.com GETs only
  * (set via net_set_github_token). Empty = anonymous requests, as before. */
 static char g_github_token[128];
+/* Set when GitHub answered 401 to the token above (expired/revoked); cleared
+ * whenever a new token is set. The UI polls it to tell the user. */
+static volatile int g_github_token_bad;
+
+bool net_github_token_rejected(void) {
+    return g_github_token_bad != 0;
+}
 
 void net_set_github_token(const char *tok) {
+    g_github_token_bad = 0;
     if (tok) {
         snprintf(g_github_token, sizeof(g_github_token), "%s", tok);
     } else {
@@ -324,6 +332,25 @@ static char *http_get_impl(CURL *c, const char *url, long *http_code,
     CURLcode rc = curl_easy_perform(c);
     long code = 0;
     curl_easy_getinfo(c, CURLINFO_RESPONSE_CODE, &code);
+    /* An expired/revoked GitHub token makes the API answer 401 "Bad credentials"
+     * even for public repos, which would break every update check. The token only
+     * buys a higher rate limit, so log the failure and retry once anonymously. */
+    if (rc == CURLE_OK && code == 401 && hdrs &&
+        strncasecmp(url, "https://api.github.com/", 23) == 0) {
+        net_log("GET %s -> http=401 with GitHub token; retrying anonymously", url);
+        g_github_token_bad = 1;
+        curl_easy_setopt(c, CURLOPT_HTTPHEADER, NULL);
+        curl_slist_free_all(hdrs);
+        hdrs = NULL;
+        free(m.data);
+        m.data = (char *)malloc(1);
+        m.len = 0;
+        if (m.data) {
+            m.data[0] = '\0';
+        }
+        rc = curl_easy_perform(c);
+        curl_easy_getinfo(c, CURLINFO_RESPONSE_CODE, &code);
+    }
     if (http_code) {
         *http_code = code;
     }
@@ -930,6 +957,22 @@ bool http_download(const char *url, const char *dest_path,
      * the partial file already holds everything it has. Treat as success. */
     if (code == 416 && resume_from > 0) {
         return true;
+    }
+    /* The server ignored our Range and sent the whole file from byte 0 (curl
+     * refuses that as CURLE_RANGE_ERROR rather than append it after the
+     * partial). Resuming can never work against this server, and the .part
+     * left behind made every retry -- this session's and every later one --
+     * fail the same way until someone deleted it by hand. Drop it and report
+     * a transient failure: the caller's retry re-reads the size from disk
+     * (now 0) and fetches the file whole. */
+    if (rc == CURLE_RANGE_ERROR && resume_from > 0) {
+        remove(dest_path);
+        net_log("DL  %s: server can't resume; partial discarded, restarting from 0",
+                url);
+        if (transport_err) {
+            *transport_err = true;
+        }
+        return false;
     }
     /* FAILONERROR is gone, so curl reports CURLE_OK for a clean 4xx/5xx
      * response too -- success now means "no transport error AND a 2xx". */

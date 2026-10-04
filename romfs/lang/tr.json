@@ -347,6 +347,8 @@
   "manage_bulk_done": "%d konsol güncellendi",
   "hide_from_page": "Bu sayfadan gizle",
   "github_token": "GitHub API belirteci: %s",
+  "gh_token_expired": "Jeton süresi doldu",
+  "gh_token_expired_msg": "GitHub API jetonunuzu reddetti (süresi doldu veya iptal edildi). Güncelleme denetimleri artık jeton olmadan çalışıyor ve GitHub'ın saatte 60 sınırına takılacak. Jetonu Ayarlar › Hesap Kimlik Bilgileri bölümünde değiştirin.",
   "redownload": "Yeniden indir",
   "cancel_download": "İndirmeyi iptal et",
   "queue_busy_prompt": "Bu öğe takılmış görünüyor. Ne yapmak istersiniz?",

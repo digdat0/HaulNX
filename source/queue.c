@@ -1995,21 +1995,6 @@ int queue_cancel_by_part(const char *partname, bool do_cancel) {
     return hits;
 }
 
-bool queue_remove(int slot) {
-    if (slot < 0 || slot >= QUEUE_MAX) {
-        return false;
-    }
-    bool ok = false;
-    mutexLock(&g_mtx);
-    QStatus s = g_items[slot].status;
-    if (s == Q_DONE || s == Q_SAVED || s == Q_FAILED || s == Q_CANCELLED) {
-        g_items[slot].status = Q_FREE;
-        ok = true;
-    }
-    mutexUnlock(&g_mtx);
-    return ok;
-}
-
 /* Lowercase status names for queue_write_status_json -- kept as short, stable
  * strings rather than the raw QStatus int so a client (JS, no shared enum)
  * doesn't have to hardcode the numeric order. */

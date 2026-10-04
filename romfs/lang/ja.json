@@ -347,6 +347,8 @@
   "manage_bulk_done": "%d件のコンソールを更新しました",
   "hide_from_page": "このページから非表示",
   "github_token": "GitHub APIトークン: %s",
+  "gh_token_expired": "トークン期限切れ",
+  "gh_token_expired_msg": "GitHub が API トークンを拒否しました(期限切れまたは失効)。更新チェックはトークンなしで実行され、GitHub の 1 時間 60 回の制限に達します。設定 › アカウント認証情報 でトークンを入れ替えてください。",
   "redownload": "再ダウンロード",
   "cancel_download": "ダウンロードをキャンセル",
   "queue_busy_prompt": "この項目は止まっているようです。どうしますか？",

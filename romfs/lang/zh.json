@@ -347,6 +347,8 @@
   "manage_bulk_done": "已更新 %d 个主机",
   "hide_from_page": "从此页面隐藏",
   "github_token": "GitHub API 令牌：%s",
+  "gh_token_expired": "令牌已过期",
+  "gh_token_expired_msg": "GitHub 拒绝了您的 API 令牌(已过期或被撤销)。更新检查现在不带令牌运行,会触及 GitHub 每小时 60 次的限制。请在 设置 › 账户凭据 中更换令牌。",
   "redownload": "重新下载",
   "cancel_download": "取消下载",
   "queue_busy_prompt": "此项目似乎卡住了。你想怎么做？",

@@ -347,6 +347,8 @@
   "manage_bulk_done": "Oppdaterte %d konsoller",
   "hide_from_page": "Skjul fra denne siden",
   "github_token": "GitHub API-token: %s",
+  "gh_token_expired": "Token utløpt",
+  "gh_token_expired_msg": "GitHub avviste API-tokenet ditt (utløpt eller tilbakekalt). Oppdateringssjekker kjører nå uten det og treffer GitHubs grense på 60 per time. Bytt token i Innstillinger › Kontolegitimasjon.",
   "redownload": "Last ned på nytt",
   "cancel_download": "Avbryt nedlasting",
   "queue_busy_prompt": "Dette elementet ser ut til å ha stoppet opp. Hva vil du gjøre?",

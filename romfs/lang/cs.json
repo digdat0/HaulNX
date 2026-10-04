@@ -347,6 +347,8 @@
   "manage_bulk_done": "Aktualizováno %d konzolí",
   "hide_from_page": "Skrýt z této stránky",
   "github_token": "GitHub API token: %s",
+  "gh_token_expired": "Token vypršel",
+  "gh_token_expired_msg": "GitHub odmítl váš API token (vypršel nebo byl zrušen). Kontroly aktualizací nyní běží bez něj a narazí na limit GitHubu 60 za hodinu. Token nahraďte v Nastavení › Přihlašovací údaje.",
   "redownload": "Stáhnout znovu",
   "cancel_download": "Zrušit stahování",
   "queue_busy_prompt": "Tato položka vypadá zaseknutá. Co s ní chcete udělat?",

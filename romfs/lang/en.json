@@ -220,6 +220,8 @@
   "access_key": "Access Key",
   "secret_key": "Secret Key",
   "github_token": "GitHub API token: %s",
+  "gh_token_expired": "Token expired",
+  "gh_token_expired_msg": "GitHub rejected your API token (expired or revoked). Update checks now run without it and will hit GitHub's 60-per-hour limit. Replace the token in Settings › Account Credentials.",
   "steamgriddb_key": "SteamGridDB API key",
 
   "title_update": "Update",

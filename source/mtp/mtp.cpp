@@ -270,9 +270,29 @@ namespace mtp {
         return have;
     }
 
+    /* A request still waiting in g_boxartq must already read as running/not-
+     * done in the published status. The main thread only picks it up on its
+     * next frame (and republishes every frame), so without this a USB poll
+     * landing in between would see the PREVIOUS search/pick's done:true and
+     * take its stale result -- Wi-Fi never had that gap because its GET/POST
+     * handlers flip running/done before even answering. Caller holds
+     * g_boxartlock. */
+    static void ApplyPendingBoxartReqs(BoxartStatus &st) {
+        for (const BoxartReq &r : g_boxartq) {
+            if (r.is_pick) {
+                st.pick_running = true;
+                st.pick_done = false;
+            } else {
+                st.search_running = true;
+                st.search_done = false;
+            }
+        }
+    }
+
     void EnqueueBoxartReq(const BoxartReq &req) {
         mutexLock(std::addressof(g_boxartlock));
         g_boxartq.push_back(req);
+        ApplyPendingBoxartReqs(g_boxart_status);
         mutexUnlock(std::addressof(g_boxartlock));
     }
 
@@ -290,6 +310,7 @@ namespace mtp {
     void SetBoxartStatus(const BoxartStatus &st) {
         mutexLock(std::addressof(g_boxartlock));
         g_boxart_status = st;
+        ApplyPendingBoxartReqs(g_boxart_status);
         mutexUnlock(std::addressof(g_boxartlock));
     }
 

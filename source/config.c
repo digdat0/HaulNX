@@ -282,7 +282,7 @@ static bool console_is_new(const char *name) {
         "amiga", "zx-spectrum", "chip8", "pico8", "tamagotchi", "flash",
         /* emulator-only, no established ROM source -- off by default like the
          * rest of this niche-homebrew tail */
-        "j2me", "v-smile"};
+        "j2me", "v-smile", "system22", "model3"};
     for (size_t i = 0; i < sizeof(added) / sizeof(added[0]); i++) {
         if (strcasecmp(name, added[i]) == 0) {
             return true;

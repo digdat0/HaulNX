@@ -347,6 +347,8 @@
   "manage_bulk_done": "%d Konsolen aktualisiert",
   "hide_from_page": "Von dieser Seite ausblenden",
   "github_token": "GitHub-API-Token: %s",
+  "gh_token_expired": "Token abgelaufen",
+  "gh_token_expired_msg": "GitHub hat dein API-Token abgelehnt (abgelaufen oder widerrufen). Update-Prüfungen laufen jetzt ohne Token und stoßen an GitHubs Limit von 60 pro Stunde. Ersetze das Token unter Einstellungen › Kontozugangsdaten.",
   "redownload": "Erneut herunterladen",
   "cancel_download": "Download abbrechen",
   "queue_busy_prompt": "Dieses Element scheint hängen zu bleiben. Was möchtest du tun?",

@@ -273,11 +273,6 @@ bool queue_active_info(char *name, size_t name_sz, QStatus *status,
 /* Remove all finished/failed/cancelled items. */
 void queue_clear_finished(void);
 
-/* Remove one finished/failed/cancelled item by slot (the Downloads tab's
- * per-item "clear from history"). No-op (returns false) for anything still
- * queued/active, or an already-free slot. */
-bool queue_remove(int slot);
-
 /* Write every item (active items AND finished/failed/cancelled history, plus
  * external transfers) to `path` as JSON, for a remote monitor -- the desktop
  * companion's Downloads tab -- to poll over the read-only inventory server.

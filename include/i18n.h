@@ -242,6 +242,8 @@ enum {
     S_ACCESS_KEY,
     S_SECRET_KEY,
     S_GITHUB_TOKEN,
+    S_GH_TOKEN_EXPIRED,
+    S_GH_TOKEN_EXPIRED_MSG,
     S_STEAMGRIDDB_KEY,
 
     /* ---- update ---- */

@@ -347,6 +347,8 @@
   "manage_bulk_done": "%d console aggiornate",
   "hide_from_page": "Nascondi da questa pagina",
   "github_token": "Token API GitHub: %s",
+  "gh_token_expired": "Token scaduto",
+  "gh_token_expired_msg": "GitHub ha rifiutato il tuo token API (scaduto o revocato). I controlli degli aggiornamenti ora girano senza e raggiungeranno il limite di 60 all'ora di GitHub. Sostituisci il token in Impostazioni › Credenziali account.",
   "redownload": "Riscarica",
   "cancel_download": "Annulla download",
   "queue_busy_prompt": "Questo elemento sembra bloccato. Cosa vuoi fare?",

@@ -4,7 +4,7 @@
 #include "config.h" /* SOURCES_PATH: the file this page uploads and exports */
 #include "fsutil.h" /* fs_log_rotate / fs_mkdir_p for the lifecycle trace */
 #include "jsonutil.h" /* json_write_escaped: GET fs_list's directory listing */
-#include "queue.h"  /* the desktop companion's Downloads tab: queue control */
+#include "queue.h"  /* queue_write_status_json: GET queue_status.json */
 
 #include <arpa/inet.h>
 #include <ctype.h>
@@ -492,10 +492,13 @@ static bool sanitize_filename(const char *in, char *out, size_t out_sz) {
  * any other client input) drops the whole value rather than truncating into
  * something that could silently collide with an unrelated real tag. */
 static bool sanitize_tag(const char *in, char *out, size_t out_sz) {
+    if (out_sz == 0) {
+        return false;
+    }
+    out[0] = '\0';
+    char tmp[128];
     size_t o = 0;
-    for (const char *p = in; *p && p[0] != '\r' && p[0] != '\n' &&
-                             o + 1 < out_sz;
-         p++) {
+    for (const char *p = in; *p && p[0] != '\r' && p[0] != '\n'; p++) {
         char c;
         if (p[0] == '%' && isxdigit((unsigned char)p[1]) &&
             isxdigit((unsigned char)p[2])) {
@@ -509,10 +512,19 @@ static bool sanitize_tag(const char *in, char *out, size_t out_sz) {
               c == '+')) {
             return false;
         }
-        out[o++] = c;
+        /* Too long for `out`: drop it too -- a truncated tag could match an
+         * unrelated real one, the same reason a bad character drops it. */
+        if (o + 1 >= out_sz || o + 1 >= sizeof(tmp)) {
+            return false;
+        }
+        tmp[o++] = c;
     }
+    if (o == 0) {
+        return false;
+    }
+    memcpy(out, tmp, o);
     out[o] = '\0';
-    return o > 0;
+    return true;
 }
 
 /* Like sanitize_filename but for the X-App-Path update target: a full device
@@ -866,6 +878,33 @@ static bool path_allowed(const HttpSrv *s, const char *path) {
     return false;
 }
 
+/* True if `path` (already cleared by path_allowed) IS one of the managed roots
+ * itself -- a whole console folder or the inbox -- rather than an entry under
+ * one. The rm route's recursive folder delete must refuse this, the same way
+ * fs_rm refuses the card root (see sd_path_is_root). */
+static bool path_is_managed_root(const HttpSrv *s, const char *path) {
+    size_t pl = strlen(path);
+    while (pl > 0 && path[pl - 1] == '/') {
+        pl--;
+    }
+    for (const char *r = s->roots; r && *r;) {
+        const char *nl = strchr(r, '\n');
+        size_t len = nl ? (size_t)(nl - r) : strlen(r);
+        size_t rl = len;
+        while (rl > 0 && r[rl - 1] == '/') {
+            rl--;
+        }
+        if (rl > 0 && rl == pl && strncmp(r, path, pl) == 0) {
+            return true;
+        }
+        if (!nl) {
+            break;
+        }
+        r = nl + 1;
+    }
+    return false;
+}
+
 /* Gate for the fs_* routes (the desktop companion's SD Card tab): the
  * decoded path just needs to be a real sdmc: path free of ".." segments —
  * unlike path_allowed there is no roots confinement, because unscoped access
@@ -972,6 +1011,25 @@ static const char *route_pval(const HttpSrv *s, const char *p, size_t pl,
     const char *amp = memchr(v, '&', vrem);
     *vlen = amp ? (size_t)(amp - v) : vrem;
     return v;
+}
+
+/* For a "?p=<src>&d=<dst>" route: route_pval stops at the first '&', which is
+ * the "&d=" separator itself, so its length only covers <src>. Find "&d=" in the
+ * whole rest of the path [v, p+pl) and return the start of the (still-encoded)
+ * destination in *dst with its length (ending at the next '&') in *dlen, or NULL
+ * when there is no destination. */
+static const char *route_dval(const char *v, const char *p, size_t pl,
+                              size_t *dlen) {
+    const char *qend = p + pl;
+    for (const char *c = v; c + 3 <= qend; c++) {
+        if (c[0] == '&' && c[1] == 'd' && c[2] == '=') {
+            const char *dv = c + 3;
+            const char *amp = (const char *)memchr(dv, '&', (size_t)(qend - dv));
+            *dlen = amp ? (size_t)(amp - dv) : (size_t)(qend - dv);
+            return dv;
+        }
+    }
+    return NULL;
 }
 
 /* Match "/<token>/<leaf>" exactly, no query string -- for a POST action that
@@ -1880,6 +1938,36 @@ static int rm_finalize(HttpSrv *s) {
     return 0;
 }
 
+/* Start a recursive delete of `path` on rm_thread_fn and keep the connection
+ * open until rm_finalize answers it. Shared by fs_rm and by rm on a
+ * folder-per-game entry. Answers and resets on its own if the worker can't
+ * start. */
+static int rm_start(HttpSrv *s, int fd, const char *path) {
+    RmCtx *rc = calloc(1, sizeof(RmCtx));
+    if (!rc) {
+        send_resp(fd, "500 Internal Server Error", "text/plain", "oom");
+        client_reset(s);
+        return 0;
+    }
+    rc->s = s;
+    snprintf(rc->path, sizeof(rc->path), "%s", path);
+    s->rm_ok = false;
+    s->rm_done = false;
+    s->rm_cancel = false;
+    if (R_FAILED(threadCreate(&rc->thr, rm_thread_fn, rc, NULL, RX_STACK,
+                              RX_PRIO, -2)) ||
+        R_FAILED(threadStart(&rc->thr))) {
+        free(rc);
+        send_resp(fd, "500 Internal Server Error", "text/plain",
+                  "delete thread failed");
+        client_reset(s);
+        return 0;
+    }
+    s->rm_thread = rc;
+    s->rm_running = true;
+    return 0; /* pending; rm_finalize answers once it's done */
+}
+
 static int client_step(HttpSrv *s) {
     int fd = s->client_fd;
     bool got_data = false;
@@ -1969,7 +2057,20 @@ static int client_step(HttpSrv *s) {
                 } else {
                     char path[1024];
                     pct_decode(val, vlen, path, sizeof(path));
-                    if (path_allowed(s, path) && remove(path) == 0) {
+                    struct stat rst;
+                    bool allowed = path_allowed(s, path);
+                    if (allowed && stat(path, &rst) == 0 && S_ISDIR(rst.st_mode)) {
+                        /* A folder-per-game entry (inventory "dir": true, e.g. a
+                         * PS Vita dump): remove() can't take a non-empty
+                         * directory, so delete it recursively on the same
+                         * background worker fs_rm uses -- never a whole console
+                         * folder or the inbox itself, though. */
+                        if (path_is_managed_root(s, path)) {
+                            send_resp(fd, "403 Forbidden", "text/plain", "denied");
+                        } else {
+                            return rm_start(s, fd, path);
+                        }
+                    } else if (allowed && remove(path) == 0) {
                         send_resp(fd, "200 OK", "text/plain", "deleted");
                     } else {
                         send_resp(fd, "403 Forbidden", "text/plain", "denied");
@@ -1989,32 +2090,26 @@ static int client_step(HttpSrv *s) {
             const char *mval = route_pval(s, p, pl, "mv", &mlen);
             if (mval) {
                 make_blocking(fd);
-                const char *sep = NULL;
-                for (size_t i = 0; i + 3 <= mlen; i++) {
-                    if (mval[i] == '&' && mval[i + 1] == 'd' &&
-                        mval[i + 2] == '=') {
-                        sep = mval + i;
-                        break;
-                    }
-                }
+                size_t mdlen = 0;
+                const char *mdv = route_dval(mval, p, pl, &mdlen);
                 if (!host_ok(s, s->head)) {
                     send_resp(fd, "403 Forbidden", "text/plain", "wrong host");
-                } else if (!sep) {
+                } else if (!mdv) {
                     send_resp(fd, "400 Bad Request", "text/plain", "need dest");
                 } else {
                     char src[1024], dst[1024];
-                    pct_decode(mval, (size_t)(sep - mval), src, sizeof(src));
-                    pct_decode(sep + 3, (size_t)((mval + mlen) - (sep + 3)), dst,
-                               sizeof(dst));
-                    bool occupied = false;
-                    if (strcasecmp(src, dst) != 0) {
-                        FILE *ex = fopen(dst, "rb");
-                        if (ex) {
-                            fclose(ex);
-                            occupied = true;
-                        }
-                    }
-                    if (!path_allowed(s, src) || !path_allowed(s, dst)) {
+                    pct_decode(mval, mlen, src, sizeof(src));
+                    pct_decode(mdv, mdlen, dst, sizeof(dst));
+                    /* stat, not fopen: fopen can't open a directory, so an existing
+                     * FOLDER at dst read as free and the rename then failed as a bare
+                     * 500 instead of a 409 the desktop can explain. */
+                    struct stat dst_st;
+                    bool occupied = strcasecmp(src, dst) != 0 && stat(dst, &dst_st) == 0;
+                    /* Like rm, never act on a whole console folder or the inbox
+                     * itself -- only on entries inside them. */
+                    if (!path_allowed(s, src) || !path_allowed(s, dst) ||
+                        path_is_managed_root(s, src) ||
+                        path_is_managed_root(s, dst)) {
                         send_resp(fd, "403 Forbidden", "text/plain", "denied");
                     } else if (occupied) {
                         send_resp(fd, "409 Conflict", "text/plain", "exists");
@@ -2103,29 +2198,7 @@ static int client_step(HttpSrv *s) {
                      * InvServerPoll note it fixed). The connection is kept
                      * open (no client_reset) until the worker finishes;
                      * client_step's rm_running check takes it from here. */
-                    RmCtx *rc = calloc(1, sizeof(RmCtx));
-                    if (!rc) {
-                        send_resp(fd, "500 Internal Server Error", "text/plain", "oom");
-                        client_reset(s);
-                        return 0;
-                    }
-                    rc->s = s;
-                    snprintf(rc->path, sizeof(rc->path), "%s", path);
-                    s->rm_ok = false;
-                    s->rm_done = false;
-                    s->rm_cancel = false;
-                    if (R_FAILED(threadCreate(&rc->thr, rm_thread_fn, rc, NULL,
-                                              RX_STACK, RX_PRIO, -2)) ||
-                        R_FAILED(threadStart(&rc->thr))) {
-                        free(rc);
-                        send_resp(fd, "500 Internal Server Error", "text/plain",
-                                  "delete thread failed");
-                        client_reset(s);
-                        return 0;
-                    }
-                    s->rm_thread = rc;
-                    s->rm_running = true;
-                    return 0; /* pending; rm_finalize answers once it's done */
+                    return rm_start(s, fd, path);
                 }
                 size_t fdlen = 0;
                 const char *fdval = route_pval(s, p, pl, "fs_mkdir", &fdlen);
@@ -2149,32 +2222,21 @@ static int client_step(HttpSrv *s) {
                 const char *fmvval = route_pval(s, p, pl, "fs_mv", &fmvlen);
                 if (fmvval) {
                     make_blocking(fd);
-                    const char *sep = NULL;
-                    for (size_t i = 0; i + 3 <= fmvlen; i++) {
-                        if (fmvval[i] == '&' && fmvval[i + 1] == 'd' &&
-                            fmvval[i + 2] == '=') {
-                            sep = fmvval + i;
-                            break;
-                        }
-                    }
+                    size_t fmvdlen = 0;
+                    const char *fmvd = route_dval(fmvval, p, pl, &fmvdlen);
                     if (!host_ok(s, s->head)) {
                         send_resp(fd, "403 Forbidden", "text/plain", "wrong host");
-                    } else if (!sep) {
+                    } else if (!fmvd) {
                         send_resp(fd, "400 Bad Request", "text/plain", "need dest");
                     } else {
                         char src[1024], dst[1024];
-                        pct_decode(fmvval, (size_t)(sep - fmvval), src, sizeof(src));
-                        pct_decode(sep + 3,
-                                  (size_t)((fmvval + fmvlen) - (sep + 3)), dst,
-                                  sizeof(dst));
-                        bool occupied = false;
-                        if (strcasecmp(src, dst) != 0) {
-                            FILE *ex = fopen(dst, "rb");
-                            if (ex) {
-                                fclose(ex);
-                                occupied = true;
-                            }
-                        }
+                        pct_decode(fmvval, fmvlen, src, sizeof(src));
+                        pct_decode(fmvd, fmvdlen, dst, sizeof(dst));
+                        /* stat, not fopen: fopen can't open a directory, so an existing
+                         * FOLDER at dst read as free and the rename then failed as a bare
+                         * 500 instead of a 409 the desktop can explain. */
+                        struct stat dst_st;
+                        bool occupied = strcasecmp(src, dst) != 0 && stat(dst, &dst_st) == 0;
                         if (!sd_path_allowed(s, src) || !sd_path_allowed(s, dst) ||
                             sd_path_is_root(src) || sd_path_is_root(dst)) {
                             send_resp(fd, "403 Forbidden", "text/plain", "denied");
@@ -2190,62 +2252,6 @@ static int client_step(HttpSrv *s) {
                     client_reset(s);
                     return 0;
                 }
-            }
-            /* Queue control for the desktop companion's Downloads tab: cancel
-             * or restart one item by slot, or a queue-wide bulk action. No
-             * body; confined to this server's token/host like rm and mv. */
-            size_t qlen = 0;
-            const char *qval = route_pval(s, p, pl, "q_cancel", &qlen);
-            const char *qleaf = "q_cancel";
-            if (!qval) {
-                qval = route_pval(s, p, pl, "q_retry", &qlen);
-                qleaf = "q_retry";
-            }
-            if (!qval) {
-                qval = route_pval(s, p, pl, "q_remove", &qlen);
-                qleaf = "q_remove";
-            }
-            if (qval) {
-                make_blocking(fd);
-                if (!host_ok(s, s->head)) {
-                    send_resp(fd, "403 Forbidden", "text/plain", "wrong host");
-                } else {
-                    char slotbuf[16];
-                    pct_decode(qval, qlen, slotbuf, sizeof(slotbuf));
-                    int slot = atoi(slotbuf);
-                    if (strcmp(qleaf, "q_cancel") == 0) {
-                        queue_cancel(slot);
-                        send_resp(fd, "200 OK", "text/plain", "ok");
-                    } else if (strcmp(qleaf, "q_retry") == 0) {
-                        queue_retry(slot);
-                        send_resp(fd, "200 OK", "text/plain", "ok");
-                    } else {
-                        bool ok = queue_remove(slot);
-                        send_resp(fd, ok ? "200 OK" : "409 Conflict",
-                                  "text/plain", ok ? "removed" : "not finished");
-                    }
-                }
-                client_reset(s);
-                return 0;
-            }
-            if (route_leaf(s, p, pl, "q_pause_all") ||
-                route_leaf(s, p, pl, "q_resume_all") ||
-                route_leaf(s, p, pl, "q_clear_all")) {
-                make_blocking(fd);
-                if (!host_ok(s, s->head)) {
-                    send_resp(fd, "403 Forbidden", "text/plain", "wrong host");
-                } else {
-                    if (route_leaf(s, p, pl, "q_pause_all")) {
-                        queue_pause_all();
-                    } else if (route_leaf(s, p, pl, "q_resume_all")) {
-                        queue_retry_status(Q_PAUSED);
-                    } else {
-                        queue_clear_finished();
-                    }
-                    send_resp(fd, "200 OK", "text/plain", "ok");
-                }
-                client_reset(s);
-                return 0;
             }
         }
         /* The inventory server serves GET read-only, but accepts one write: a
@@ -2269,7 +2275,9 @@ static int client_step(HttpSrv *s) {
 
         const char *cl = hdr_val(s->head, "content-length:");
         long clen = cl ? strtol(cl, NULL, 10) : -1;
-        if (clen <= 0) {
+        /* 0 is a real length for a streamed file push (an empty file from the
+         * SD Card tab) -- that's checked below, once stream_to_disk is known. */
+        if (clen < 0) {
             make_blocking(fd);
             send_resp(fd, "400 Bad Request", "text/plain", "no length");
             client_reset(s);
@@ -2358,6 +2366,13 @@ static int client_step(HttpSrv *s) {
                     snprintf(s->recv_name, sizeof(s->recv_name), "%s", nm);
                 }
             }
+        }
+        if (clen == 0 && !stream_to_disk) {
+            /* A buffered push (collection/.nro/DAT/art) is never empty. */
+            make_blocking(fd);
+            send_resp(fd, "400 Bad Request", "text/plain", "no length");
+            client_reset(s);
+            return 0;
         }
         long long maxb = stream_to_disk ? (long long)HTTPSRV_MAX_ROM
                                         : (long long)HTTPSRV_MAX_BODY;

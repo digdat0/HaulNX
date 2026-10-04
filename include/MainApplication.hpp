@@ -4,6 +4,7 @@
 #include <atomic>
 #include <cmath>
 #include <functional>
+#include <deque>
 #include <string>
 #include <vector>
 #include <utility>
@@ -1236,6 +1237,19 @@ class MainApplication : public pu::ui::Application {
     // pxt_dir is known (see PushExtractTick / record_installed_tag_in_dir).
     std::string pxt_app_tag;
     std::atomic<bool> pxt_cancel{false};
+    // Jobs that arrived while pxt was still busy. Back-to-back pushes that
+    // each need unpacking (a Library "push all" of archives, two SD Card
+    // folder uploads, two DAT batches) used to Join() the running unzip on
+    // the UI thread -- freezing the app and the Wi-Fi server for the rest of
+    // it -- and skip that job's PushExtractTick finish (DATs never filed,
+    // installed_tag never recorded). Now they wait here and PushExtractTick
+    // starts the next one once the current one is reaped -- the same
+    // one-at-a-time queue the USB side's EnqueueExtract already uses.
+    struct PxtJob {
+        std::string path, dir, name, target, app_tag;
+        int kind = 0;
+    };
+    std::deque<PxtJob> pxt_queue;
     bool imp_open = false;
     bool usb_open = false; // true while the embedded-MTP connect screen is up
     bool usb_from_settings = false; // opened from Settings › Install from PC (vs
@@ -1558,6 +1572,11 @@ class MainApplication : public pu::ui::Application {
                                     uint64_t bytes_read); // its cancel hook
     void PushExtractTick();    // per-frame: reap the extract worker when done
     void PushExtractApplyDatBulk(); // pxt_kind==2: file every extracted DAT, then clean up
+    void InvBoxartPickReap();       // apply + publish a finished companion box-art pick
+    void PushExtractQueue(const std::string &path, const std::string &dir,
+                          const std::string &name, const std::string &target,
+                          int kind, const std::string &app_tag);
+    void PushExtractStartNext();    // start the next queued pxt job, if idle
     void InvApplyNro(char *body, size_t len); // stage an .nro pushed to the inv server
     void InvApplyDat(char *body, size_t len); // file a DAT pushed to the inv server (no modal)
     // set a console's cover art from a companion push (X-Art-Target, no modal)

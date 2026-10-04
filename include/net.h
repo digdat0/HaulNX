@@ -49,6 +49,11 @@ void net_log_event(const char *fmt, ...);
  */
 void net_set_github_token(const char *tok);
 
+/* True once GitHub has answered 401 "Bad credentials" to the token above (it
+ * expired or was revoked). Requests then fall back to anonymous, which works but
+ * is capped at 60/hr per IP. Cleared by the next net_set_github_token call. */
+bool net_github_token_rejected(void);
+
 /*
  * Set the SteamGridDB API key sent as a Bearer Authorization header on
  * www.steamgriddb.com GETs (and only that host) — the box art search/grid

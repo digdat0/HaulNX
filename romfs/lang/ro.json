@@ -347,6 +347,8 @@
   "manage_bulk_done": "%d console actualizate",
   "hide_from_page": "Ascunde din această pagină",
   "github_token": "Token API GitHub: %s",
+  "gh_token_expired": "Token expirat",
+  "gh_token_expired_msg": "GitHub a respins tokenul tău API (expirat sau revocat). Verificările de actualizări rulează acum fără el și vor atinge limita GitHub de 60 pe oră. Înlocuiește tokenul în Setări › Acreditări cont.",
   "redownload": "Redescarcă",
   "cancel_download": "Anulează descărcarea",
   "queue_busy_prompt": "Acest element pare blocat. Ce vrei să faci?",

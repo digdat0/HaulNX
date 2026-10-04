@@ -347,6 +347,8 @@
   "manage_bulk_done": "콘솔 %d개 업데이트됨",
   "hide_from_page": "이 페이지에서 숨기기",
   "github_token": "GitHub API 토큰: %s",
+  "gh_token_expired": "토큰 만료됨",
+  "gh_token_expired_msg": "GitHub가 API 토큰을 거부했습니다(만료 또는 폐기됨). 업데이트 확인이 토큰 없이 실행되어 GitHub의 시간당 60회 제한에 걸립니다. 설정 › 계정 자격 증명에서 토큰을 교체하세요.",
   "redownload": "다시 다운로드",
   "cancel_download": "다운로드 취소",
   "queue_busy_prompt": "이 항목이 멈춘 것 같습니다. 어떻게 할까요?",
