@@ -139,6 +139,113 @@ static bool detect_overlaps(const char *a, const char *b) {
  * plain repo-fill case below.
  *
  * Returns true if anything changed (caller should persist). */
+/* Bundled defaults that later went stale. A saved row still carrying the OLD
+ * default repo (so the user never chose it) is moved to the new one -- or has
+ * it cleared when the project left GitHub -- and a retired id is dropped. A
+ * repo the user typed in themselves never matches, so it's never touched.
+ * Renamed/transferred repos are listed too: GitHub redirects them today, but
+ * only until someone reuses the old name. */
+static const struct {
+    const char *from; /* lowercase owner/repo */
+    const char *to;     /* "" = no GitHub home any more */
+    const char *asset;  /* new asset hint, NULL = keep */
+    const char *detect; /* new detect list, NULL = keep */
+} kRepoMoves[] = {
+    {"illteteka/hot-pocolate", "", NULL, NULL},
+    {"leecloudvictor/slinks-adventure", "kiiwiibiirb/Slinks-Adventure", NULL, NULL},
+    {"liamdebeasi/nx-mtp", "liuervehc/nxmtp", NULL, NULL},
+    {"meayua/nx-bad-apple", "", NULL, NULL},
+    {"rdmrocha/linkalho", "impeeza/linkalho", NULL, NULL},
+    {"retronx-team/payload-launcher", "suchmememanyskill/Payload_Launcher", NULL, NULL},
+    {"taylorrodriguez/dns-mitm-checker", "", NULL, NULL},
+    {"thatfinndev/aa-reboot", "", NULL, NULL},
+    {"thatfinndev/aa-reboot-applet", "", NULL, NULL},
+    {"tomvita/breeze", "tomvita/Breeze-Beta", NULL, NULL},
+    {"alicelr/megazeux", "MegaZeux/megazeux", NULL, NULL},
+    {"alphonseelric/flavortown", "ZiggyDev/Flavortown", NULL, NULL},
+    {"bernardogiordano/pickr", "FlagBrew/Pickr", NULL, NULL},
+    {"cyuubi/nx-midi", "whatdahopper-archive/nx-midi", NULL, NULL},
+    {"dontwait00/game-example", "0d3n3h547v/game-example", NULL, NULL},
+    {"dontwait00/nxdownload", "0d3n3h547v/nXDownload", NULL, NULL},
+    {"dontwait00/touch-screen-modified", "0d3n3h547v/touch-screen-modified", NULL, NULL},
+    {"emretech/calculator_nx", "EmmmaTech/Calculator_NX", NULL, NULL},
+    {"evilghostdragon/bricks-nx", "Zer0-AT/Bricks-NX", NULL, NULL},
+    {"faithvoid/particlefire-nx", "faithvoid/ParticleFireNX", NULL, NULL},
+    {"flagbrew/checkpoint", "BernardoGiordano/Checkpoint", NULL, NULL},
+    {"itotaljustice/sphaira", "NaGaa95/sphaira", NULL, NULL},
+    {"keeganatorp/wiiero-switch", "keeganatorr/wiiero-switch", NULL, NULL},
+    {"neoneopuooui/clock-time", "selavyn/Clock-Time", NULL, NULL},
+    {"remn9k/nx-fetch-rem", "qupe/NX-Fetch-Rem", NULL, NULL},
+    {"riviera71/flare-switch-port", "Riviera71/Flare-Switch", NULL, NULL},
+    {"silentflyby/blobby-volley-2-switch", "emoldtmann/Blobby-Volley-2-Switch", NULL, NULL},
+    {"storm21ch/argon-nx", "Storm21CH/ArgonNX-SE", NULL, NULL},
+    {"streetpea/chiaki4deck", "chiaki-ng/chiaki-ng", NULL, NULL},
+    {"sunthecourier/switchpresence-rewritten", "SunResearchInstitute/SwitchPresence-Rewritten", NULL, NULL},
+    {"sunthecourier/sys-clk-editor", "SunResearchInstitute/sys-clk-Editor", NULL, NULL},
+    {"thcolin/plenx", "thcolin/gamepad-media-center-aggregator", "gmca", "plenx,gmca"}, /* now ships GMCA.nro */
+    {"thelogicmaster/a-square-astray-switchgdx", "SwitchGDX/A-Square-Astray-SwitchGDX", NULL, NULL},
+    {"thelogicmaster/bomberman-switchgdx", "SwitchGDX/Bomberman-SwitchGDX", NULL, NULL},
+    {"thelogicmaster/jewelthief", "SwitchGDX/jewelthief-switchgdx", NULL, NULL},
+    {"thelogicmaster/klooni1010", "SwitchGDX/Klooni1010-SwitchGDX", NULL, NULL},
+    {"thelogicmaster/nomoore", "SwitchGDX/nomoore-switchgdx", NULL, NULL},
+    {"thelogicmaster/pepperandcarrotrunninggame", "SwitchGDX/PepperAndCarrotRunningGame-SwitchGDX", NULL, NULL},
+    {"thelogicmaster/pixelwheels-switchgdx", "SwitchGDX/pixelwheels-switchgdx", NULL, NULL},
+    {"thelogicmaster/tripeaks-switchgdx", "SwitchGDX/tripeaks-switchgdx", NULL, NULL},
+    {"thelogicmaster/unlucky", "SwitchGDX/Unlucky-SwitchGDX", NULL, NULL},
+    {"ultracoolguy/sonic3air", "ultra-azu/sonic3air", NULL, NULL},
+    {"vgmoose/appstorenx", "fortheusers/hb-appstore", NULL, NULL},
+    {"vgmoose/spacenx", "vgmoose/space-nx", NULL, NULL},
+    {"xlanor/akira", "chiaki-ng/akira", NULL, NULL},
+    {"zacwk27/joyvibe", "anOviiS/JoyVibe", NULL, NULL},
+};
+static const struct {
+    const char *id;
+    const char *repo; /* lowercase; the row's repo must be this or blank */
+} kRetired[] = {
+    {"gdkgba", "jakibaki/gdkgba"},             /* discontinued, never released */
+    {"nx-card-manager", "carcaschoi/nxcard-manager"}, /* repo gone, no trace */
+    {"nx-bootlogo", "ittotaljustice/nx-bootlogo"},    /* repo gone, no trace */
+    {"homebrew-app-store", "vgmoose/appstorenx"},     /* duplicate of hb-appstore */
+};
+
+static bool migrate_stale(UpdSource *out, int *count) {
+    bool changed = false;
+    for (int j = 0; j < *count;) {
+        bool drop = false;
+        for (size_t k = 0; k < sizeof(kRetired) / sizeof(kRetired[0]); k++) {
+            if (strcasecmp(out[j].id, kRetired[k].id) == 0 &&
+                (!out[j].repo[0] || strcasecmp(out[j].repo, kRetired[k].repo) == 0)) {
+                drop = true;
+                break;
+            }
+        }
+        if (drop) {
+            memmove(&out[j], &out[j + 1], sizeof(UpdSource) * (size_t)(*count - j - 1));
+            (*count)--;
+            changed = true;
+            continue;
+        }
+        for (size_t k = 0; k < sizeof(kRepoMoves) / sizeof(kRepoMoves[0]); k++) {
+            if (out[j].repo[0] && strcasecmp(out[j].repo, kRepoMoves[k].from) == 0) {
+                snprintf(out[j].repo, sizeof(out[j].repo), "%s", kRepoMoves[k].to);
+                if (!kRepoMoves[k].to[0]) {
+                    out[j].asset[0] = '\0';
+                }
+                if (kRepoMoves[k].asset) {
+                    snprintf(out[j].asset, sizeof(out[j].asset), "%s", kRepoMoves[k].asset);
+                }
+                if (kRepoMoves[k].detect) {
+                    snprintf(out[j].detect, sizeof(out[j].detect), "%s", kRepoMoves[k].detect);
+                }
+                changed = true;
+                break;
+            }
+        }
+        j++;
+    }
+    return changed;
+}
+
 static bool reconcile_bundled(UpdSource *out, int *count, int max) {
     size_t blen = 0;
     char *bjs = json_read_file("romfs:/update_sources.json", &blen);
@@ -153,7 +260,7 @@ static bool reconcile_bundled(UpdSource *out, int *count, int max) {
     int bn = parse_sources(bjs, blen, bundled, UPD_MAX);
     free(bjs);
 
-    bool changed = false;
+    bool changed = migrate_stale(out, count);
     for (int i = 0; i < bn; i++) {
         int found = -1;
         bool same_id = false;

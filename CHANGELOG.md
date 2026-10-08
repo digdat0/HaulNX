@@ -7,6 +7,43 @@ Notes for each release. `release.sh` pulls the section matching the version in
 `VERSION` and attaches it to the GitHub release. Add a `## <version>` section
 here before running a release.
 
+## 2.4.0
+
+**A redesigned desktop app, a new Storage page, Wi-Fi transfers that resume after a dropout, and a new GameCube/Wii emulator.** Update both the Switch app and the desktop app.
+
+### Desktop app
+
+- **New layout:** sidebar navigation, a connect screen with one-click Reconnect, a device chip, and a transfer dock along the bottom.
+- **Emulators and Apps:** compact cards with filter chips (All, Installed, Updates, Not installed) and a Details slide-out. **Update all** lets you pick which updates to run.
+- **Overview:** Emulators and Apps tiles, plus console search, sort and Has games / Show hidden filters.
+- **Library, SD Card, Queue, Settings and Archive Collections** redesigned, with toolbars, a Queue dashboard with day-grouped history, and regrouped Settings.
+- Cleaner dialogs and slide-outs, toasts, keyboard shortcuts (Ctrl+1–9, Ctrl+F), a refreshed light theme, loading placeholders, accessibility improvements, and the window remembers its size and position.
+
+### New: Storage page
+
+- A clickable map of what's using your SD card, a per-console size breakdown and the largest files.
+- **Card health:** maker, model, bus speed and a running error count, with a warning for failing or likely counterfeit cards.
+- Scans `roms` and `switch` by default; change the folders in **Settings › Storage**. Works over Wi-Fi and USB.
+
+### Transfers
+
+- **Wi-Fi pushes resume** after a dropout instead of starting over.
+- **Browse while transferring:** the SD Card page stays live over Wi-Fi, and shows cached folders over USB.
+- Large single-file pushes are more reliable on 2.4 GHz Wi-Fi.
+- A **fit check** warns before a send that won't fit on the card.
+
+### Emulators and apps
+
+- New emulator: **Nezumiiruka** (GameCube/Wii).
+- **Yaba Sanshiro** now updates from the active YabaSanshiro NX port. **gdkGBA** removed.
+- App update sources cleaned up: moved and renamed projects point to their current homes, and pleNx is now **GMCA**. Your saved list is fixed on first launch; sources you set yourself are left alone.
+- The updater picks the right file more reliably when a release ships several builds.
+- Every emulator's **Guide** link now opens a wiki page.
+
+### Switch app
+
+- **Folders tab:** card view, a per-console folders screen, and **Reset to default (X)**.
+
 ## 2.3.5
 
 **Two new arcade emulators, plus a reliability and safety release: Wi-Fi and USB transfers, unpacking, cover-art search and the desktop's file actions were combed for bugs, and every one found is fixed.**

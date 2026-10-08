@@ -950,5 +950,8 @@
   "accent_aqua": "Toska",
   "accent_rose": "Merah Muda",
   "accent_slate": "Batu Tulis",
-  "reconnecting": "Menghubungkan kembali…"
+  "reconnecting": "Menghubungkan kembali…",
+  "sub_folders_keys": "A pilih  X Kembalikan ke bawaan  L/R tab  ZL/ZR halaman",
+  "folders_reset_confirm": "Kembalikan folder unduhan ROM, mode folder instalasi, dan semua folder per konsol ke bawaan? File yang sudah ada di kartu SD tidak dipindahkan atau dihapus.",
+  "folders_reset_done": "Folder dikembalikan ke bawaan"
 }

@@ -950,5 +950,8 @@
   "accent_aqua": "Turquesa",
   "accent_rose": "Rosa",
   "accent_slate": "Ardósia",
-  "reconnecting": "Reconectando…"
+  "reconnecting": "Reconectando…",
+  "sub_folders_keys": "A selecionar  X Redefinir para o padrão  L/R abas  ZL/ZR página",
+  "folders_reset_confirm": "Redefinir a pasta de download de ROMs, o modo das pastas de instalação e todas as pastas por console para o padrão? Os arquivos que já estão no cartão SD não são movidos nem excluídos.",
+  "folders_reset_done": "Pastas redefinidas para o padrão"
 }

@@ -950,5 +950,8 @@
   "accent_aqua": "아쿠아",
   "accent_rose": "로즈",
   "accent_slate": "슬레이트",
-  "reconnecting": "다시 연결 중…"
+  "reconnecting": "다시 연결 중…",
+  "sub_folders_keys": "A 선택  X 기본값으로 재설정  L/R 탭  ZL/ZR 페이지",
+  "folders_reset_confirm": "ROM 다운로드 폴더, 설치 폴더 모드 및 모든 콘솔별 폴더를 기본값으로 재설정할까요? SD 카드에 이미 있는 파일은 이동되거나 삭제되지 않습니다.",
+  "folders_reset_done": "폴더가 기본값으로 재설정됨"
 }

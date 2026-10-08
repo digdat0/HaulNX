@@ -950,5 +950,8 @@
   "accent_aqua": "アクア",
   "accent_rose": "ローズ",
   "accent_slate": "スレート",
-  "reconnecting": "再接続中…"
+  "reconnecting": "再接続中…",
+  "sub_folders_keys": "A 選択  X デフォルトに戻す  L/R タブ  ZL/ZR ページ",
+  "folders_reset_confirm": "ROM のダウンロードフォルダ、インストールフォルダのモード、すべてのコンソール別フォルダをデフォルトに戻しますか？SD カード上の既存ファイルは移動も削除もされません。",
+  "folders_reset_done": "フォルダをデフォルトに戻しました"
 }

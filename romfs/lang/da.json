@@ -950,5 +950,8 @@
   "accent_aqua": "Turkis",
   "accent_rose": "Rosa",
   "accent_slate": "Skifer",
-  "reconnecting": "Genopretter forbindelse…"
+  "reconnecting": "Genopretter forbindelse…",
+  "sub_folders_keys": "A vælg  X Nulstil til standard  L/R faner  ZL/ZR side",
+  "folders_reset_confirm": "Nulstil ROM-downloadmappen, installationsmappe-tilstanden og alle konsolmapper til standard? Filer, der allerede ligger på SD-kortet, flyttes eller slettes ikke.",
+  "folders_reset_done": "Mapper nulstillet til standard"
 }

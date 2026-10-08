@@ -950,5 +950,8 @@
   "accent_aqua": "Turquoise",
   "accent_rose": "Rose",
   "accent_slate": "Ardoise",
-  "reconnecting": "Reconnexion…"
+  "reconnecting": "Reconnexion…",
+  "sub_folders_keys": "A sélectionner  X Réinitialiser par défaut  L/R onglets  ZL/ZR page",
+  "folders_reset_confirm": "Réinitialiser le dossier de téléchargement des ROM, le mode des dossiers d'installation et tous les dossiers par console ? Les fichiers déjà présents sur la carte SD ne sont ni déplacés ni supprimés.",
+  "folders_reset_done": "Dossiers réinitialisés par défaut"
 }

@@ -950,5 +950,8 @@
   "accent_aqua": "Turkoois",
   "accent_rose": "Roze",
   "accent_slate": "Leisteen",
-  "reconnecting": "Opnieuw verbinden…"
+  "reconnecting": "Opnieuw verbinden…",
+  "sub_folders_keys": "A selecteren  X Terugzetten naar standaard  L/R tabbladen  ZL/ZR pagina",
+  "folders_reset_confirm": "De ROM-downloadmap, de installatiemapmodus en alle mappen per console terugzetten naar standaard? Bestanden die al op de SD-kaart staan worden niet verplaatst of verwijderd.",
+  "folders_reset_done": "Mappen teruggezet naar standaard"
 }

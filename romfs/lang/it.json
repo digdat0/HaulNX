@@ -950,5 +950,8 @@
   "accent_aqua": "Turchese",
   "accent_rose": "Rosa",
   "accent_slate": "Ardesia",
-  "reconnecting": "Riconnessione…"
+  "reconnecting": "Riconnessione…",
+  "sub_folders_keys": "A seleziona  X Ripristina predefinito  L/R schede  ZL/ZR pagina",
+  "folders_reset_confirm": "Ripristinare la cartella di download ROM, la modalità delle cartelle di installazione e tutte le cartelle per console ai valori predefiniti? I file già presenti sulla scheda SD non vengono spostati né eliminati.",
+  "folders_reset_done": "Cartelle ripristinate ai valori predefiniti"
 }

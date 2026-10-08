@@ -950,5 +950,8 @@
   "accent_aqua": "Turkusowy",
   "accent_rose": "Różowy",
   "accent_slate": "Łupek",
-  "reconnecting": "Ponowne łączenie…"
+  "reconnecting": "Ponowne łączenie…",
+  "sub_folders_keys": "A wybierz  X Przywróć domyślne  L/R karty  ZL/ZR strona",
+  "folders_reset_confirm": "Przywrócić domyślny folder pobierania ROM-ów, tryb folderów instalacji i wszystkie foldery poszczególnych konsol? Pliki znajdujące się już na karcie SD nie zostaną przeniesione ani usunięte.",
+  "folders_reset_done": "Przywrócono domyślne foldery"
 }

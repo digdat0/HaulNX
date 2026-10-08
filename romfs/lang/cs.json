@@ -950,5 +950,8 @@
   "accent_aqua": "Tyrkysová",
   "accent_rose": "Růžová",
   "accent_slate": "Břidlicová",
-  "reconnecting": "Připojování…"
+  "reconnecting": "Připojování…",
+  "sub_folders_keys": "A vybrat  X Obnovit výchozí  L/R karty  ZL/ZR stránka",
+  "folders_reset_confirm": "Obnovit výchozí složku pro stahování ROM, režim instalačních složek a všechny složky jednotlivých konzolí? Soubory, které už jsou na SD kartě, se nepřesunou ani nesmažou.",
+  "folders_reset_done": "Složky obnoveny na výchozí"
 }

@@ -984,5 +984,8 @@
   "accent_aqua": "Aqua",
   "accent_rose": "Rose",
   "accent_slate": "Slate",
-  "reconnecting": "Reconnecting…"
+  "reconnecting": "Reconnecting…",
+  "sub_folders_keys": "A select  X Reset to default  L/R tabs  ZL/ZR page",
+  "folders_reset_confirm": "Reset the ROM download folder, the install-folder mode and every per-console folder to their defaults? Files already on the SD card are not moved or deleted.",
+  "folders_reset_done": "Folders reset to defaults"
 }

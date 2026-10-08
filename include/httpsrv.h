@@ -94,6 +94,12 @@ typedef struct {
     char dest_dir[768];
     FILE *sink;
     char part_path[1088];
+    /* Inventory mode, streamed push only: X-Resume-Id of this transfer (empty
+     * = not resumable) and the byte offset it started at (X-Resume-From; 0 for
+     * a fresh push). A dropped resumable push keeps its .part for a retry
+     * instead of deleting it -- see the res_* helpers in httpsrv.c. */
+    char resume_id[48];
+    size_t resume_base;
     char recv_name[256];
     /* Inventory mode only: the target app name from an X-App-Target header on a
      * streamed push (the Emulators-tab one-click update). Empty for a normal game
@@ -249,6 +255,19 @@ typedef struct {
     volatile bool rm_done;    /* thread finished; UI thread joins + responds */
     volatile bool rm_ok;      /* fs_rm_rf_cancelable's result, valid once rm_done */
     volatile bool rm_cancel;  /* shutdown/rebind asks the delete to unwind early */
+    /* Inventory mode only: a second "side" connection, accepted only while the
+     * main one is tied up in a long transfer (a streamed push, a pull, an fs_rm
+     * walk), so the companion can still browse the SD card and refresh its
+     * inventory mid-transfer instead of waiting behind it in the listen
+     * backlog. It answers a short list of read-only GETs itself (see
+     * side_answer in httpsrv.c); anything else is parked with its head already
+     * read and handed to the main slot once that frees up, so the request
+     * order a single-client server always had is kept. In use iff side_head is
+     * non-NULL (a zeroed, never-opened struct reads as idle). */
+    int side_fd;
+    char *side_head;
+    size_t side_head_len;
+    unsigned long long side_start_ns;
 } HttpSrv;
 
 /* The console's LAN address as a dotted quad, e.g. "192.168.1.42".

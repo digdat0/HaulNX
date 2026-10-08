@@ -5,6 +5,7 @@
 #include "fsutil.h" /* fs_log_rotate / fs_mkdir_p for the lifecycle trace */
 #include "jsonutil.h" /* json_write_escaped: GET fs_list's directory listing */
 #include "queue.h"  /* queue_write_status_json: GET queue_status.json */
+#include "sdusage.h" /* GET sd_usage.json / sd_usage_scan: the Storage page */
 
 #include <arpa/inet.h>
 #include <ctype.h>
@@ -732,6 +733,99 @@ static void inv_trace(const HttpSrv *s, const char *fmt, ...) {
     fclose(f);
 }
 
+/* ---- Resumable Wi-Fi pushes ----------------------------------------------
+ * A streamed push carrying X-Resume-Id keeps its .part when the connection
+ * drops (a Wi-Fi blip, the Switch going to sleep) instead of deleting it, and
+ * records how much of it reached the card. The desktop asks GET
+ * push_resume?p=<id> how much is there and re-sends only the rest, with
+ * X-Resume-From. One slot: a fresh resumable push discards any older partial,
+ * so at most one stray .part can ever be left behind. The record is a small
+ * file so it survives an app restart too. UI thread only (client_reset and
+ * the head parser both run there). */
+#define RESUME_PATH DATA_DIR "/push_resume.txt"
+typedef struct {
+    char id[48];
+    char part[1088];
+    unsigned long long total;
+    unsigned long long have;
+} ResumeRec;
+static ResumeRec g_res;
+static bool g_res_loaded = false;
+
+static void res_save(void) {
+    if (!g_res.id[0]) {
+        remove(RESUME_PATH);
+        return;
+    }
+    fs_mkdir_p(DATA_DIR);
+    FILE *f = fopen(RESUME_PATH, "wb");
+    if (!f) {
+        return;
+    }
+    fprintf(f, "%s\n%s\n%llu %llu\n", g_res.id, g_res.part, g_res.total, g_res.have);
+    fclose(f);
+}
+
+static void res_load(void) {
+    if (g_res_loaded) {
+        return;
+    }
+    g_res_loaded = true;
+    memset(&g_res, 0, sizeof(g_res));
+    FILE *f = fopen(RESUME_PATH, "rb");
+    if (!f) {
+        return;
+    }
+    char nums[96];
+    if (fgets(g_res.id, sizeof(g_res.id), f) && fgets(g_res.part, sizeof(g_res.part), f) &&
+        fgets(nums, sizeof(nums), f) &&
+        sscanf(nums, "%llu %llu", &g_res.total, &g_res.have) == 2) {
+        g_res.id[strcspn(g_res.id, "\r\n")] = '\0';
+        g_res.part[strcspn(g_res.part, "\r\n")] = '\0';
+    } else {
+        memset(&g_res, 0, sizeof(g_res));
+    }
+    fclose(f);
+}
+
+/* Forget the kept partial and delete its file. */
+static void res_drop(void) {
+    res_load();
+    if (g_res.id[0] && g_res.part[0]) {
+        remove(g_res.part);
+    }
+    memset(&g_res, 0, sizeof(g_res));
+    res_save();
+}
+
+/* A resumable push completed: its record is spent (the file is the caller's). */
+static void res_done(const HttpSrv *s) {
+    res_load();
+    if (s->resume_id[0] && strcmp(g_res.id, s->resume_id) == 0) {
+        memset(&g_res, 0, sizeof(g_res));
+        res_save();
+    }
+}
+
+/* Copy a resume id (letters, digits, '-', '_'; 8-40 of them) out of a header
+ * or query value; false if it isn't one. */
+static bool res_id_ok(const char *v, char *out, size_t cap) {
+    size_t n = 0;
+    while (v[n] && (isalnum((unsigned char)v[n]) || v[n] == '-' || v[n] == '_')) {
+        n++;
+    }
+    if (n < 8 || n > 40 || n >= cap) {
+        return false;
+    }
+    char t = v[n];
+    if (t && t != '\r' && t != '\n' && t != ' ' && t != '\t' && t != '&') {
+        return false;
+    }
+    memcpy(out, v, n);
+    out[n] = '\0';
+    return true;
+}
+
 static void client_reset(HttpSrv *s) {
     if (s->client_fd >= 0) {
         inv_trace(s, "reset fd=%d err=%s", s->client_fd,
@@ -747,7 +841,20 @@ static void client_reset(HttpSrv *s) {
         fclose(s->sink);
         s->sink = NULL;
         if (s->part_path[0]) {
-            remove(s->part_path);
+            /* cbody_len counts bytes written (and, after the fclose above,
+             * flushed), so it is exactly what a resume can skip. */
+            unsigned long long have = (unsigned long long)s->resume_base + s->cbody_len;
+            if (s->resume_id[0] && have > 0 && s->mode == HTTPSRV_MODE_INVENTORY) {
+                res_load();
+                snprintf(g_res.id, sizeof(g_res.id), "%s", s->resume_id);
+                snprintf(g_res.part, sizeof(g_res.part), "%s", s->part_path);
+                g_res.total = (unsigned long long)s->resume_base + s->cbody_total;
+                g_res.have = have;
+                res_save();
+                inv_trace(s, "kept partial %llu/%llu for resume", g_res.have, g_res.total);
+            } else {
+                remove(s->part_path);
+            }
         }
     }
     /* A pull interrupted before its last slice (peer dropped, or the server was
@@ -766,6 +873,8 @@ static void client_reset(HttpSrv *s) {
     s->cbody_total = 0;
     s->ctype[0] = '\0';
     s->last_data_ns = 0;
+    s->resume_id[0] = '\0';
+    s->resume_base = 0;
 }
 
 /* Reads are non-blocking (resumed a poll at a time); switch to a briefly
@@ -939,6 +1048,8 @@ static bool sd_path_is_root(const char *path) {
  * every other JSON writer in this app) avoids a second, buffer-based escaper
  * that would have to be kept in sync with it. */
 #define FS_LIST_TMP_PATH DATA_DIR "/fs_list.tmp.json"
+/* Scratch file for GET sd_usage.json (see sdusage.c). */
+#define SD_USAGE_PATH SDUSAGE_JSON_PATH
 
 /* Write a JSON directory listing of `path` to FS_LIST_TMP_PATH for GET
  * fs_list: an object per entry with its name, whether it's a folder, size and
@@ -1093,6 +1204,25 @@ static int client_idle(HttpSrv *s, bool got_data) {
     return 0;
 }
 
+/* GET push_resume?p=<id> (see res_*): how much of resumable transfer <id> is
+ * already on the card; {"have":0} when nothing is kept for it. Answered on the
+ * main slot and, mid-transfer, on the side slot (side_answer). */
+static void push_resume_answer(int fd, const char *rv, size_t vlen) {
+    char raw[64], id[48];
+    pct_decode(rv, vlen, raw, sizeof(raw));
+    res_load();
+    unsigned long long have = 0, total = 0;
+    struct stat pst;
+    if (res_id_ok(raw, id, sizeof(id)) && strcmp(id, g_res.id) == 0 &&
+        stat(g_res.part, &pst) == 0) {
+        have = g_res.have;
+        total = g_res.total;
+    }
+    char js[96];
+    snprintf(js, sizeof(js), "{\"have\":%llu,\"total\":%llu}", have, total);
+    send_resp(fd, "200 OK", "application/json", js);
+}
+
 /* Head complete, method GET/OPTIONS: answer at once and be done. */
 static int respond_simple(HttpSrv *s, int fd, const char *head) {
     int ret = 0;
@@ -1199,6 +1329,35 @@ static int respond_simple(HttpSrv *s, int fd, const char *head) {
         app_backups_write_json(BACKUPS_JSON_PATH);
         if (!send_file(fd, BACKUPS_JSON_PATH, "application/json", NULL)) {
             send_resp(fd, "404 Not Found", "text/plain", "no backups");
+        }
+    } else if (s->mode == HTTPSRV_MODE_INVENTORY &&
+               route_pval(s, p, pl, "push_resume", &fvlen) != NULL) {
+        push_resume_answer(fd, route_pval(s, p, pl, "push_resume", &fvlen), fvlen);
+    } else if (s->mode == HTTPSRV_MODE_INVENTORY &&
+               (route_leaf(s, p, pl, "sd_usage.json") ||
+                route_leaf(s, p, pl, "sd_usage_scan") ||
+                route_pval(s, p, pl, "sd_usage_scan", &fvlen) != NULL)) {
+        /* Desktop Storage page: per-folder totals and the largest files on
+         * the card (sdusage.c). sd_usage_scan starts a background walk --
+         * of ?p=<comma-separated folders> if given, else the whole card;
+         * both return progress plus the last finished result. Whole-card
+         * paths, so gated on Full SD card access like fs_list. */
+        if (!s->sd_access) {
+            send_resp(fd, "403 Forbidden", "text/plain", "sd access off");
+        } else {
+            const char *sv = route_pval(s, p, pl, "sd_usage_scan", &fvlen);
+            if (sv) {
+                char dirs[1024];
+                pct_decode(sv, fvlen, dirs, sizeof(dirs));
+                sdusage_request(dirs);
+            } else if (route_leaf(s, p, pl, "sd_usage_scan")) {
+                sdusage_request(NULL);
+            }
+            if (!sdusage_write_json(SD_USAGE_PATH) ||
+                !send_file(fd, SD_USAGE_PATH, "application/json", NULL)) {
+                send_resp(fd, "500 Internal Server Error", "text/plain",
+                          "usage report failed");
+            }
         }
     } else if (s->mode == HTTPSRV_MODE_INVENTORY && pl == tl + 20 &&
                p[0] == '/' && strncmp(p + 1, s->token, tl - 1) == 0 &&
@@ -1661,8 +1820,12 @@ static void rx_net_fn(void *arg) {
     struct timeval tv = {0, 500 * 1000}; /* 500 ms */
     setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 
+    /* ~20 s of silence ends a dead transfer. It was ~6 s, which a busy 2.4 GHz
+     * link beats with nothing actually wrong: a couple of lost frames put the
+     * PC's TCP into retransmit backoff (1 s, 2 s, 4 s...) and the connection
+     * comes back on its own -- unless we've already hung up on it. */
     int stalls = 0;
-    const int stall_max = 12; /* ~6 s of silence ends a dead transfer */
+    const int stall_max = 40;
     int status = RX_OK;
     while (c->received < s->cbody_total) {
         if (s->rx_cancel) {
@@ -1809,6 +1972,21 @@ static void rx_join(HttpSrv *s) {
     s->rx_cancel = false;
 }
 
+/* Ask a running pump to stop without waiting for it: rx_finalize picks up the
+ * RX_CANCELLED result on a later poll, and client_reset keeps a resumable
+ * push's .part (resume_id is left set). */
+static void rx_stop(HttpSrv *s) {
+    if (!s->rx_running) {
+        return;
+    }
+    RxCtx *c = (RxCtx *)s->rx_thread;
+    s->rx_cancel = true;
+    mutexLock(&c->lock);
+    condvarWakeAll(&c->can_produce);
+    condvarWakeAll(&c->can_consume);
+    mutexUnlock(&c->lock);
+}
+
 /* UI-thread side of the streamed push: returns 0 while the pump threads are still
  * running (cbody_len advances for the progress bar), and on completion joins them
  * and turns rx_status into the httpsrv_poll code + HTTP response — the same finish
@@ -1843,6 +2021,7 @@ static int rx_finalize(HttpSrv *s) {
         make_blocking(fd);
         if (cerr != 0) {
             remove(s->part_path);
+            s->resume_id[0] = '\0'; /* card full: nothing to resume */
             send_resp(fd, "507 Insufficient Storage", "text/plain",
                       "write failed");
             snprintf(s->last_err, sizeof(s->last_err),
@@ -1850,6 +2029,7 @@ static int rx_finalize(HttpSrv *s) {
             client_reset(s);
             return 4;
         }
+        res_done(s);
         send_resp(fd, "200 OK", "text/plain", "received");
         s->body = NULL; /* streamed straight to disk; nothing in RAM */
         s->body_len = 0;
@@ -1861,6 +2041,7 @@ static int rx_finalize(HttpSrv *s) {
      * closes the still-open sink and removes the partial ".part". */
     if (status == RX_WRITEERR) {
         make_blocking(fd);
+        s->resume_id[0] = '\0'; /* card full: nothing to resume */
         send_resp(fd, "507 Insufficient Storage", "text/plain", "write failed");
         snprintf(s->last_err, sizeof(s->last_err), "write failed (card full?)");
     } else if (status == RX_PEERCLOSED) {
@@ -1993,8 +2174,10 @@ static int client_step(HttpSrv *s) {
     /* Phase 1: the request head. The body (if any) starts in whatever the
      * last recv over-read, and is carried into phase 2 below. */
     if (!s->cbody) {
-        char *body_start = NULL;
-        while (s->head_len < HDR_MAX) {
+        /* A connection handed over by the side slot (side_promote) arrives
+         * with its head already read, possibly with nothing more to recv. */
+        char *body_start = s->head_len ? strstr(s->head, "\r\n\r\n") : NULL;
+        while (!body_start && s->head_len < HDR_MAX) {
             ssize_t r = recv(fd, s->head + s->head_len, HDR_MAX - s->head_len,
                              0);
             if (r > 0) {
@@ -2470,7 +2653,43 @@ static int client_step(HttpSrv *s) {
                 client_reset(s);
                 return 0;
             }
-            s->sink = fopen(s->part_path, "wb");
+            /* Resumable push (see res_*): X-Resume-Id names the transfer;
+             * X-Resume-From > 0 continues its kept partial, which must match
+             * exactly (same file, same offset, same total) or it's a 409 and
+             * the desktop starts over from 0. */
+            unsigned long long from = 0;
+            s->resume_id[0] = '\0';
+            s->resume_base = 0;
+            if (s->mode == HTTPSRV_MODE_INVENTORY) {
+                const char *ri = hdr_val(s->head, "x-resume-id:");
+                if (ri && res_id_ok(ri, s->resume_id, sizeof(s->resume_id))) {
+                    const char *rf = hdr_val(s->head, "x-resume-from:");
+                    from = rf ? strtoull(rf, NULL, 10) : 0;
+                    res_load();
+                    if (from > 0) {
+                        struct stat pst;
+                        if (strcmp(g_res.id, s->resume_id) != 0 ||
+                            strcmp(g_res.part, s->part_path) != 0 || g_res.have != from ||
+                            g_res.total != from + (unsigned long long)clen ||
+                            stat(s->part_path, &pst) != 0) {
+                            make_blocking(fd);
+                            send_resp(fd, "409 Conflict", "text/plain", "resume mismatch");
+                            s->resume_id[0] = '\0';
+                            client_reset(s);
+                            return 0;
+                        }
+                        inv_trace(s, "resuming %s at %llu", s->recv_name, from);
+                    } else if (g_res.id[0]) {
+                        res_drop(); /* a fresh resumable push: the old partial is stale */
+                    }
+                }
+            }
+            s->resume_base = (size_t)from;
+            s->sink = fopen(s->part_path, from > 0 ? "r+b" : "wb");
+            if (s->sink && from > 0 && fseeko(s->sink, (off_t)from, SEEK_SET) != 0) {
+                fclose(s->sink);
+                s->sink = NULL;
+            }
             char *scratch = s->sink ? malloc(STREAM_BUF) : NULL;
             if (!s->sink || !scratch) {
                 if (s->sink) {
@@ -2490,7 +2709,7 @@ static int client_step(HttpSrv *s) {
              * ftruncate (see mtp/responder.cpp). Best-effort; every failure path
              * removes the file whole, so a preallocated tail never survives, and
              * a complete body is exactly clen bytes so no trim is needed. */
-            if (clen > 0) {
+            if (clen > 0 && from == 0) { /* a resumed .part already has its full size */
                 (void)ftruncate(fileno(s->sink), (off_t)clen);
             }
             /* Write the over-read bytes before freeing the head they point into. */
@@ -2500,6 +2719,7 @@ static int client_step(HttpSrv *s) {
                 s->sink = NULL;
                 remove(s->part_path);
                 make_blocking(fd);
+                s->resume_id[0] = '\0'; /* card full: nothing to resume */
                 send_resp(fd, "507 Insufficient Storage", "text/plain",
                           "write failed");
                 snprintf(s->last_err, sizeof(s->last_err),
@@ -2595,6 +2815,7 @@ static int client_step(HttpSrv *s) {
                     /* Card full or write error: give up. client_reset closes the
                      * sink and deletes the partial file. */
                     make_blocking(fd);
+                    s->resume_id[0] = '\0'; /* card full: nothing to resume */
                     send_resp(fd, "507 Insufficient Storage", "text/plain",
                               "write failed");
                     snprintf(s->last_err, sizeof(s->last_err),
@@ -2661,6 +2882,7 @@ static int client_step(HttpSrv *s) {
         make_blocking(fd);
         if (cerr != 0) {
             remove(s->part_path);
+            s->resume_id[0] = '\0'; /* card full: nothing to resume */
             send_resp(fd, "507 Insufficient Storage", "text/plain",
                       "write failed");
             snprintf(s->last_err, sizeof(s->last_err),
@@ -2668,6 +2890,7 @@ static int client_step(HttpSrv *s) {
             client_reset(s);
             return 4;
         }
+        res_done(s);
         send_resp(fd, "200 OK", "text/plain", "received");
         s->body = NULL; /* streamed straight to disk; nothing in RAM */
         s->body_len = 0;
@@ -2696,6 +2919,199 @@ static int client_step(HttpSrv *s) {
     s->cbody_total = 0;
     client_reset(s);
     return 1;
+}
+
+/* ---- Side slot (see HttpSrv.side_head) ---------------------------------- */
+
+/* How long a request that isn't a quick read may wait in the side slot for the
+ * main one to free up before it's answered 503 (counted from its accept). */
+#define SIDE_PARK_NS 30000000000ULL
+
+/* The main connection is busy with something that can take minutes. */
+static bool main_slot_long(const HttpSrv *s) {
+    return s->client_fd >= 0 && (s->src || s->rx_running || s->rm_running);
+}
+
+static void side_reset(HttpSrv *s) {
+    if (!s->side_head) {
+        return;
+    }
+    if (s->side_fd >= 0) {
+        close(s->side_fd);
+    }
+    s->side_fd = -1;
+    free(s->side_head);
+    s->side_head = NULL;
+    s->side_head_len = 0;
+}
+
+/* Answer `head` on the side connection if it is one of the quick read-only
+ * routes the companion needs while a transfer runs: inventory.json,
+ * queue_status.json, the SD Card tab's fs_list and the Storage page's
+ * sd_usage.json (progress/result only; a scan starts on the main slot) and
+ * push_resume (a dropped push asking to continue). Same handling as the
+ * matching respond_simple branches. False = not one of them (left untouched
+ * for the main slot). */
+static bool side_answer(HttpSrv *s, int fd, const char *head) {
+    if (strncmp(head, "GET ", 4) != 0) {
+        return false;
+    }
+    const char *p;
+    size_t pl = req_path(head, &p);
+    size_t vlen = 0;
+    const char *val = NULL;
+    bool inv = route_leaf(s, p, pl, "inventory.json");
+    bool qst = !inv && route_leaf(s, p, pl, "queue_status.json");
+    bool sdu = !inv && !qst && s->sd_access && route_leaf(s, p, pl, "sd_usage.json");
+    const char *rsm = (!inv && !qst && !sdu) ? route_pval(s, p, pl, "push_resume", &vlen) : NULL;
+    if (!inv && !qst && !sdu && !rsm) {
+        val = s->sd_access ? route_pval(s, p, pl, "fs_list", &vlen) : NULL;
+        if (!val) {
+            return false;
+        }
+    }
+    make_blocking(fd);
+    if (!host_ok(s, head)) {
+        send_resp(fd, "403 Forbidden", "text/plain", "wrong host");
+    } else if (inv) {
+        s->last_inv_ns = armTicksToNs(armGetSystemTick());
+        if (!send_file(fd, INVENTORY_PATH, "application/json", NULL)) {
+            send_resp(fd, "404 Not Found", "text/plain", "no inventory");
+        }
+    } else if (qst) {
+        queue_write_status_json(QUEUE_STATUS_PATH);
+        if (!send_file(fd, QUEUE_STATUS_PATH, "application/json", NULL)) {
+            send_resp(fd, "404 Not Found", "text/plain", "no queue status");
+        }
+    } else if (sdu) {
+        if (!sdusage_write_json(SD_USAGE_PATH) ||
+            !send_file(fd, SD_USAGE_PATH, "application/json", NULL)) {
+            send_resp(fd, "500 Internal Server Error", "text/plain", "usage report failed");
+        }
+    } else if (rsm) {
+        char raw[64], id[48];
+        pct_decode(rsm, vlen, raw, sizeof(raw));
+        if (s->rx_running && s->resume_id[0] && res_id_ok(raw, id, sizeof(id)) &&
+            strcmp(id, s->resume_id) == 0) {
+            /* The PC wants to resume the very push the main slot is still
+             * "receiving": it has already given up on that connection, we just
+             * haven't noticed. Stop it now (its .part is kept) and have the PC
+             * ask again in a moment, rather than waiting out the stall watchdog. */
+            inv_trace(s, "resume query for the live push: stopping it");
+            rx_stop(s);
+            send_resp(fd, "503 Service Unavailable", "text/plain", "finishing");
+        } else {
+            push_resume_answer(fd, rsm, vlen);
+        }
+    } else {
+        char path[1024];
+        pct_decode(val, vlen, path, sizeof(path));
+        if (!sd_path_allowed(s, path) || !build_fs_list_json(path)) {
+            send_resp(fd, "404 Not Found", "text/plain", "no such folder");
+        } else if (!send_file(fd, FS_LIST_TMP_PATH, "application/json", NULL)) {
+            send_resp(fd, "500 Internal Server Error", "text/plain", "listing failed");
+        }
+    }
+    return true;
+}
+
+/* Move a parked side connection (complete head, not a quick read) into the
+ * free main slot; client_step then serves it exactly as if accepted there. */
+static void side_promote(HttpSrv *s) {
+    s->client_fd = s->side_fd;
+    s->head = s->side_head;
+    s->head_len = s->side_head_len;
+    s->last_err[0] = '\0';
+    s->last_data_ns = armTicksToNs(armGetSystemTick());
+    s->conn_start_ns = s->last_data_ns;
+    inv_trace(s, "side handoff fd=%d", s->side_fd);
+    s->side_fd = -1;
+    s->side_head = NULL;
+    s->side_head_len = 0;
+}
+
+static void side_step(HttpSrv *s) {
+    if (s->mode != HTTPSRV_MODE_INVENTORY) {
+        return;
+    }
+    if (!s->side_head) {
+        if (!main_slot_long(s)) {
+            return;
+        }
+        int fd = accept(s->listen_fd, NULL, NULL);
+        if (fd < 0) {
+            return;
+        }
+        int fl = fcntl(fd, F_GETFL, 0);
+        if (fl >= 0) {
+            fcntl(fd, F_SETFL, fl | O_NONBLOCK);
+        }
+        int one = 1;
+        setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
+        s->side_head = malloc(HDR_MAX + 1);
+        if (!s->side_head) {
+            close(fd);
+            return;
+        }
+        s->side_fd = fd;
+        s->side_head_len = 0;
+        s->side_head[0] = '\0';
+        s->side_start_ns = armTicksToNs(armGetSystemTick());
+        /* Not traced: the desktop polls through here every few seconds for the
+         * whole transfer, and each trace line is an SD write on the UI thread. */
+    }
+    bool complete = strstr(s->side_head, "\r\n\r\n") != NULL;
+    while (!complete && s->side_head_len < HDR_MAX) {
+        ssize_t r = recv(s->side_fd, s->side_head + s->side_head_len,
+                         HDR_MAX - s->side_head_len, 0);
+        if (r > 0) {
+            s->side_head_len += (size_t)r;
+            s->side_head[s->side_head_len] = '\0';
+            complete = strstr(s->side_head, "\r\n\r\n") != NULL;
+            continue;
+        }
+        if (r < 0 && errno == EINTR) {
+            continue;
+        }
+        if (r < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+            break;
+        }
+        side_reset(s); /* peer closed or errored mid-head */
+        return;
+    }
+    if (!complete) {
+        unsigned long long now = armTicksToNs(armGetSystemTick());
+        if (s->side_head_len >= HDR_MAX ||
+            now - s->side_start_ns > HEAD_DEADLINE_NS) {
+            side_reset(s);
+        }
+        return;
+    }
+    if (side_answer(s, s->side_fd, s->side_head)) {
+        side_reset(s);
+        return;
+    }
+    /* Not a quick read (another push, a delete...): park it until the main
+     * slot is free, then hand it over in arrival order. */
+    if (s->client_fd < 0) {
+        side_promote(s);
+        return;
+    }
+    /* While it's parked no other quick read can get in, so don't let it sit
+     * there for the rest of a long transfer: drop it once the PC has hung up
+     * (recv peeks EOF), and turn it away as busy after SIDE_PARK_NS. */
+    char pk;
+    ssize_t pr = recv(s->side_fd, &pk, 1, MSG_PEEK);
+    if (pr == 0 || (pr < 0 && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR)) {
+        side_reset(s);
+        return;
+    }
+    if (armTicksToNs(armGetSystemTick()) - s->side_start_ns > SIDE_PARK_NS) {
+        inv_trace(s, "side parked too long; busy fd=%d", s->side_fd);
+        make_blocking(s->side_fd);
+        send_resp(s->side_fd, "503 Service Unavailable", "text/plain", "busy");
+        side_reset(s);
+    }
 }
 
 bool httpsrv_local_ip(char *out, size_t out_sz) {
@@ -2763,6 +3179,7 @@ bool httpsrv_open_port(HttpSrv *s, uint16_t port) {
     memset(s, 0, sizeof(*s));
     s->listen_fd = -1;
     s->client_fd = -1;
+    s->side_fd = -1;
     s->port = port;
 
     int fd = listen_socket(port);
@@ -2796,6 +3213,9 @@ int httpsrv_poll(HttpSrv *s) {
     if (s->listen_fd < 0) {
         return -1;
     }
+    /* First, so a parked side connection takes a freed main slot ahead of
+     * anything newer still in the backlog. */
+    side_step(s);
     if (s->client_fd < 0) {
         int fd = accept(s->listen_fd, NULL, NULL);
         if (fd < 0) {
@@ -2840,10 +3260,10 @@ int httpsrv_poll(HttpSrv *s) {
 bool httpsrv_receiving(const HttpSrv *s, size_t *now, size_t *total) {
     bool on = s->listen_fd >= 0 && s->client_fd >= 0 && s->cbody_total > 0;
     if (now) {
-        *now = on ? s->cbody_len : 0;
+        *now = on ? s->resume_base + s->cbody_len : 0;
     }
     if (total) {
-        *total = on ? s->cbody_total : 0;
+        *total = on ? s->resume_base + s->cbody_total : 0;
     }
     return on;
 }
@@ -2853,6 +3273,7 @@ bool httpsrv_sending(const HttpSrv *s) {
 }
 
 void httpsrv_abort(HttpSrv *s) {
+    s->resume_id[0] = '\0'; /* the user cancelled it: don't keep a partial */
     /* Stop a running pump thread before client_reset closes the socket/sink it
      * owns, then client_reset drops the client, closes/removes an in-flight
      * ".part" sink and any outgoing pull, and clears the head/body-in-progress —
@@ -2866,6 +3287,7 @@ void httpsrv_close(HttpSrv *s) {
     rx_join(s);
     rm_join(s);
     client_reset(s);
+    side_reset(s);
     if (s->listen_fd >= 0) {
         close(s->listen_fd);
         s->listen_fd = -1;
@@ -2887,6 +3309,7 @@ bool httpsrv_rebind(HttpSrv *s) {
     rx_join(s);
     rm_join(s);
     client_reset(s);
+    side_reset(s);
     if (s->listen_fd >= 0) {
         close(s->listen_fd);
         s->listen_fd = -1;

@@ -946,6 +946,9 @@ static const char *const g_en[S__COUNT] = {
     /* S_ACCENT_ROSE */ "Rose",
     /* S_ACCENT_SLATE */ "Slate",
     /* S_RECONNECTING */ "Reconnecting…",
+    /* S_SUB_FOLDERS_KEYS */ "A select  X Reset to default  L/R tabs  ZL/ZR page",
+    /* S_FOLDERS_RESET_CONFIRM */ "Reset the ROM download folder, the install-folder mode and every per-console folder to their defaults? Files already on the SD card are not moved or deleted.",
+    /* S_FOLDERS_RESET_DONE */ "Folders reset to defaults",
 };
 
 static const char *const g_key_names[S__COUNT] = {
@@ -1893,4 +1896,7 @@ static const char *const g_key_names[S__COUNT] = {
     [S_ACCENT_ROSE] = "accent_rose",
     [S_ACCENT_SLATE] = "accent_slate",
     [S_RECONNECTING] = "reconnecting",
+    [S_SUB_FOLDERS_KEYS] = "sub_folders_keys",
+    [S_FOLDERS_RESET_CONFIRM] = "folders_reset_confirm",
+    [S_FOLDERS_RESET_DONE] = "folders_reset_done",
 };

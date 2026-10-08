@@ -691,6 +691,8 @@ class MainApplication : public pu::ui::Application {
         Folders,   // top-level Folders tab: ROM root, install-folder mode, and
                    // (expanded inline below the toggle, no separate sub-screen)
                    // per-console custom install folders
+        ConsoleFolders, // card view only: the per-console folder list as its own
+                        // list sub-screen of Folders (list view keeps it inline)
         Backups,   // Storage sub-screen: emulator/app rollback backups (view/delete)
         Account,   // settings submenu: archive.org creds + startup net check
         Updates,   // settings submenu: HaulNX build check now + auto-check toggle
@@ -891,6 +893,8 @@ class MainApplication : public pu::ui::Application {
         bool fresh = false;   // true = fresh install, false = in-place update
         bool zip = false;     // asset is an archive: extract, then install the .nro inside
         std::string asset;    // release asset filename (its extension picks .nro vs zip)
+        std::string hint;     // manifest asset hint + detect list: pick the right
+        std::string detect;   // .nro when the archive holds several (find_nro_in_dir)
         int xslot = -1;       // Queue-tab external item tracking this job
     };
     static const int UMI_MAX = 4; // concurrent emulator/app installs
@@ -1476,6 +1480,13 @@ class MainApplication : public pu::ui::Application {
     void GotoStorage();
     void GotoFolders(); // Folders tab root: ROM root, install-folder mode, and
                         // (expanded inline) per-console folders
+    void GotoFoldersCards(); // GotoFolders' card-view variant
+    void GotoConsoleFolders(); // card view's per-console folder list (list sub-screen)
+    // Back to wherever per-console folders are listed for this view (the
+    // inline rows in list view, Screen::ConsoleFolders in card view) with
+    // console `ci` selected.
+    void ShowConsoleFolder(int ci);
+    void ResetFolders(); // Folders tab X: every folder setting back to default
     void GotoInboxFiles(); // Storage sub-screen: view/select/delete Inbox files
     void GotoBackups(); // Storage sub-screen: view/delete rollback backups
     // Rows on Screen::Backups: full path + display label, one per stored build.

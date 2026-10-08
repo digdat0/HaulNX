@@ -950,5 +950,8 @@
   "accent_aqua": "Turkuaz",
   "accent_rose": "Gül",
   "accent_slate": "Arduvaz",
-  "reconnecting": "Yeniden bağlanıyor…"
+  "reconnecting": "Yeniden bağlanıyor…",
+  "sub_folders_keys": "A seç  X Varsayılana sıfırla  L/R sekmeler  ZL/ZR sayfa",
+  "folders_reset_confirm": "ROM indirme klasörü, kurulum klasörü modu ve tüm konsol klasörleri varsayılana sıfırlansın mı? SD karttaki mevcut dosyalar taşınmaz veya silinmez.",
+  "folders_reset_done": "Klasörler varsayılana sıfırlandı"
 }

@@ -950,5 +950,8 @@
   "accent_aqua": "Ngọc lam",
   "accent_rose": "Hồng",
   "accent_slate": "Đá phiến",
-  "reconnecting": "Đang kết nối lại…"
+  "reconnecting": "Đang kết nối lại…",
+  "sub_folders_keys": "A chọn  X Đặt lại về mặc định  L/R tab  ZL/ZR trang",
+  "folders_reset_confirm": "Đặt lại thư mục tải ROM, chế độ thư mục cài đặt và mọi thư mục theo máy về mặc định? Các tệp đã có trên thẻ SD sẽ không bị di chuyển hay xóa.",
+  "folders_reset_done": "Đã đặt lại thư mục về mặc định"
 }

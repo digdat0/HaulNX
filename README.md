@@ -154,23 +154,27 @@ HaulNX's folder names.
 | Nearly everything — NES through PS1, arcade, handhelds | **RetroArch** | [guide](https://github.com/digdat0/HaulNX/wiki/Emulator-RetroArch) — scan `sd:/roms` once and it builds a playlist per system |
 | Multi-system frontends | TICO, Lakka, SCCM-Retro | [TICO](https://github.com/digdat0/HaulNX/wiki/Emulator-TICO) · [Lakka](https://github.com/digdat0/HaulNX/wiki/Emulator-Lakka) · [SCCM-Retro](https://github.com/digdat0/HaulNX/wiki/Emulator-SCCM-Retro) |
 | PlayStation | DuckStation | [guide](https://github.com/digdat0/HaulNX/wiki/Emulator-DuckStation) |
-| PSP | PPSSPP | [guide](https://github.com/digdat0/HaulNX/wiki/Emulator-PPSSPP) |
+| PSP | PPSSPP, PPSSPP-NX | [guide](https://github.com/digdat0/HaulNX/wiki/Emulator-PPSSPP) |
 | GBA / GB / GBC | mGBA | [guide](https://github.com/digdat0/HaulNX/wiki/Emulator-mGBA) |
-| Nintendo DS | melonDS or DraStic | [melonDS](https://github.com/digdat0/HaulNX/wiki/Emulator-melonDS) · [DraStic](https://github.com/digdat0/HaulNX/wiki/Emulator-DraStic) |
+| Nintendo DS | melonDS, DraStic or NooDS | [melonDS](https://github.com/digdat0/HaulNX/wiki/Emulator-melonDS) · [DraStic](https://github.com/digdat0/HaulNX/wiki/Emulator-DraStic) · [NooDS](https://github.com/digdat0/HaulNX/wiki/Emulator-NooDS) |
 | Nintendo 3DS | Raikopon or Dekopon | [Raikopon](https://github.com/digdat0/HaulNX/wiki/Emulator-Raikopon) · [Dekopon](https://github.com/digdat0/HaulNX/wiki/Emulator-Dekopon) |
 | Dreamcast / NAOMI / Atomiswave | Flycast | [guide](https://github.com/digdat0/HaulNX/wiki/Emulator-Flycast) |
 | Saturn | Yaba Sanshiro | [guide](https://github.com/digdat0/HaulNX/wiki/Emulator-YabaSanshiro) |
-| PlayStation 2 | NetherSX2 | [guide](https://github.com/digdat0/HaulNX/wiki/Emulator-NetherSX2) — lighter titles only |
+| PlayStation 2 | NetherSX2 | [guide](https://github.com/digdat0/HaulNX/wiki/Emulator-NetherSX2) — lighter titles only ([ARMSX2-NX](https://github.com/digdat0/HaulNX/wiki/Emulator-ARMSX2-NX) is a proof of concept) |
+| GameCube / Wii | Dolphin, Nezumiiruka | [Dolphin](https://github.com/digdat0/HaulNX/wiki/Emulator-Dolphin) · [Nezumiiruka](https://github.com/digdat0/HaulNX/wiki/Emulator-Nezumiiruka) — lighter GameCube titles; Wii needs an overclock |
 | Wii U | Cemu | [guide](https://github.com/digdat0/HaulNX/wiki/Emulator-Cemu) — brand new, expect rough edges |
+| PS Vita | Vita3K | [guide](https://github.com/digdat0/HaulNX/wiki/Emulator-Vita3K) — experimental |
 | Arcade / Neo Geo | MAME, pFBN | [MAME](https://github.com/digdat0/HaulNX/wiki/Emulator-MAME) · [pFBN](https://github.com/digdat0/HaulNX/wiki/Emulator-pFBN) |
-| SNES / NES standalones | pSNES / pNES | [guide](https://github.com/digdat0/HaulNX/wiki/Emulator-pSNES-pNES) |
+| Sega Model 3 / Namco System 22 | Supermodel-NX, System22-NX | [Supermodel-NX](https://github.com/digdat0/HaulNX/wiki/Emulator-Supermodel-NX) · [System22-NX](https://github.com/digdat0/HaulNX/wiki/Emulator-System22-NX) — hidden by default |
+| SNES / NES / GBA / Genesis standalones | pSNES, pNES, pGBA, pGen | [pSNES / pNES](https://github.com/digdat0/HaulNX/wiki/Emulator-pSNES-pNES) · [pGBA / pGen](https://github.com/digdat0/HaulNX/wiki/Emulator-pGBA-pGen) |
 | Commodore Amiga | UAE4ALL2 | [guide](https://github.com/digdat0/HaulNX/wiki/Emulator-UAE4ALL2) — unofficial port, hidden by default |
-| ZX Spectrum | Vapor Spec | [guide](https://github.com/digdat0/HaulNX/wiki/Emulator-VaporSpec) — unofficial port, hidden by default |
+| ZX Spectrum | RetroArch (Fuse core) | [guide](https://github.com/digdat0/HaulNX/wiki/Emulator-VaporSpec) — hidden by default |
 | CHIP-8 | RetroArch (CHIP-8/Emux core) | [guide](https://github.com/digdat0/HaulNX/wiki/Emulator-CHIP-8) — hidden by default |
-| PICO-8 | PICO-8 (Switch export) | [guide](https://github.com/digdat0/HaulNX/wiki/Emulator-PICO-8) — needs a PICO-8 license; hidden by default |
-| Tamagotchi | TamaLIB-based port | [guide](https://github.com/digdat0/HaulNX/wiki/Emulator-Tamagotchi) — unofficial port, hidden by default |
-| Adobe Flash Games | Ruffle-based port | [guide](https://github.com/digdat0/HaulNX/wiki/Emulator-Flash) — unofficial/experimental, hidden by default |
-| GameCube, Wii, PS Vita | — | [not realistically playable](https://github.com/digdat0/HaulNX/wiki/Emulator-Experimental) — the folders exist for organization |
+| PICO-8 | PICO-8 export, FAKE-08, ps4-p8 | [guide](https://github.com/digdat0/HaulNX/wiki/Emulator-PICO-8) — hidden by default |
+| Tamagotchi | Tamatool-NX | [guide](https://github.com/digdat0/HaulNX/wiki/Emulator-Tamagotchi) — unofficial port, hidden by default |
+| Adobe Flash Games | FlashNX (Ruffle) | [guide](https://github.com/digdat0/HaulNX/wiki/Emulator-Flash) — hidden by default |
+| V.Smile / J2ME / Game & Watch | D.Smile NX, FreeJ2ME, Yokoi | [D.Smile NX](https://github.com/digdat0/HaulNX/wiki/Emulator-DSmile) · [FreeJ2ME](https://github.com/digdat0/HaulNX/wiki/Emulator-FreeJ2ME) · [Yokoi](https://github.com/digdat0/HaulNX/wiki/Emulator-Yokoi) |
+| Older standalone ports | GameLad, LaiNES, DeSmuME-NX and others | [legacy ports](https://github.com/digdat0/HaulNX/wiki/Emulator-Legacy-Ports) — unmaintained; each lists what to use instead |
 
 The wiki also covers the cross-cutting things:
 **[BIOS files](https://github.com/digdat0/HaulNX/wiki/Reference-BIOS-Files)** (which

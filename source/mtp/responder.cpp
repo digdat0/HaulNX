@@ -39,6 +39,7 @@
 #include <updman.h>
 #include <boxart.h> /* boxart_lookup: root "art_<target>.png" objects below */
 #include <queue.h> /* queue_write_status_json: root "queue_status.json" object below */
+#include <sdusage.h> /* root "sd_usage.json" / "sd_usage_scan.json": the Storage page */
 #include <jsonutil.h> /* boxart_request.json parsing below */
 
 #include <cstdarg>
@@ -100,6 +101,7 @@ namespace mtp {
             bool apply_updsrc; /* root update_sources.json push: validate + apply on finish */
             char art_target[64]; /* non-empty: a console-art push, see kArtPushPrefix */
             bool boxart_req; /* root boxart_request.json push: parse + hand off on finish */
+            bool sdusage_req; /* root sd_usage_request.txt push: start a Storage scan on finish */
             u32  handle;
             u64  size;
             char path[1040];
@@ -554,6 +556,20 @@ namespace mtp {
                     time_t sdmt = (stat(c->sd_root, &sdst) == 0) ? sdst.st_mtime : 0;
                     out.push_back(AddOrFind(c, PtpRootParentObject, c->sd_root,
                                             "SD Card", true, 0, sdmt));
+
+                    /* The desktop Storage page's report over USB (the Wi-Fi side
+                     * is GET sd_usage.json). Regenerated in OpGetObject, only
+                     * when the host actually reads it -- never here, since this
+                     * runs on every USB micro-op; written once here only so the
+                     * object exists to be listed. A scan is started by a root
+                     * push of sd_usage_request.txt (see SendObjectInfo).
+                     * Whole-card paths, so only while Full SD access is on. */
+                    struct stat ust2;
+                    if (stat(SDUSAGE_JSON_PATH, &ust2) != 0) sdusage_write_json(SDUSAGE_JSON_PATH);
+                    if (stat(SDUSAGE_JSON_PATH, &ust2) == 0)
+                        out.push_back(AddOrFind(c, PtpRootParentObject, SDUSAGE_JSON_PATH,
+                                                "sd_usage.json", false,
+                                                static_cast<u64>(ust2.st_size), ust2.st_mtime));
                 }
 
                 /* A read-only snapshot of what's installed, so a USB-connected PC
@@ -899,6 +915,17 @@ namespace mtp {
             if (!o)         return PtpResponseCode_InvalidObjectHandle;
             if (o->is_dir)  return PtpResponseCode_InvalidObjectHandle;
 
+            /* The Storage page report (see the root listing): rebuilt now, at
+             * the moment of the read. Its size changes with the report, so
+             * it's re-read before the data phase is sized from it. */
+            if (strcmp(o->path, SDUSAGE_JSON_PATH) == 0) {
+                if (!c->sd_root || !c->sd_root[0]) return PtpResponseCode_AccessDenied;
+                struct stat ust3;
+                if (!sdusage_write_json(o->path) || stat(o->path, &ust3) != 0)
+                    return PtpResponseCode_AccessDenied;
+                o->size = static_cast<u64>(ust3.st_size);
+            }
+
             FILE *f = fopen(o->path, "rb");
             if (!f) return PtpResponseCode_AccessDenied;
 
@@ -1191,10 +1218,21 @@ namespace mtp {
                     if (is_boxart_req)
                         snprintf(full, sizeof(full), "%s/incoming_boxart_req.mtp", CONFIG_DIR);
 
+                    /* The desktop Storage page starting a scan: a few lines of
+                     * folder names (the USB mirror of GET sd_usage_scan?p=).
+                     * Staged single-slot like the others; read and handed to
+                     * sdusage_request on completion. Full SD access only. */
+                    bool is_sdusage_req = (pnorm == PtpRootParentObject) &&
+                                          c->sd_root && c->sd_root[0] &&
+                                          strcmp(fname, "sd_usage_request.txt") == 0;
+                    if (is_sdusage_req)
+                        snprintf(full, sizeof(full), "%s/incoming_sdusage_req.mtp", CONFIG_DIR);
+
                     u32 h = AddOrFind(c, pnorm, full, fname, false, csize, time(nullptr));
                     c->pending.active = true;
                     c->pending.apply_updsrc = is_updsrc;
                     c->pending.boxart_req = is_boxart_req;
+                    c->pending.sdusage_req = is_sdusage_req;
                     snprintf(c->pending.art_target, sizeof(c->pending.art_target), "%s",
                             is_art_push ? art_target : "");
                     /* Unpack archives dropped straight into a console folder,
@@ -1403,6 +1441,26 @@ namespace mtp {
                      * work is cheap, not slow. */
                     if (c->pending.art_target[0]) {
                         mtp::EnqueueArtPush(c->pending.art_target, c->pending.path);
+                        Obj *o = FindHandle(c, c->pending.handle);
+                        if (o) o->parent = 0xFFFFFFFEu; /* orphan the staging entry */
+                        if (!c->stopping) RC(c, PtpResponseCode_Ok, trans);
+                        XferEnd(true);
+                        c->pending.active = false;
+                        return;
+                    }
+
+                    /* A Storage scan request, staged: read the folder list and
+                     * start the (background) scan -- cheap, so done inline. */
+                    if (c->pending.sdusage_req) {
+                        char dirs[1024] = "";
+                        FILE *rf = fopen(c->pending.path, "rb");
+                        if (rf) {
+                            size_t n = fread(dirs, 1, sizeof(dirs) - 1, rf);
+                            dirs[n] = '\0';
+                            fclose(rf);
+                        }
+                        remove(c->pending.path);
+                        sdusage_request(dirs);
                         Obj *o = FindHandle(c, c->pending.handle);
                         if (o) o->parent = 0xFFFFFFFEu; /* orphan the staging entry */
                         if (!c->stopping) RC(c, PtpResponseCode_Ok, trans);

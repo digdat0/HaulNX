@@ -1034,6 +1034,9 @@ enum {
     S_RECONNECTING,       /* Queue card: shown in place of the speed/ETA line
                               while a download is stalled and about to retry */
 
+    S_SUB_FOLDERS_KEYS,       /* Folders tab footer: button hints incl. X reset */
+    S_FOLDERS_RESET_CONFIRM,
+    S_FOLDERS_RESET_DONE,
     S__COUNT
 };
 

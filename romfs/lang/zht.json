@@ -950,5 +950,8 @@
   "accent_aqua": "湖藍",
   "accent_rose": "玫瑰色",
   "accent_slate": "石板灰",
-  "reconnecting": "正在重新連線…"
+  "reconnecting": "正在重新連線…",
+  "sub_folders_keys": "A 選擇  X 重設為預設  L/R 分頁  ZL/ZR 翻頁",
+  "folders_reset_confirm": "將 ROM 下載資料夾、安裝資料夾模式和所有主機資料夾重設為預設？SD 卡上已有的檔案不會被移動或刪除。",
+  "folders_reset_done": "資料夾已重設為預設"
 }

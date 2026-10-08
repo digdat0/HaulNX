@@ -28,6 +28,7 @@ extern "C" {
 #include "vfystatus.h"
 #include "update.h"
 #include "jsonutil.h"
+#include "sdusage.h"
 #include "jsmn.h"
 #include <switch.h>
 #include <dirent.h>
@@ -3883,7 +3884,8 @@ MainApplication::Tab MainApplication::CurrentTab() {
     case Screen::HelpTopics:
     case Screen::HelpArticle:
     case Screen::HelpSearch: return Tab::Settings;
-    case Screen::Folders:    return Tab::Folders;
+    case Screen::Folders:
+    case Screen::ConsoleFolders: return Tab::Folders;
     default:                return Tab::Browse; // Home/Repos/Files/RepoEdit/Picker/Search
     }
 }
@@ -4650,8 +4652,12 @@ void MainApplication::GotoStorage() {
 void MainApplication::GotoFolders() {
     this->screen = Screen::Folders;
     this->layout->SetTitle(tr(S_TITLE_FOLDERS));
-    this->layout->SetSubtitle(tr(S_SUB_FOLDERS));
+    this->layout->SetSubtitle(tr(S_SUB_FOLDERS_KEYS));
     this->layout->ClearMenu();
+    if (g_prefs.card_view) {
+        this->GotoFoldersCards();
+        return;
+    }
     pu::ui::Color lbl = g_theme->row_text;
     {                                               // 0 ROM folder
         bool custom = g_prefs.roms_override[0] != '\0';
@@ -4699,6 +4705,108 @@ void MainApplication::GotoFolders() {
             this->layout->AddRow(tr(S_NO_CONSOLES));
         }
     }
+}
+
+// Card view of the Folders tab (Appearance > Card view), in the same 6-wide
+// poster grid as Settings/Home. Card order matches the list rows 0-2 (ROM
+// folder, install mode, per-console folders), so the Screen::Folders A handler
+// is shared. The per-console folders don't expand inline here: that card opens
+// them as a list sub-screen (GotoConsoleFolders), the same way the ROM folder
+// card opens the list-view folder picker. A folder card shows only the last
+// path segment -- a full sdmc:/... path doesn't fit a poster card.
+void MainApplication::GotoFoldersCards() {
+    auto leaf = [](const std::string &p) {
+        std::string t = p;
+        while (t.size() > 1 && t.back() == '/') {
+            t.pop_back();
+        }
+        size_t sl = t.find_last_of('/');
+        std::string l = sl == std::string::npos ? t : t.substr(sl + 1);
+        return l.empty() ? p : l;
+    };
+    this->layout->SetCardCols(6);
+    this->layout->SetCardPoster(true);
+    bool custom_root = g_prefs.roms_override[0] != '\0';
+    this->layout->AddCard(tr(S_ROMS_OVERRIDE),
+                          custom_root ? leaf(roms_root(&g_tico)) : tr(S_ROMS_AUTO),
+                          console_icon("set-storage"));                    // 0
+    bool cf = g_prefs.custom_folders;
+    this->layout->AddCard(tr(S_INSTALL_MODE),
+                          cf ? tr(S_INSTALL_MODE_CUSTOM)
+                             : tr(S_INSTALL_MODE_DEFAULT),
+                          console_icon("set-advanced"));                   // 1
+    this->layout->AddCard(tr(S_CONSOLE_FOLDERS),
+                          !cf ? tr(S_LOCKED) : tr(S_OPEN),
+                          console_icon("set-sources"), false, !cf);        // 2
+    this->layout->SetCardsMode(true);
+}
+
+void MainApplication::GotoConsoleFolders() {
+    this->screen = Screen::ConsoleFolders;
+    this->layout->SetTitle(tr(S_CONSOLE_FOLDERS));
+    this->layout->SetSubtitle(tr(S_SUB_LANGUAGE)); // "A select  B back"
+    this->layout->ClearMenu();
+    for (int i = 0; i < g_cfg.console_count; i++) {
+        ConsoleGroup *g = &g_cfg.consoles[i];
+        char label[128];
+        console_label(g->console, label, sizeof(label));
+        this->layout->AddRow2(label,
+                              g->folder[0] ? g->folder
+                                           : tr(S_INSTALL_FOLDER_DEFAULT),
+                              g_theme->row_text, onoff_color(g->folder[0] != 0),
+                              -1.0f, console_icon(g->console));
+    }
+    if (g_cfg.console_count == 0) {
+        this->layout->AddRow(tr(S_NO_CONSOLES));
+    }
+}
+
+// Folders tab X: the ROM download folder, the install-folder mode and every
+// per-console folder back to their defaults (a fresh install's state), after a
+// danger confirmation. Only the settings change -- nothing on the SD card is
+// moved or deleted. Same ROM-root re-apply as the picker's apply_roms.
+void MainApplication::ResetFolders() {
+    if (!this->ConfirmDanger(tr(S_RESET_DEFAULT), tr(S_FOLDERS_RESET_CONFIRM))) {
+        return;
+    }
+    g_prefs.roms_override[0] = '\0';
+    g_prefs.custom_folders = false;
+    prefs_save(&g_prefs);
+    tico_init(&g_tico);
+    tico_set_roms_override(&g_tico, g_prefs.roms_override);
+    this->inst_path = roms_root(&g_tico);
+    bool changed = false;
+    for (int i = 0; i < g_cfg.console_count; i++) {
+        if (g_cfg.consoles[i].folder[0]) {
+            g_cfg.consoles[i].folder[0] = '\0';
+            changed = true;
+        }
+    }
+    if (changed) {
+        config_save(&g_cfg);
+    }
+    this->folders_expanded = false;
+    this->Toast(tr(S_FOLDERS_RESET_DONE));
+    this->GotoFolders();
+}
+
+void MainApplication::ShowConsoleFolder(int ci) {
+    if (g_prefs.card_view) {
+        this->GotoConsoleFolders();
+        this->layout->SetSel(ci);
+    } else {
+        this->folders_expanded = true; // keep the console rows visible
+        this->GotoFolders();
+        this->layout->SetSel(4 + ci);
+    }
+}
+
+// Open the folder picker for console `ci`'s install folder, starting at its
+// current custom folder if it still exists, else the SD root.
+static void start_console_pick_path(int ci, std::string &start) {
+    start = "sdmc:/";
+    const char *f = g_cfg.consoles[ci].folder;
+    if (f[0] && fs_exists(f)) start = f;
 }
 
 // Sum the sizes of the files directly in a folder (non-recursive, files only).
@@ -5285,8 +5393,12 @@ void MainApplication::GuidedTour() {
             }
             break;
         case Page::InstallFolders:
-            this->folders_expanded = true; // show the per-console rows expanded
-            this->GotoFolders();
+            if (g_prefs.card_view) {
+                this->GotoConsoleFolders();
+            } else {
+                this->folders_expanded = true; // show the per-console rows expanded
+                this->GotoFolders();
+            }
             break;
         case Page::Storage:        this->GotoStorage();                   break;
         case Page::Transfers:      this->GotoTransfers();                 break;
@@ -5726,6 +5838,14 @@ void MainApplication::InvJsonBegin() {
     json_write_escaped(f, usb3);
     fprintf(f, ",\n  \"sd_access\": %s",
             g_prefs.sd_full_access ? "true" : "false");
+    // Tells the companion this server answers inventory.json, queue_status.json
+    // and fs_list on a second connection while a transfer holds the first (see
+    // HttpSrv.side_head), so it may send those without waiting behind a push.
+    fputs(",\n  \"live_reads\": true", f);
+    // GET sd_usage.json / sd_usage_scan (sdusage.c): the desktop Storage page.
+    fputs(",\n  \"sd_usage\": true", f);
+    // GET push_resume + X-Resume-Id/From (httpsrv.c): interrupted Wi-Fi pushes resume.
+    fputs(",\n  \"push_resume\": true", f);
     fputs(",\n  \"consoles\": [", f);
 
     // Rebuilt in lockstep with the JSON, one console at a time in
@@ -6116,8 +6236,12 @@ void MainApplication::InvServerPoll() {
     // companion can't connect until the user disables and re-enables it. Watch the
     // link and, on a down->up edge (or a lease change), recreate the socket on the
     // fresh interface. nifm is an IPC call, so poll it at ~2s, not every frame.
-    if (this->inv_link_ck_ns == 0 ||
-        armTicksToNs(now - this->inv_link_ck_ns) >= 2000000000ULL) {
+    // Not while a push is moving bytes: that proves the link is fine, and a nifm
+    // hiccup under a saturated 2.4 GHz link would otherwise read as a drop and
+    // the rebind would kill the transfer. Checked again once it ends.
+    if ((this->inv_link_ck_ns == 0 ||
+         armTicksToNs(now - this->inv_link_ck_ns) >= 2000000000ULL) &&
+        !httpsrv_receiving(&this->inv_srv, NULL, NULL)) {
         this->inv_link_ck_ns = now;
         char ip[46];
         bool up = httpsrv_local_ip(ip, sizeof(ip));
@@ -7166,16 +7290,31 @@ static std::vector<NroFile> scan_switch_nros() {
 // Locate the .nro inside an unpacked release archive. Returns its full path and
 // its path *within* the archive (forward-slash separated, e.g. "hbmenu.nro" or
 // "switch/linkalho/linkalho.nro") so a fresh install can honour the layout. When
-// several .nro are present, prefer one filed under a "switch/" folder (that's the
-// intended install path); otherwise take the first found. false if none.
+// several .nro are present, each is scored on its file name and folder, best
+// wins (ties: first found):
+//   8  same file name as the installed .nro being updated (`installed`)
+//   4  contains the manifest's asset hint (`hint`)
+//   2  contains a token of the manifest's detect list (`detect`)
+//   1  filed under a "switch/" folder (the intended install path)
+// so an archive bundling several tools (or a debug build beside the real one)
+// installs the right one, not whichever the SD directory walk saw first. All
+// three are optional -- a push with no manifest entry still gets the switch/
+// preference. false if none.
 static bool find_nro_in_dir(const std::string &root, std::string &path_out,
-                            std::string &rel_out) {
+                            std::string &rel_out, const std::string &hint = "",
+                            const std::string &detect = "",
+                            const std::string &installed = "") {
     std::vector<NroFile> v;
     collect_nros(root, 8, v);
     if (v.empty()) {
         return false;
     }
+    std::string hint_low = hint;
+    for (char &c : hint_low) {
+        c = (char)tolower((unsigned char)c);
+    }
     size_t pick = 0;
+    int best = -1;
     for (size_t i = 0; i < v.size(); i++) {
         std::string rel = v[i].path.substr(root.size());
         while (!rel.empty() && rel[0] == '/') {
@@ -7185,10 +7324,25 @@ static bool find_nro_in_dir(const std::string &root, std::string &path_out,
         for (char &c : low) {
             c = (char)tolower((unsigned char)c);
         }
+        size_t slash = low.find_last_of('/');
+        std::string base = slash == std::string::npos ? low : low.substr(slash + 1);
+        int score = 0;
+        if (!installed.empty() && strcasecmp(base.c_str(), installed.c_str()) == 0) {
+            score += 8;
+        }
+        if (!hint_low.empty() && base.find(hint_low) != std::string::npos) {
+            score += 4;
+        }
+        if (!detect.empty() && detect_match(detect, base)) {
+            score += 2;
+        }
         if (low.compare(0, 7, "switch/") == 0 ||
             low.find("/switch/") != std::string::npos) {
+            score += 1;
+        }
+        if (score > best) {
+            best = score;
             pick = i;
-            break;
         }
     }
     path_out = v[pick].path;
@@ -7282,6 +7436,26 @@ static std::vector<NroFile> list_backups(const std::string &id) {
 // asset name containing a path separator or a ".." segment; UmiTick uses this
 // to decide whether to trust that name for the installed file's new name
 // rather than assuming an external API's field is already a safe filename.
+// Where a fresh install of a plain .nro goes. Loose in sdmc:/switch unless the
+// emulator documents its own folder there (it keeps roms/logs/config beside
+// the .nro and its self-updater expects that path).
+static std::string fresh_nro_dest(const char *id, const std::string &fn) {
+    static const struct {
+        const char *id;
+        const char *dir;
+    } kInstallDirs[] = {
+        {"nezumiiruka", "nezumiiruka"},   // README: sdmc:/switch/nezumiiruka/nezumiiruka.nro
+        {"yabasanshiro", "yabasanshiro"}, // keeps games/, bios/, states/ beside the .nro
+        {"flashnx", "FlashNX"},           // README: sdmc:/switch/FlashNX/FlashNX.nro
+    };
+    for (const auto &d : kInstallDirs) {
+        if (strcasecmp(id, d.id) == 0) {
+            return std::string("sdmc:/switch/") + d.dir + "/" + fn;
+        }
+    }
+    return std::string("sdmc:/switch/") + fn;
+}
+
 static bool is_safe_asset_name(const std::string &name) {
     if (name.empty() || name == "." || name == "..") {
         return false;
@@ -7970,6 +8144,8 @@ void MainApplication::UmiStart(const UpdSource &e, const std::string &url,
     job.dest = dest;
     job.id = e.id;
     job.name = e.name;
+    job.hint = e.asset;
+    job.detect = e.detect;
     job.tag = tag;
     job.bakver = cur_ver;
     job.fresh = fresh;
@@ -8039,7 +8215,12 @@ void MainApplication::UmiTick(int j) {
                                      NULL);
         remove(part.c_str()); // the downloaded archive is no longer needed
         std::string rel;
-        if (nfiles <= 0 || !find_nro_in_dir(exdir, nro_path, rel)) {
+        std::string installed_name;
+        if (!job.fresh) {
+            installed_name = dest.substr(dest.find_last_of('/') + 1);
+        }
+        if (nfiles <= 0 || !find_nro_in_dir(exdir, nro_path, rel, job.hint,
+                                            job.detect, installed_name)) {
             fs_rm_rf(exdir.c_str());
             xfer_log("FAILED     %s %s: no .nro inside the release archive",
                      job.fresh ? "install" : "update", job.name.c_str());
@@ -8643,8 +8824,7 @@ bool MainApplication::AppEntryMenu(size_t idx) {
         // placeholder — UmiTick derives the real path from the archive layout.
         std::string fn = is_safe_asset_name(asset) ? asset
                                                     : (std::string(e.id) + ".nro");
-        this->UmiStart(e, url, tag, std::string("sdmc:/switch/") + fn, "", true,
-                       asset);
+        this->UmiStart(e, url, tag, fresh_nro_dest(e.id, fn), "", true, asset);
         break;
     }
     case 2:
@@ -8659,7 +8839,8 @@ bool MainApplication::AppEntryMenu(size_t idx) {
         this->Toast(tr(S_APPMAN_CHECKING));
         char ctag[64] = "", curl[1024] = "", casset[256] = "";
         long code = 0;
-        bool ok = update_fetch_latest_asset(e.repo, e.asset, ctag, sizeof(ctag),
+        bool ok = update_fetch_latest_asset(e.repo, e.asset, e.detect, ctag,
+                                            sizeof(ctag),
                                             curl, sizeof(curl), casset,
                                             sizeof(casset), NULL, &code);
         if (!ok) {
@@ -8693,8 +8874,7 @@ bool MainApplication::AppEntryMenu(size_t idx) {
         }
         std::string fn = is_safe_asset_name(casset) ? std::string(casset)
                                                     : (std::string(e.id) + ".nro");
-        this->UmiStart(e, curl, ctag, std::string("sdmc:/switch/") + fn, "",
-                       true, casset);
+        this->UmiStart(e, curl, ctag, fresh_nro_dest(e.id, fn), "", true, casset);
         break;
     }
     }
@@ -9039,7 +9219,8 @@ void MainApplication::AppChkThread(void *arg) {
             char tag[64] = "", url[1024] = "", asset[256] = "";
             long code = 0;
             bool ok = update_fetch_latest_asset(
-                list[i].repo, list[i].asset, tag, sizeof(tag), url, sizeof(url),
+                list[i].repo, list[i].asset, list[i].detect, tag, sizeof(tag),
+                url, sizeof(url),
                 asset, sizeof(asset), NULL, &code);
             if (!ok) {
                 if (code == 403 || code == 429) {
@@ -9247,6 +9428,7 @@ static const EmuSystems kEmuSystems[] = {
     {"armsx2nx", {"ps2"}, 1},
     {"cemu", {"wiiu"}, 1},
     {"dolphin", {"gc", "wii"}, 2},
+    {"nezumiiruka", {"gc", "wii"}, 2},
     {"vita3k", {"vita"}, 1},
     {"ps4-p8", {"pico8"}, 1},
     {"flashnx", {"flash"}, 1},
@@ -9260,7 +9442,6 @@ static const EmuSystems kEmuSystems[] = {
     {"vba-next-switch", {"gba"}, 1},
     {"vapor-spec", {"zx-spectrum"}, 1},
     {"desmume-nx", {"nds"}, 1},
-    {"gdkgba", {"gba"}, 1},
     {"khedgb", {"gb"}, 1},
     {"laines", {"nes"}, 1},
     {"noies", {"nes"}, 1},
@@ -9834,7 +10015,8 @@ void MainApplication::AppRecheckOne(size_t idx) {
         this->Toast(tr(S_APPMAN_CHECKING));
         char tag[64] = "", url[1024] = "", asset[256] = "";
         long code = 0;
-        bool ok = update_fetch_latest_asset(e.repo, e.asset, tag, sizeof(tag),
+        bool ok = update_fetch_latest_asset(e.repo, e.asset, e.detect, tag,
+                                            sizeof(tag),
                                             url, sizeof(url), asset,
                                             sizeof(asset), NULL, &code);
         if (!ok) {
@@ -14471,9 +14653,7 @@ void MainApplication::InstFolderDialog(s32 i) {
         // Land right on this console's row instead of just the tab root --
         // only meaningful when per-console mode is actually on.
         if (cf) {
-            this->folders_expanded = true;
-            this->GotoFolders();
-            this->layout->SetSel(4 + (int)(g - g_cfg.consoles));
+            this->ShowConsoleFolder((int)(g - g_cfg.consoles));
         } else {
             this->GotoFolders();
         }
@@ -19069,9 +19249,7 @@ void MainApplication::HandleInput(u64 down, u64 held,
                     }
                 }
             } else {
-                this->folders_expanded = true; // keep the console rows visible
-                this->GotoFolders();
-                this->layout->SetSel(4 + ci); // land back on the edited console
+                this->ShowConsoleFolder(ci); // land back on the edited console
             }
         };
         // Set (or, with chosen=="", clear) this console's custom install folder,
@@ -19536,15 +19714,16 @@ void MainApplication::HandleInput(u64 down, u64 held,
 
     case Screen::Folders: {
         // Top-level tab root, like Queue/Settings/Emulators: no B-back, tabs
-        // are on L/R. Y opens the global Tools panel, same as every other tab
-        // root. Row 2 (per-console folders) expands/collapses in place rather
+        // are on L/R. X resets every folder setting to default. No Y Tools
+        // panel here -- none of its actions concern folder locations. Row 2 (per-console folders) expands/collapses in place rather
         // than drilling into a separate screen: a divider (row 3) then one
         // row per console follow it when expanded -- see GotoFolders for the
         // render side, kept in sync with kConsoleBase here.
         const s32 kConsoleBase = 4;
-        bool expanded = this->folders_expanded && g_prefs.custom_folders;
-        if (down & HidNpadButton_Y) {
-            this->ToolsMenu();
+        bool expanded = !this->layout->InCards() && this->folders_expanded &&
+                        g_prefs.custom_folders;
+        if (down & HidNpadButton_X) {
+            this->ResetFolders();
         } else if (down & HidNpadButton_A) {
             s32 sel = this->layout->Sel();
             if (expanded && sel >= kConsoleBase &&
@@ -19583,6 +19762,11 @@ void MainApplication::HandleInput(u64 down, u64 held,
                     this->Toast(tr(S_CONSOLE_FOLDERS_LOCKED));
                     return;
                 }
+                if (this->layout->InCards()) {
+                    // Card view: the list opens as its own sub-screen.
+                    this->GotoConsoleFolders();
+                    return;
+                }
                 this->folders_expanded = !this->folders_expanded;
                 break;
             default: break;
@@ -19592,7 +19776,8 @@ void MainApplication::HandleInput(u64 down, u64 held,
                 this->GotoFolders();
                 this->layout->SetSel(keep);
             }
-        } else if (down & (HidNpadButton_Left | HidNpadButton_Right)) {
+        } else if ((down & (HidNpadButton_Left | HidNpadButton_Right)) &&
+                   !this->layout->InCards()) { // cards: Left/Right move the grid
             s32 sel = this->layout->Sel();
             if (sel == 1) { // Install-folder mode
                 g_prefs.custom_folders = !g_prefs.custom_folders;
@@ -19602,6 +19787,28 @@ void MainApplication::HandleInput(u64 down, u64 held,
             }
             this->GotoFolders();
             this->layout->SetSel(sel);
+        }
+        break;
+    }
+
+    case Screen::ConsoleFolders: {
+        // Card view only: the per-console folder list. A picks the highlighted
+        // console's install folder; B returns to the Folders cards on the
+        // Per-console folders card.
+        if (down & HidNpadButton_B) {
+            this->GotoFolders();
+            this->layout->SetSel(2);
+        } else if (down & HidNpadButton_A) {
+            s32 ci = this->layout->Sel();
+            if (ci >= 0 && ci < g_cfg.console_count) {
+                this->picker_console = ci;
+                this->picker_from_installed = false;
+                this->picker_nro_mode = false;
+                std::string start;
+                start_console_pick_path(ci, start);
+                this->GotoRomPicker(start);
+                return;
+            }
         }
         break;
     }
@@ -21236,6 +21443,7 @@ void MainApplication::OnLoad() {
 void MainApplication::Shutdown() {
     this->ImportStop(); // the listening socket must go before net_exit()
     this->InvServerStop(); // same: close the inventory listener before net_exit()
+    sdusage_shutdown(); // join the Storage page's SD scan if one is running
     this->UsbMtpStop(); // release usb:ds if the connect screen was still up
     // Ask every worker that polls a cancel flag to stop, so the joins below
     // return promptly instead of blocking on an in-flight network retry or a

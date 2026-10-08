@@ -950,5 +950,8 @@
   "accent_aqua": "湖蓝",
   "accent_rose": "玫瑰色",
   "accent_slate": "石板灰",
-  "reconnecting": "正在重新连接…"
+  "reconnecting": "正在重新连接…",
+  "sub_folders_keys": "A 选择  X 重置为默认  L/R 标签  ZL/ZR 翻页",
+  "folders_reset_confirm": "将 ROM 下载文件夹、安装文件夹模式和所有主机文件夹重置为默认？SD 卡上已有的文件不会被移动或删除。",
+  "folders_reset_done": "文件夹已重置为默认"
 }

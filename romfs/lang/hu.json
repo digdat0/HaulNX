@@ -950,5 +950,8 @@
   "accent_aqua": "Türkiz",
   "accent_rose": "Rózsaszín",
   "accent_slate": "Pala",
-  "reconnecting": "Újracsatlakozás…"
+  "reconnecting": "Újracsatlakozás…",
+  "sub_folders_keys": "A kiválaszt  X Visszaállítás alapértelmezettre  L/R fülek  ZL/ZR oldal",
+  "folders_reset_confirm": "Visszaállítod a ROM-letöltési mappát, a telepítési mappa módját és minden konzolonkénti mappát az alapértelmezettre? Az SD-kártyán már lévő fájlok nem lesznek áthelyezve vagy törölve.",
+  "folders_reset_done": "Mappák visszaállítva alapértelmezettre"
 }

@@ -950,5 +950,8 @@
   "accent_aqua": "Turkoosi",
   "accent_rose": "Roosa",
   "accent_slate": "Liuske",
-  "reconnecting": "Yhdistetään uudelleen…"
+  "reconnecting": "Yhdistetään uudelleen…",
+  "sub_folders_keys": "A valitse  X Palauta oletukseksi  L/R välilehdet  ZL/ZR sivu",
+  "folders_reset_confirm": "Palautetaanko ROM-latauskansio, asennuskansiotila ja kaikki konsolikohtaiset kansiot oletuksiin? SD-kortilla jo olevia tiedostoja ei siirretä eikä poisteta.",
+  "folders_reset_done": "Kansiot palautettu oletuksiin"
 }

@@ -950,5 +950,8 @@
   "accent_aqua": "Turcoaz",
   "accent_rose": "Roz",
   "accent_slate": "Ardezie",
-  "reconnecting": "Reconectare…"
+  "reconnecting": "Reconectare…",
+  "sub_folders_keys": "A selectează  X Resetează la implicit  L/R file  ZL/ZR pagină",
+  "folders_reset_confirm": "Resetezi folderul de descărcare ROM, modul folderelor de instalare și toate folderele per consolă la valorile implicite? Fișierele aflate deja pe cardul SD nu sunt mutate sau șterse.",
+  "folders_reset_done": "Folderele au fost resetate la implicit"
 }

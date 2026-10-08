@@ -950,5 +950,8 @@
   "accent_aqua": "Turkis",
   "accent_rose": "Rosa",
   "accent_slate": "Skifer",
-  "reconnecting": "Kobler til på nytt…"
+  "reconnecting": "Kobler til på nytt…",
+  "sub_folders_keys": "A velg  X Tilbakestill til standard  L/R faner  ZL/ZR side",
+  "folders_reset_confirm": "Tilbakestille ROM-nedlastingsmappen, installasjonsmappemodus og alle konsollmapper til standard? Filer som allerede ligger på SD-kortet blir ikke flyttet eller slettet.",
+  "folders_reset_done": "Mapper tilbakestilt til standard"
 }

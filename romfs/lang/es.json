@@ -950,5 +950,8 @@
   "accent_aqua": "Turquesa",
   "accent_rose": "Rosa",
   "accent_slate": "Pizarra",
-  "reconnecting": "Reconectando…"
+  "reconnecting": "Reconectando…",
+  "sub_folders_keys": "A seleccionar  X Restablecer a predeterminado  L/R pestañas  ZL/ZR página",
+  "folders_reset_confirm": "¿Restablecer la carpeta de descarga de ROM, el modo de carpetas de instalación y todas las carpetas por consola a sus valores predeterminados? Los archivos que ya están en la tarjeta SD no se mueven ni se eliminan.",
+  "folders_reset_done": "Carpetas restablecidas a predeterminado"
 }

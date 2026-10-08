@@ -950,5 +950,8 @@
   "accent_aqua": "Türkis",
   "accent_rose": "Rosé",
   "accent_slate": "Schiefer",
-  "reconnecting": "Verbindung wird wiederhergestellt…"
+  "reconnecting": "Verbindung wird wiederhergestellt…",
+  "sub_folders_keys": "A auswählen  X Auf Standard zurücksetzen  L/R Tabs  ZL/ZR Seite",
+  "folders_reset_confirm": "ROM-Downloadordner, Installationsordner-Modus und alle konsolenspezifischen Ordner auf Standard zurücksetzen? Dateien auf der SD-Karte werden weder verschoben noch gelöscht.",
+  "folders_reset_done": "Ordner auf Standard zurückgesetzt"
 }

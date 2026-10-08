@@ -27,6 +27,32 @@ static bool ci_contains(const char *hay, const char *needle) {
     return false;
 }
 
+/* True if any comma-separated token of `detect` (an update_sources.json
+ * "detect" list, e.g. "nx-shell,nxshell") occurs in `name`, ignoring case and
+ * spaces. A NULL/empty list never matches. */
+static bool detect_hit(const char *name, const char *detect) {
+    if (!detect) {
+        return false;
+    }
+    char tok[64];
+    size_t n = 0;
+    for (const char *p = detect;; p++) {
+        if (*p == ',' || *p == '\0') {
+            tok[n] = '\0';
+            if (n && ci_contains(name, tok)) {
+                return true;
+            }
+            n = 0;
+            if (!*p) {
+                break;
+            }
+        } else if (!isspace((unsigned char)*p) && n < sizeof(tok) - 1) {
+            tok[n++] = *p;
+        }
+    }
+    return false;
+}
+
 /* True when `name_lower` (already lowercased) looks like it targets a
  * platform other than the Switch. A multi-platform repo (HarbourMasters'
  * Ghostship/Shipwright ports and others like them) ships one release with a
@@ -73,7 +99,10 @@ static bool looks_non_switch_platform(const char *name_lower) {
     }
     /* Short/ambiguous words that need boundary checking. */
     return has_word(name_lower, "mac") || has_word(name_lower, "osx") ||
-          has_word(name_lower, "ios");
+          has_word(name_lower, "ios") ||
+          /* Other consoles' packages (pEMU ships PS5 zips beside its .nros). */
+          has_word(name_lower, "ps4") || has_word(name_lower, "ps5") ||
+          has_word(name_lower, "vita") || has_word(name_lower, "wiiu");
 }
 
 static void parse_ver(const char *s, int *a, int *b, int *c) {
@@ -103,7 +132,11 @@ int version_cmp(const char *a, const char *b) {
 /* Find an installable asset's download URL on one release object (token index
  * `rel`). An asset is installable if it's a `.nro` OR an archive we can unzip to
  * get one (many homebrew ship the .nro inside a .zip). A direct .nro always wins
- * over an archive. When `hint` is empty, the first seen of each kind is used.
+ * over an archive. Among several eligible assets of one kind, the first whose
+ * name matches a token of `prefer` (the entry's "detect" list -- the names its
+ * installed .nro goes by) wins, else the first seen: a hint-less entry whose
+ * release ships e.g. app.nro + app-debug.nro, or another tool's .nro listed
+ * first, used to take whichever GitHub happened to list first.
  * When `hint` is non-empty, ONLY an asset whose name contains it is eligible --
  * a release is allowed to come back empty rather than matching on an unrelated
  * asset. This matters for a repo like Cpasjuste/pemu, which ships several
@@ -115,8 +148,8 @@ int version_cmp(const char *a, const char *b) {
  * when non-NULL, the chosen asset's file name into name_out (its extension
  * tells the caller whether it must be unzipped). */
 static void asset_nro_url(const char *body, const jsmntok_t *tok, int rel,
-                          const char *hint, char *out, size_t out_sz,
-                          char *name_out, size_t name_sz) {
+                          const char *hint, const char *prefer, char *out,
+                          size_t out_sz, char *name_out, size_t name_sz) {
     out[0] = '\0';
     if (name_out) {
         name_out[0] = '\0';
@@ -128,10 +161,10 @@ static void asset_nro_url(const char *body, const jsmntok_t *tok, int rel,
     bool have_hint = hint && hint[0];
     /* Best direct .nro and best archive, tracked separately so a plain .nro is
      * preferred when a release offers both. Each keeps the first match unless a
-     * hinted one turns up. */
+     * `prefer` match turns up. */
     char nro_url[1024] = "", nro_name[256] = "";
     char arc_url[1024] = "", arc_name[256] = "";
-    bool nro_hinted = false, arc_hinted = false;
+    bool nro_pref = false, arc_pref = false;
     int cnt = tok[ai].size;
     int child = ai + 1;
     for (int i = 0; i < cnt; i++) {
@@ -158,15 +191,15 @@ static void asset_nro_url(const char *body, const jsmntok_t *tok, int rel,
                 json_copy(body, tok,
                           json_obj_get(body, tok, child, "browser_download_url"),
                           url, sizeof(url));
-                bool h = have_hint && ci_contains(name, hint);
-                if (!have_hint || h) {
+                if (!have_hint || ci_contains(name, hint)) {
                     char *u = is_nro ? nro_url : arc_url;
                     char *nm = is_nro ? nro_name : arc_name;
-                    bool *hf = is_nro ? &nro_hinted : &arc_hinted;
-                    if (!u[0] || (h && !*hf)) {
+                    bool *pf = is_nro ? &nro_pref : &arc_pref;
+                    bool p = detect_hit(name, prefer);
+                    if (!u[0] || (p && !*pf)) {
                         snprintf(u, 1024, "%s", url);
                         snprintf(nm, 256, "%s", name);
-                        *hf = h;
+                        *pf = p;
                     }
                 }
             }
@@ -185,12 +218,13 @@ static void asset_nro_url(const char *body, const jsmntok_t *tok, int rel,
 
 bool update_fetch_latest(const char *repo, char *tag, size_t tag_sz, char *url,
                          size_t url_sz, volatile int *attempt) {
-    return update_fetch_latest_asset(repo, NULL, tag, tag_sz, url, url_sz, NULL,
-                                     0, attempt, NULL);
+    return update_fetch_latest_asset(repo, NULL, NULL, tag, tag_sz, url, url_sz,
+                                     NULL, 0, attempt, NULL);
 }
 
 bool update_fetch_latest_asset(const char *repo, const char *asset_hint,
-                               char *tag, size_t tag_sz, char *url,
+                               const char *prefer, char *tag, size_t tag_sz,
+                               char *url,
                                size_t url_sz, char *asset, size_t asset_sz,
                                volatile int *attempt, long *last_code) {
     tag[0] = '\0';
@@ -290,8 +324,8 @@ bool update_fetch_latest_asset(const char *repo, const char *asset_hint,
         if (!draft) {
             json_copy(body, tok, json_obj_get(body, tok, rel, "tag_name"), rtag,
                       sizeof(rtag));
-            asset_nro_url(body, tok, rel, asset_hint, rurl, sizeof(rurl), rname,
-                          sizeof(rname));
+            asset_nro_url(body, tok, rel, asset_hint, prefer, rurl, sizeof(rurl),
+                          rname, sizeof(rname));
         }
         if (!draft && rtag[0] && rurl[0]) {
             if (!prerelease &&
