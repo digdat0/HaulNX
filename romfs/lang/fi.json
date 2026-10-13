@@ -122,6 +122,7 @@
   "continue": "Jatka",
   "controls_body": "Välilehdet: L / R  (Selaa | Asennettu | Jono | Asetukset)\nNavigointi: D-pad (pidä pohjassa toistaaksesi)   ZL/ZR: sivu\n+: poistu   B: takaisin\nSelaa: A avaa  Y lisää  X muokkaa/poista  - hae\nTiedostot: A lataa  - hae  Y suodata  X päivitä  ◀/▶: repo\nJono: A peruuta  X yritä uudelleen  ZL/ZR siirrä  Y tyhjennä  - loki",
   "exit_confirm": "%d aktiivista latausta. Poistu silti?",
+  "exit_unpacking": "Siirtoa tietokoneelta puretaan vielä. Jos poistut nyt, se valmistuu, kun HaulNX avataan seuraavan kerran. Poistu silti?",
   "filter_prompt": "Suodata",
   "rename_prompt": "Nimeä uudelleen",
   "language": "Kieli: %s",

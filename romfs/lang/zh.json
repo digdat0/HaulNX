@@ -122,6 +122,7 @@
   "continue": "继续",
   "controls_body": "标签：L / R（浏览 | 已安装 | 队列 | 设置）\n导航：D-pad（长按重复）   ZL/ZR：翻页\n+：退出   B：返回\n浏览：A 打开  Y 添加  X 编辑/删除  - 搜索\n文件：A 获取  - 搜索  Y 筛选  X 刷新  ◀/▶：仓库\n队列：A 取消  X 重试  ZL/ZR 移动  Y 清空  - 日志",
   "exit_confirm": "%d 个下载正在进行中。确定退出？",
+  "exit_unpacking": "来自电脑的传输仍在解压。现在退出的话，将在下次打开 HaulNX 时完成。确定退出？",
   "filter_prompt": "筛选",
   "rename_prompt": "重命名为",
   "language": "语言：%s",

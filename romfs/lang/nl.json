@@ -122,6 +122,7 @@
   "continue": "Doorgaan",
   "controls_body": "Tabbladen: L / R  (Bladeren | Geïnstalleerd | Wachtrij | Instellingen)\nNavigeren: D-pad (ingedrukt houden om te herhalen)   ZL/ZR: pagina\n+: afsluiten   B: terug\nBladeren: A openen  Y toevoegen  X bewerken/verw  - zoeken\nBestanden: A downloaden  - zoeken  Y filteren  X vernieuwen  ◀/▶: repo\nWachtrij: A annuleren  X opnieuw  ZL/ZR verplaatsen  Y wissen  - logboek",
   "exit_confirm": "%d download(s) actief. Toch afsluiten?",
+  "exit_unpacking": "Een overdracht van je pc wordt nog uitgepakt. Als je nu afsluit, wordt die afgemaakt wanneer HaulNX weer opent. Toch afsluiten?",
   "filter_prompt": "Filteren",
   "rename_prompt": "Hernoemen naar",
   "language": "Taal: %s",

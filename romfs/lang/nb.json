@@ -122,6 +122,7 @@
   "continue": "Fortsett",
   "controls_body": "Faner: L / R  (Bla gjennom | Installert | Kø | Innstillinger)\nNavigere: D-pad (hold for å gjenta)   ZL/ZR: side\n+: avslutt   B: tilbake\nBla: A åpne  Y legg til  X rediger/slett  - søk\nFiler: A hent  - søk  Y filtrer  X oppdater  ◀/▶: repo\nKø: A avbryt  X prøv igjen  ZL/ZR flytt  Y tøm  - logg",
   "exit_confirm": "%d aktive nedlastinger. Avslutte likevel?",
+  "exit_unpacking": "En overføring fra PC-en pakkes fortsatt ut. Hvis du avslutter nå, fullføres den neste gang HaulNX åpnes. Avslutte likevel?",
   "filter_prompt": "Filtrer",
   "rename_prompt": "Omdøp til",
   "language": "Språk: %s",

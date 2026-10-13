@@ -87,6 +87,7 @@ namespace mtp {
         PtpOperationCode_GetObjectPropDesc      = 0x9802,
         PtpOperationCode_GetObjectPropValue     = 0x9803,
         PtpOperationCode_GetObjectPropList      = 0x9805,
+        PtpOperationCode_SendObjectPropList     = 0x9808,
     };
 
     enum PtpResponseCode : u16 {
@@ -111,6 +112,8 @@ namespace mtp {
         PtpResponseCode_SessionAlreadyOpen          = 0x201E,
         PtpResponseCode_InvalidObjectPropCode       = 0xA801,
         PtpResponseCode_InvalidObjectPropFormat     = 0xA802,
+        PtpResponseCode_SpecificationByGroupUnsupported = 0xA807,
+        PtpResponseCode_SpecificationByDepthUnsupported = 0xA808,
         PtpResponseCode_ObjectTooLarge              = 0xA809, /* MTP: exceeds the store's per-object limit */
         PtpResponseCode_ObjectPropNotSupported      = 0xA80A,
     };

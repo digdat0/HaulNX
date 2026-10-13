@@ -122,6 +122,7 @@
   "continue": "Fortfahren",
   "controls_body": "Tabs: L / R  (Durchsuchen | Installiert | Warteschlange | Einstellungen)\nNavigieren: D-pad (halten zum Wiederholen)   ZL/ZR: Seite\n+: Beenden   B: zurück\nDurchsuchen: A öffnen  Y hinzufügen  X bearbeiten/lösch  - suchen\nDateien: A laden  - suchen  Y filtern  X aktualisieren  ◀/▶: Repo\nWarteschlange: A abbrechen  X wiederholen  ZL/ZR verschieben  Y leeren  - Protokoll",
   "exit_confirm": "%d Download(s) aktiv. Trotzdem beenden?",
+  "exit_unpacking": "Eine Übertragung vom PC wird noch entpackt. Wenn du jetzt beendest, wird sie beim nächsten Start von HaulNX fertiggestellt. Trotzdem beenden?",
   "filter_prompt": "Filtern",
   "rename_prompt": "Umbenennen in",
   "language": "Sprache: %s",

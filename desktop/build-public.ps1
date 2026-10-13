@@ -13,7 +13,7 @@ Builds to a separate target-public/ dir (via CARGO_TARGET_DIR) rather than the
 normal target/, so this never clobbers — or gets stale mixed in with — an
 ordinary local `cargo build --release` and its full-featured exe.
 
-Output: target-public/release/haulnx-app-utility.exe copied to
+Output: target-public/dist/haulnx-app-utility.exe copied to
 desktop/HaulNX-AppUtility.exe — the only desktop exe that should ever leave
 this machine; upload it as-is, no rename needed. Never attach the plain
 haulnx-app-utility.exe from an ordinary local `cargo build --release` (your
@@ -49,14 +49,14 @@ try {
     Push-Location (Join-Path $root 'src-tauri')
     try {
         $env:CARGO_TARGET_DIR = Join-Path $root 'src-tauri\target-public'
-        cargo build --release
+        cargo build --profile dist   # full LTO -- see [profile.dist] in Cargo.toml
         if ($LASTEXITCODE -ne 0) { throw "cargo build failed with exit code $LASTEXITCODE" }
     } finally {
         Remove-Item Env:\CARGO_TARGET_DIR -ErrorAction SilentlyContinue
         Pop-Location
     }
 
-    $exe = Join-Path $root 'src-tauri\target-public\release\haulnx-app-utility.exe'
+    $exe = Join-Path $root 'src-tauri\target-public\dist\haulnx-app-utility.exe'
     if (-not (Test-Path $exe)) { throw "build succeeded but $exe is missing" }
     # Refuse to publish an exe that still carries either extra (or anything
     # parked by an older version of this script): Tauri keeps asset names as

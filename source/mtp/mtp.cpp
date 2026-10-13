@@ -28,9 +28,11 @@
 #include <fsutil.h> /* fs_rm_rf_cancelable: the background delete worker */
 #include <rar3.h>
 
+#include <atomic>
 #include <cstdio>
 #include <cstring>
 #include <strings.h> /* strcasecmp */
+#include <sys/stat.h>
 #include <string>
 #include <vector>
 
@@ -194,8 +196,10 @@ namespace mtp {
          * Stop() doesn't have to ride out a huge tree to join this thread. */
         Thread g_delthread;
         UEvent g_delwake;
-        Mutex  g_dellock;              /* guards g_delq */
+        Mutex  g_dellock;              /* guards g_delq and g_delcur */
         std::vector<std::string> g_delq;
+        std::string g_delcur;          /* the path being removed right now ("" = none) */
+        std::atomic<u32> g_delgen{0};  /* finished deletes, see DeleteGeneration */
         bool   g_delup = false;        /* worker thread created */
 
         /* --- console-art push mailbox ---------------------------------------
@@ -207,6 +211,10 @@ namespace mtp {
          * thread's own per-frame poll. See EnqueueArtPush/PollArtPush. */
         Mutex  g_artlock;              /* guards g_artq */
         std::vector<ArtPush> g_artq;
+
+        /* App install/update mailbox: same shape as the art one above. */
+        Mutex  g_applock;              /* guards g_appq */
+        std::vector<AppPush> g_appq;
 
         /* --- box-art search/pick request + status mailbox ------------------
          * Same no-dedicated-worker shape as the art-push mailbox above (the
@@ -232,8 +240,18 @@ namespace mtp {
                     if (g_delq.empty()) { mutexUnlock(std::addressof(g_dellock)); break; }
                     path = g_delq.front();
                     g_delq.erase(g_delq.begin());
+                    g_delcur = path;
                     mutexUnlock(std::addressof(g_dellock));
+                    u64 t0 = armGetSystemTick();
                     fs_rm_rf_cancelable(path.c_str(), std::addressof(g_stopping));
+                    struct stat st;
+                    bool gone = stat(path.c_str(), &st) != 0;
+                    DiagLog("usb        delete %s %s (%llums)", gone ? "done" : "INCOMPLETE", path.c_str(),
+                            (unsigned long long)(armTicksToNs(armGetSystemTick() - t0) / 1000000ull));
+                    mutexLock(std::addressof(g_dellock));
+                    g_delcur.clear();
+                    mutexUnlock(std::addressof(g_dellock));
+                    g_delgen.fetch_add(1);
                     if (g_stopping) break;
                 }
             }
@@ -246,7 +264,27 @@ namespace mtp {
         mutexLock(std::addressof(g_dellock));
         g_delq.push_back(path);
         mutexUnlock(std::addressof(g_dellock));
+        DiagLog("usb        delete queued %s", path);
         ueventSignal(std::addressof(g_delwake));
+    }
+
+    static bool PathUnder(const char *path, const std::string &p) {
+        size_t l = p.size();
+        return l && strncmp(path, p.c_str(), l) == 0 && (path[l] == '\0' || path[l] == '/');
+    }
+
+    bool DeletePending(const char *path) {
+        bool hit = false;
+        mutexLock(std::addressof(g_dellock));
+        if (!g_delcur.empty() && PathUnder(path, g_delcur)) hit = true;
+        for (size_t i = 0; !hit && i < g_delq.size(); i++)
+            if (PathUnder(path, g_delq[i])) hit = true;
+        mutexUnlock(std::addressof(g_dellock));
+        return hit;
+    }
+
+    u32 DeleteGeneration() {
+        return g_delgen.load();
     }
 
     void EnqueueArtPush(const char *target, const char *path) {
@@ -257,6 +295,23 @@ namespace mtp {
         mutexLock(std::addressof(g_artlock));
         g_artq.push_back(ap);
         mutexUnlock(std::addressof(g_artlock));
+    }
+
+    void EnqueueAppPush(const AppPush &ap) {
+        mutexLock(std::addressof(g_applock));
+        g_appq.push_back(ap);
+        mutexUnlock(std::addressof(g_applock));
+    }
+
+    bool PollAppPush(AppPush *out) {
+        mutexLock(std::addressof(g_applock));
+        bool have = !g_appq.empty();
+        if (have) {
+            *out = g_appq.front();
+            g_appq.erase(g_appq.begin());
+        }
+        mutexUnlock(std::addressof(g_applock));
+        return have;
     }
 
     bool PollArtPush(ArtPush *out) {

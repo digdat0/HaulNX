@@ -122,6 +122,7 @@
   "continue": "Folytatás",
   "controls_body": "Fülek: L / R  (Böngészés | Telepített | Várólista | Beállítások)\nNavigáció: D-pad (tartsd az ismétléshez)   ZL/ZR: oldal\n+: kilépés   B: vissza\nBöngészés: A megnyit  Y hozzáad  X szerkeszt/töröl  - keresés\nFájlok: A letölt  - keresés  Y szűrés  X frissít  ◀/▶: tároló\nVárólista: A mégse  X újra  ZL/ZR mozgat  Y töröl  - napló",
   "exit_confirm": "%d aktív letöltés. Mégis kilép?",
+  "exit_unpacking": "Egy PC-ről érkező átvitel kicsomagolása még folyamatban van. Ha most kilép, a HaulNX következő indításakor fejeződik be. Mégis kilép?",
   "filter_prompt": "Szűrés",
   "rename_prompt": "Átnevezés erre",
   "language": "Nyelv: %s",

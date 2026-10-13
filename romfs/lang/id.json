@@ -122,6 +122,7 @@
   "continue": "Lanjutkan",
   "controls_body": "Tab: L / R  (Jelajah | Terpasang | Antrean | Pengaturan)\nNavigasi: D-pad (tahan untuk mengulang)   ZL/ZR: halaman\n+: keluar   B: kembali\nJelajah: A buka  Y tambah  X edit/hapus  - cari\nFile: A unduh  - cari  Y filter  X segarkan  ◀/▶: repo\nAntrean: A batal  X coba lagi  ZL/ZR pindah  Y bersihkan  - log",
   "exit_confirm": "%d unduhan aktif. Tetap keluar?",
+  "exit_unpacking": "Transfer dari PC masih diekstrak. Jika keluar sekarang, prosesnya selesai saat HaulNX dibuka lagi. Tetap keluar?",
   "filter_prompt": "Filter",
   "rename_prompt": "Ganti nama menjadi",
   "language": "Bahasa: %s",

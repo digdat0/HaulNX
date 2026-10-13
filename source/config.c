@@ -23,7 +23,14 @@ static Mutex g_diag_mtx;
 
 /* Copy one log's whole contents into the bundle, headed by a "==== label
  * (path) ====" marker so it's easy to find in a pasted report. Missing is not
- * an error (most logs only exist once their feature has run). */
+ * an error (most logs only exist once their feature has run).
+ *
+ * Copies in big chunks: the SD card is slow at small I/O, and 4 KiB pieces
+ * ran ~170 KB/s -- a 1.2 MB debug.log took 5-7 s, long enough to time out a
+ * USB host waiting on the bundle (see ListGenerated in mtp/responder.cpp).
+ * Falls back to a small stack buffer if the heap is tight. */
+#define BUNDLE_CHUNK (512 * 1024)
+
 static void bundle_append(FILE *out, const char *label, const char *path) {
     FILE *in = fopen(path, "rb");
     fprintf(out, "==== %s (%s) ====\n", label, path);
@@ -31,10 +38,18 @@ static void bundle_append(FILE *out, const char *label, const char *path) {
         fprintf(out, "(not present)\n\n");
         return;
     }
-    char buf[4096];
+    char small[4096];
+    char *buf = malloc(BUNDLE_CHUNK);
+    size_t cap = buf ? BUNDLE_CHUNK : sizeof(small);
+    if (!buf) {
+        buf = small;
+    }
     size_t n;
-    while ((n = fread(buf, 1, sizeof(buf), in)) > 0) {
+    while ((n = fread(buf, 1, cap, in)) > 0) {
         fwrite(buf, 1, n, out);
+    }
+    if (buf != small) {
+        free(buf);
     }
     fprintf(out, "\n\n");
     fclose(in);
@@ -48,6 +63,8 @@ bool diag_bundle_write(void) {
         mutexUnlock(&g_diag_mtx);
         return false;
     }
+    /* So the small header lines batch up instead of each hitting the SD. */
+    setvbuf(out, NULL, _IOFBF, 64 * 1024);
     fprintf(out, "HaulNX v%s debug bundle\n\n", APP_VERSION_STR);
     bundle_append(out, "debug", LOG_PATH);
     bundle_append(out, "transfers", XFERLOG_PATH);

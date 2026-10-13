@@ -122,6 +122,7 @@
   "continue": "계속",
   "controls_body": "탭: L / R  (탐색 | 설치됨 | 대기열 | 설정)\n이동: D-pad (길게 눌러 반복)   ZL/ZR: 페이지\n+: 종료   B: 뒤로\n탐색: A 열기  Y 추가  X 편집/삭제  - 검색\n파일: A 받기  - 검색  Y 필터  X 새로고침  ◀/▶: 저장소\n대기열: A 취소  X 재시도  ZL/ZR 이동  Y 비우기  - 로그",
   "exit_confirm": "%d개의 다운로드가 진행 중입니다. 종료할까요?",
+  "exit_unpacking": "PC에서 받은 파일의 압축을 아직 푸는 중입니다. 지금 종료하면 다음에 HaulNX를 열 때 마저 완료됩니다. 종료할까요?",
   "filter_prompt": "필터",
   "rename_prompt": "새 이름",
   "language": "언어: %s",

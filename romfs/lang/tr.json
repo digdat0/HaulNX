@@ -122,6 +122,7 @@
   "continue": "Devam",
   "controls_body": "Sekmeler: L / R  (Göz At | Yüklü | Kuyruk | Ayarlar)\nGezinme: D-pad (tekrar için basılı tutun)   ZL/ZR: sayfa\n+: çıkış   B: geri\nGöz At: A aç  Y ekle  X düzenle/sil  - ara\nDosyalar: A indir  - ara  Y filtrele  X yenile  ◀/▶: depo\nKuyruk: A iptal  X tekrar dene  ZL/ZR taşı  Y temizle  - günlük",
   "exit_confirm": "%d aktif indirme var. Yine de çıkılsın mı?",
+  "exit_unpacking": "Bilgisayardan gelen bir aktarım hâlâ açılıyor. Şimdi çıkarsan HaulNX bir sonraki açılışta işlemi tamamlar. Yine de çıkılsın mı?",
   "filter_prompt": "Filtrele",
   "rename_prompt": "Yeni ad",
   "language": "Dil: %s",

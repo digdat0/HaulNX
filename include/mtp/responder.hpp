@@ -47,4 +47,8 @@ namespace mtp {
                       const Folder *folders, int nfolders, const char *inbox,
                       const char *sd_root = nullptr);
 
+    /* One timestamped "usb ..." line in debug.log, for the workers in
+     * mtp.cpp (same format as the responder's own lines). File I/O only. */
+    void DiagLog(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+
 }

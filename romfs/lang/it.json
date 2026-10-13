@@ -122,6 +122,7 @@
   "continue": "Continua",
   "controls_body": "Schede: L / R  (Sfoglia | Installati | Coda | Impostazioni)\nNavigazione: D-pad (tieni premuto per ripetere)   ZL/ZR: pagina\n+: esci   B: indietro\nSfoglia: A apri  Y aggiungi  X modifica/elim  - cerca\nFile: A scarica  - cerca  Y filtra  X aggiorna  ◀/▶: repo\nCoda: A annulla  X riprova  ZL/ZR sposta  Y svuota  - registro",
   "exit_confirm": "%d download attivi. Uscire comunque?",
+  "exit_unpacking": "Un trasferimento dal PC è ancora in fase di estrazione. Se esci ora, verrà completato alla prossima apertura di HaulNX. Uscire comunque?",
   "filter_prompt": "Filtra",
   "rename_prompt": "Rinomina in",
   "language": "Lingua: %s",

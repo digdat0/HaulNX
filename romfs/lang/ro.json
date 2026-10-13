@@ -122,6 +122,7 @@
   "continue": "Continuă",
   "controls_body": "File: L / R  (Navigare | Instalate | Coadă | Setări)\nNavigație: D-pad (ține pentru repetare)   ZL/ZR: pagină\n+: ieșire   B: înapoi\nNavigare: A deschide  Y adaugă  X editează/șterge  - căutare\nFișiere: A descarcă  - căutare  Y filtrează  X reîmprospătează  ◀/▶: depozit\nCoadă: A anulează  X reîncearcă  ZL/ZR mută  Y golește  - jurnal",
   "exit_confirm": "%d descărcări active. Ieși totuși?",
+  "exit_unpacking": "Un transfer de pe PC încă se dezarhivează. Dacă ieși acum, se va termina la următoarea deschidere a HaulNX. Ieși totuși?",
   "filter_prompt": "Filtrează",
   "rename_prompt": "Redenumește ca",
   "language": "Limbă: %s",

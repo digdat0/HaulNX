@@ -122,6 +122,7 @@
   "continue": "続行",
   "controls_body": "タブ: L / R  (閲覧 | インストール済み | キュー | 設定)\n移動: D-pad (長押しで連続)   ZL/ZR: ページ\n+: 終了   B: 戻る\n閲覧: A 開く  Y 追加  X 編集/削除  - 検索\nファイル: A 取得  - 検索  Y フィルタ  X 更新  ◀/▶: リポ\nキュー: A キャンセル  X 再試行  ZL/ZR 移動  Y クリア  - ログ",
   "exit_confirm": "%d 件のダウンロードが進行中です。終了しますか？",
+  "exit_unpacking": "PCからの転送をまだ展開中です。今終了すると、次回HaulNXを開いたときに完了します。終了しますか？",
   "filter_prompt": "フィルタ",
   "rename_prompt": "新しい名前",
   "language": "言語: %s",

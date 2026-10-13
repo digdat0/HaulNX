@@ -122,6 +122,7 @@
   "continue": "Kontynuuj",
   "controls_body": "Karty: L / R  (Przeglądaj | Zainstalowane | Kolejka | Ustawienia)\nNawigacja: D-pad (przytrzymaj aby powtórzyć)   ZL/ZR: strona\n+: wyjdź   B: wstecz\nPrzeglądaj: A otwórz  Y dodaj  X edytuj/usuń  - szukaj\nPliki: A pobierz  - szukaj  Y filtruj  X odśwież  ◀/▶: repo\nKolejka: A anuluj  X ponów  ZL/ZR przesuń  Y wyczyść  - dziennik",
   "exit_confirm": "%d aktywnych pobierań. Wyjść mimo to?",
+  "exit_unpacking": "Transfer z komputera jest wciąż rozpakowywany. Jeśli wyjdziesz teraz, zakończy się przy następnym uruchomieniu HaulNX. Wyjść mimo to?",
   "filter_prompt": "Filtruj",
   "rename_prompt": "Zmień nazwę na",
   "language": "Język: %s",

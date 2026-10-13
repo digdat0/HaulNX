@@ -266,6 +266,7 @@ enum {
 
     /* ---- exit ---- */
     S_EXIT_CONFIRM,
+    S_EXIT_UNPACKING,
 
     /* ---- filter ---- */
     S_FILTER_PROMPT,

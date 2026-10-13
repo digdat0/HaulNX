@@ -329,6 +329,14 @@ void httpsrv_abort(HttpSrv *s);
 /* Close the socket and free any received body. Safe on an unopened server. */
 void httpsrv_close(HttpSrv *s);
 
+/* The inventory server's own header validators, shared with the USB (MTP)
+ * app-push path (mtp/responder.cpp) so both transports accept exactly the same
+ * app installs/updates: a plain file name, a version tag, and an exact
+ * sdmc:/switch/... .nro path (see each static's comment in httpsrv.c). */
+bool httpsrv_sanitize_name(const char *in, char *out, size_t out_sz);
+bool httpsrv_sanitize_tag(const char *in, char *out, size_t out_sz);
+bool httpsrv_sanitize_app_path(const char *in, char *out, size_t out_sz);
+
 #ifdef __cplusplus
 }
 #endif

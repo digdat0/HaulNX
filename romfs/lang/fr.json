@@ -122,6 +122,7 @@
   "continue": "Continuer",
   "controls_body": "Onglets : L / R  (Parcourir | Installés | File | Paramètres)\nNaviguer : D-pad (maintenir pour répéter)   ZL/ZR : page\n+ : quitter   B : retour\nParcourir : A ouvrir  Y ajouter  X modifier/suppr  - rechercher\nFichiers : A obtenir  - rechercher  Y filtrer  X actualiser  ◀/▶ : dépôt\nFile : A annuler  X réessayer  ZL/ZR déplacer  Y effacer  - journal",
   "exit_confirm": "%d téléchargement(s) actif(s). Quitter quand même ?",
+  "exit_unpacking": "Un transfert depuis votre PC est encore en cours de décompression. Si vous quittez maintenant, il se terminera au prochain lancement de HaulNX. Quitter quand même ?",
   "filter_prompt": "Filtrer",
   "rename_prompt": "Renommer en",
   "language": "Langue : %s",

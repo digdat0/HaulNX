@@ -122,6 +122,7 @@
   "continue": "Tiếp tục",
   "controls_body": "Tab: L / R  (Duyệt | Đã cài | Hàng đợi | Cài đặt)\nĐiều hướng: D-pad (giữ để lặp lại)   ZL/ZR: trang\n+: thoát   B: quay lại\nDuyệt: A mở  Y thêm  X sửa/xóa  - tìm kiếm\nTệp: A tải  - tìm kiếm  Y lọc  X làm mới  ◀/▶: kho\nHàng đợi: A hủy  X thử lại  ZL/ZR di chuyển  Y xóa sạch  - nhật ký",
   "exit_confirm": "%d tải xuống đang hoạt động. Vẫn thoát?",
+  "exit_unpacking": "Một tệp chuyển từ PC vẫn đang được giải nén. Nếu thoát bây giờ, việc này sẽ hoàn tất ở lần mở HaulNX tiếp theo. Vẫn thoát?",
   "filter_prompt": "Lọc",
   "rename_prompt": "Đổi tên thành",
   "language": "Ngôn ngữ: %s",

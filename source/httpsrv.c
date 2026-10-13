@@ -3329,3 +3329,15 @@ bool httpsrv_rebind(HttpSrv *s) {
     }
     return true;
 }
+
+bool httpsrv_sanitize_name(const char *in, char *out, size_t out_sz) {
+    return sanitize_filename(in, out, out_sz);
+}
+
+bool httpsrv_sanitize_tag(const char *in, char *out, size_t out_sz) {
+    return sanitize_tag(in, out, out_sz);
+}
+
+bool httpsrv_sanitize_app_path(const char *in, char *out, size_t out_sz) {
+    return sanitize_app_path(in, out, out_sz);
+}

@@ -122,6 +122,7 @@
   "continue": "繼續",
   "controls_body": "分頁：L / R（瀏覽 | 已安裝 | 佇列 | 設定）\n導覽：D-pad（長按重複）   ZL/ZR：翻頁\n+：結束   B：返回\n瀏覽：A 開啟  Y 新增  X 編輯/刪除  - 搜尋\n檔案：A 取得  - 搜尋  Y 篩選  X 重新整理  ◀/▶：儲存庫\n佇列：A 取消  X 重試  ZL/ZR 移動  Y 清空  - 記錄",
   "exit_confirm": "%d 個下載正在進行中。確定結束？",
+  "exit_unpacking": "來自電腦的傳輸仍在解壓縮。現在結束的話，會在下次開啟 HaulNX 時完成。確定結束？",
   "filter_prompt": "篩選",
   "rename_prompt": "重新命名為",
   "language": "語言：%s",

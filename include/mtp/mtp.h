@@ -75,6 +75,13 @@ namespace mtp {
     // Tear down USB device mode. Safe to call when already stopped.
     void Stop();
 
+    // Stall diagnostics, called once per frame with this frame's Poll() result
+    // (UsbMtpTick). Logs link-state changes, and -- from the UI thread, so it
+    // still lands if the responder thread itself is wedged -- a command that
+    // has been in flight for seconds, with the sub-step it's stuck in. Pure
+    // file I/O to debug.log; never touches USB.
+    void DiagTick(Status s);
+
     // --- per-file transfer progress (PC->Switch), for the connect screen ----
 
     enum XferState { Xfer_Active = 0, Xfer_Done = 1, Xfer_Failed = 2, Xfer_Extracting = 3 };
@@ -136,6 +143,15 @@ namespace mtp {
     // the whole tree (see fs_rm_rf_cancelable).
     void EnqueueDelete(const char *path);
 
+    // True while `path` (or a folder it's inside) is queued for, or in the
+    // middle of, a background delete -- folder listings hide it, so a refresh
+    // landing before the worker finishes doesn't bring the file back.
+    bool DeletePending(const char *path);
+
+    // Bumped each time a background delete finishes, so the UI thread can
+    // rebuild inventory.json right away instead of on its 15 s timer.
+    u32 DeleteGeneration();
+
     // A console cover-art image received over USB (the MTP counterpart of
     // Wi-Fi's X-Art-Target push), staged to a temp file. Filing it needs
     // config_find_console/config_save and a Toast/screen refresh -- none of
@@ -152,6 +168,26 @@ namespace mtp {
         char target[64];
         char path[768];
     };
+
+    // An app install/update pushed over USB -- the MTP mirror of the Wi-Fi
+    // push's X-App-Target / X-App-Path / X-App-Install / X-App-Tag /
+    // X-Fs-Path+X-Fs-Extract headers. MTP has no headers, so the desktop
+    // sends them first as a root "app_request.json", then the body as a root
+    // "__haulnx_app__<name>". The responder validates the request with the
+    // Wi-Fi server's own sanitizers, stages the body, and hands both to the
+    // main thread, which applies it exactly like InvApplyFile does.
+    struct AppPush {
+        char name[256];       // the pushed file's own name (display / extract job)
+        char staged[1040];    // where its body landed
+        char target[256];     // update an installed app by name (fallback)
+        char path[768];       // exact sdmc:/switch/... .nro to install/update
+        bool install;         // a new app at `path` rather than an update
+        char tag[32];         // release tag, recorded as installed_tag
+        char extract_to[768]; // multi-file release: unzip the body here
+        bool dat_bulk;        // a zip of DATs to file (root "__haulnx_dats__.zip")
+    };
+    void EnqueueAppPush(const AppPush &ap);
+    bool PollAppPush(AppPush *out);
 
     // Main thread, once per frame alongside PushExtractTick: pop one pending
     // art push if any is waiting. Returns false (out untouched) when empty.

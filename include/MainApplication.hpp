@@ -614,7 +614,8 @@ class MainLayout : public pu::ui::Layout {
                  bool dim = false, bool art = false,
                  const std::string &console = "", bool badge_ring = false,
                  pu::ui::Color flag_clr = pu::ui::Color(0, 0, 0, 0),
-                 const std::string &flag_text = "");
+                 const std::string &flag_text = "",
+                 const std::vector<pu::sdl2::Texture> &icons = {});
     // Column count for the grid (default 4; ClearMenu resets it back).
     // Installed's game-list poster view narrows this to 6-7.
     void SetCardCols(s32 n);
@@ -1254,6 +1255,10 @@ class MainApplication : public pu::ui::Application {
         int kind = 0;
     };
     std::deque<PxtJob> pxt_queue;
+    // True while pxt_* describes a job that has started but not been reaped by
+    // PushExtractTick -- it is written to the pending-unpack file alongside
+    // pxt_queue, so an exit mid-unpack resumes on the next launch (PxtResume).
+    bool pxt_cur_active = false;
     bool imp_open = false;
     bool usb_open = false; // true while the embedded-MTP connect screen is up
     bool usb_from_settings = false; // opened from Settings › Install from PC (vs
@@ -1583,6 +1588,8 @@ class MainApplication : public pu::ui::Application {
                                     uint64_t bytes_read); // its cancel hook
     void PushExtractTick();    // per-frame: reap the extract worker when done
     void PushExtractApplyDatBulk(); // pxt_kind==2: file every extracted DAT, then clean up
+    void PxtSave();   // persist the running + queued unpack jobs (pending-unpack file)
+    void PxtResume(); // re-queue jobs an earlier run exited before finishing
     void InvBoxartPickReap();       // apply + publish a finished companion box-art pick
     void PushExtractQueue(const std::string &path, const std::string &dir,
                           const std::string &name, const std::string &target,

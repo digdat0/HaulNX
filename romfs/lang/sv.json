@@ -122,6 +122,7 @@
   "continue": "Fortsätt",
   "controls_body": "Flikar: L / R  (Bläddra | Installerat | Kö | Inställningar)\nNavigera: D-pad (håll för att upprepa)   ZL/ZR: sida\n+: avsluta   B: tillbaka\nBläddra: A öppna  Y lägg till  X redigera/ta bort  - sök\nFiler: A hämta  - sök  Y filtrera  X uppdatera  ◀/▶: repo\nKö: A avbryt  X försök igen  ZL/ZR flytta  Y rensa  - logg",
   "exit_confirm": "%d aktiva nedladdningar. Avsluta ändå?",
+  "exit_unpacking": "En överföring från datorn packas fortfarande upp. Om du avslutar nu slutförs den nästa gång HaulNX öppnas. Avsluta ändå?",
   "filter_prompt": "Filtrera",
   "rename_prompt": "Döp om till",
   "language": "Språk: %s",

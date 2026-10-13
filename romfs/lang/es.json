@@ -122,6 +122,7 @@
   "continue": "Continuar",
   "controls_body": "Pestañas: L / R  (Explorar | Instalados | Cola | Ajustes)\nNavegar: D-pad (mantener para repetir)   ZL/ZR: página\n+: salir   B: volver\nExplorar: A abrir  Y añadir  X editar/elim  - buscar\nArchivos: A obtener  - buscar  Y filtrar  X actualizar  ◀/▶: repo\nCola: A cancelar  X reintentar  ZL/ZR mover  Y limpiar  - registro",
   "exit_confirm": "%d descarga(s) activa(s). ¿Salir de todos modos?",
+  "exit_unpacking": "Una transferencia desde tu PC aún se está descomprimiendo. Si sales ahora, terminará la próxima vez que abras HaulNX. ¿Salir de todos modos?",
   "filter_prompt": "Filtrar",
   "rename_prompt": "Renombrar a",
   "language": "Idioma: %s",

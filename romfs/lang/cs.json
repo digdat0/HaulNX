@@ -122,6 +122,7 @@
   "continue": "Pokračovat",
   "controls_body": "Karty: L / R  (Procházet | Nainstalováno | Fronta | Nastavení)\nNavigace: D-pad (držte pro opakování)   ZL/ZR: stránka\n+: ukončit   B: zpět\nProcházet: A otevřít  Y přidat  X upravit/smazat  - hledat\nSoubory: A stáhnout  - hledat  Y filtrovat  X obnovit  ◀/▶: repo\nFronta: A zrušit  X opakovat  ZL/ZR přesunout  Y vymazat  - protokol",
   "exit_confirm": "%d aktivních stahování. Přesto ukončit?",
+  "exit_unpacking": "Přenos z počítače se stále rozbaluje. Pokud teď ukončíte, dokončí se při příštím spuštění HaulNX. Přesto ukončit?",
   "filter_prompt": "Filtrovat",
   "rename_prompt": "Přejmenovat na",
   "language": "Jazyk: %s",

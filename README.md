@@ -152,7 +152,7 @@ HaulNX's folder names.
 | System(s) | Emulator | Setup |
 |---|---|---|
 | Nearly everything — NES through PS1, arcade, handhelds | **RetroArch** | [guide](https://github.com/digdat0/HaulNX/wiki/Emulator-RetroArch) — scan `sd:/roms` once and it builds a playlist per system |
-| Multi-system frontends | TICO, Lakka, SCCM-Retro | [TICO](https://github.com/digdat0/HaulNX/wiki/Emulator-TICO) · [Lakka](https://github.com/digdat0/HaulNX/wiki/Emulator-Lakka) · [SCCM-Retro](https://github.com/digdat0/HaulNX/wiki/Emulator-SCCM-Retro) |
+| Multi-system frontends | TICO, Lakka, SCCM-Retro, NXStation | [TICO](https://github.com/digdat0/HaulNX/wiki/Emulator-TICO) · [Lakka](https://github.com/digdat0/HaulNX/wiki/Emulator-Lakka) · [SCCM-Retro](https://github.com/digdat0/HaulNX/wiki/Emulator-SCCM-Retro) · [NXStation](https://github.com/digdat0/HaulNX/wiki/Emulator-NXStation) |
 | PlayStation | DuckStation | [guide](https://github.com/digdat0/HaulNX/wiki/Emulator-DuckStation) |
 | PSP | PPSSPP, PPSSPP-NX | [guide](https://github.com/digdat0/HaulNX/wiki/Emulator-PPSSPP) |
 | GBA / GB / GBC | mGBA | [guide](https://github.com/digdat0/HaulNX/wiki/Emulator-mGBA) |
@@ -174,7 +174,8 @@ HaulNX's folder names.
 | Tamagotchi | Tamatool-NX | [guide](https://github.com/digdat0/HaulNX/wiki/Emulator-Tamagotchi) — unofficial port, hidden by default |
 | Adobe Flash Games | FlashNX (Ruffle) | [guide](https://github.com/digdat0/HaulNX/wiki/Emulator-Flash) — hidden by default |
 | V.Smile / J2ME / Game & Watch | D.Smile NX, FreeJ2ME, Yokoi | [D.Smile NX](https://github.com/digdat0/HaulNX/wiki/Emulator-DSmile) · [FreeJ2ME](https://github.com/digdat0/HaulNX/wiki/Emulator-FreeJ2ME) · [Yokoi](https://github.com/digdat0/HaulNX/wiki/Emulator-Yokoi) |
-| Older standalone ports | GameLad, LaiNES, DeSmuME-NX and others | [legacy ports](https://github.com/digdat0/HaulNX/wiki/Emulator-Legacy-Ports) — unmaintained; each lists what to use instead |
+| Point-and-click adventures | ScummVM | [guide](https://github.com/digdat0/HaulNX/wiki/Emulator-ScummVM) — official builds from scummvm.org |
+| Older standalone ports | GameLad, LaiNES, DeSmuME-NX, Neopop-SDL (Neo Geo Pocket), UniPCemu (PC/DOS) and others | [legacy ports](https://github.com/digdat0/HaulNX/wiki/Emulator-Legacy-Ports) — unmaintained; each lists what to use instead |
 
 The wiki also covers the cross-cutting things:
 **[BIOS files](https://github.com/digdat0/HaulNX/wiki/Reference-BIOS-Files)** (which

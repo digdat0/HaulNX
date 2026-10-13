@@ -41,13 +41,18 @@
 #include <queue.h> /* queue_write_status_json: root "queue_status.json" object below */
 #include <sdusage.h> /* root "sd_usage.json" / "sd_usage_scan.json": the Storage page */
 #include <jsonutil.h> /* boxart_request.json parsing below */
+#include <httpsrv.h> /* httpsrv_sanitize_*: app_request.json uses the Wi-Fi rules */
 
+#include <atomic>
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
 #include <malloc.h>
+#include <string>
+#include <unordered_map>
+#include <deque>
 #include <vector>
 #include <sys/stat.h>
 #include <dirent.h>
@@ -66,7 +71,7 @@ namespace mtp {
          * read off the log: a big gap between "recv done" and the next command
          * pins the delay to extraction rather than the wire. Pure file I/O, no
          * USB waits -- safe to call from anywhere on the responder thread. */
-        void mtp_log(const char *fmt, ...) {
+        void mtp_vlog(const char *fmt, va_list ap) {
             fs_mkdir_p(LOGS_DIR);
             FILE *f = fopen(LOG_PATH, "a");
             if (!f) return;
@@ -76,22 +81,53 @@ namespace mtp {
             char ts[16];
             strftime(ts, sizeof(ts), "%H:%M:%S", std::addressof(tmv));
             fprintf(f, "%s  ", ts);
-            va_list ap;
-            va_start(ap, fmt);
             vfprintf(f, fmt, ap);
-            va_end(ap);
             fputc('\n', f);
             fclose(f);
+        }
+
+        __attribute__((format(printf, 1, 2)))
+        void mtp_log(const char *fmt, ...) {
+            va_list ap;
+            va_start(ap, fmt);
+            mtp_vlog(fmt, ap);
+            va_end(ap);
+        }
+
+        /* --- stall diagnostics ---------------------------------------------
+         * What the responder thread is doing right now, published for
+         * mtp::DiagTick on the UI thread: the opcode in flight (0 = idle,
+         * waiting for the host's next command), when it started, and the
+         * sub-step inside it. A command that never returns still shows up in
+         * the log this way, since the UI thread does the reporting. */
+        std::atomic<u32>          g_dg_op{0};
+        std::atomic<u64>          g_dg_since{0};
+        std::atomic<const char *> g_dg_step{""};
+
+        u64 DgMs(u64 t0) {
+            return armTicksToNs(armGetSystemTick() - t0) / 1000000ull;
+        }
+
+        /* Close out one timed root-listing step: name it in the log only when
+         * it was slow enough to matter. */
+        void DgStepEnd(const char *what, u64 t0) {
+            u64 ms = DgMs(t0);
+            if (ms >= 200) mtp_log("usb        slow root step %s: %llums", what, (unsigned long long)ms);
         }
 
         struct Obj {
             u32    handle;
             u32    parent;   /* PtpRootParentObject when in the storage root */
             bool   is_dir;
+            bool   lazy;     /* size/mtime not read yet -- see EnsureStat */
             u64    size;
             time_t mtime;
-            char   path[768];
-            char   name[256];
+            /* Heap strings sized to fit, not fixed arrays: the table keeps
+             * every object a host has seen for the whole session, and at
+             * ~1 KB an entry, browsing a big card in Explorer could run the
+             * app out of memory. */
+            std::string path;
+            std::string name;
         };
 
         /* An object announced by SendObjectInfo, awaiting its SendObject data. */
@@ -102,6 +138,10 @@ namespace mtp {
             char art_target[64]; /* non-empty: a console-art push, see kArtPushPrefix */
             bool boxart_req; /* root boxart_request.json push: parse + hand off on finish */
             bool sdusage_req; /* root sd_usage_request.txt push: start a Storage scan on finish */
+            bool app_req;    /* root app_request.json push: the next app body's metadata */
+            bool app_body;   /* root __haulnx_app__<name> push: an app install/update body */
+            char app_name[256]; /* that body's real file name */
+            bool dat_bulk;   /* root __haulnx_dats__.zip push: DATs to file (X-Dat-Bulk) */
             u32  handle;
             u64  size;
             char path[1040];
@@ -128,7 +168,22 @@ namespace mtp {
             bool        stopping;
             bool        session_open;
             u32         session_id;
-            std::vector<Obj> objs;
+            /* A deque, not a vector: callers hold Obj pointers (FindHandle)
+             * across AddEntry -- a folder listing reads its parent's path while
+             * adding children -- and a vector's regrowth would move every
+             * entry, leaving those pointers dangling. Deque growth never moves
+             * existing elements (and never copies the whole table either). */
+            std::deque<Obj> objs;
+            /* The last app_request.json, waiting for its body (see AppPush). */
+            mtp::AppPush app_req;
+            bool         app_req_set;
+            u32          app_seq;     /* unique staging name per app body */
+            /* "<parent>/<name>" -> handle, so AddOrFind doesn't rescan every
+             * object for every directory entry (thousands of objects once a
+             * host has walked the SD Card tree). Can go stale after a rename,
+             * move or delete orphan -- AddEntry re-checks a hit, and Reindex
+             * keeps rename/move current. */
+            std::unordered_map<std::string, u32> idx;
             Pending     pending;
             u8         *io;
             u8         *io2;   /* second receive buffer for double-buffered SendObject */
@@ -227,6 +282,18 @@ namespace mtp {
         bool WriteData(Ctx *c, void *buf, u32 size) {
             u32 urb;
             return WritePost(c, buf, size, std::addressof(urb)) && WriteReap(c, urb);
+        }
+
+        /* End a device->host data phase whose total length (header included)
+         * is an exact multiple of the bulk packet size with a zero-length
+         * packet. Otherwise the host can't tell the data phase is over -- its
+         * read is still waiting for more when our response arrives, and the
+         * session wedges. Same rule (and the same 512-byte high-speed packet
+         * length, on SuperSpeed too) as Atmosphere's Haze, PtpDataBuilder::
+         * Commit. */
+        bool EndDataPhase(Ctx *c, u64 total) {
+            if (total % PtpUsbBulkHighSpeedMaxPacketLength != 0) return true;
+            return WriteData(c, c->io, 0);
         }
 
         /* --- little-endian dataset writer --------------------------------- */
@@ -351,16 +418,19 @@ namespace mtp {
 
         bool SendData(Ctx *c, u16 code, u32 trans, Buf *b) {
             if (b->ovf) { c->stopping = true; return false; }
+            g_dg_step.store("reply data phase");
             u32 payload = static_cast<u32>(b->p - (c->io + sizeof(PtpUsbBulkContainer)));
             PtpUsbBulkContainer *h = reinterpret_cast<PtpUsbBulkContainer *>(c->io);
             h->length   = sizeof(PtpUsbBulkContainer) + payload;
             h->type     = PtpContainerType_Data;
             h->code     = code;
             h->trans_id = trans;
-            return WriteData(c, c->io, sizeof(PtpUsbBulkContainer) + payload);
+            return WriteData(c, c->io, sizeof(PtpUsbBulkContainer) + payload) &&
+                   EndDataPhase(c, sizeof(PtpUsbBulkContainer) + payload);
         }
 
         bool SendResponse(Ctx *c, u16 code, u32 trans, const u32 *params, u32 nparams) {
+            g_dg_step.store("reply response phase");
             PtpUsbBulkContainer *h = reinterpret_cast<PtpUsbBulkContainer *>(c->io);
             h->length   = sizeof(PtpUsbBulkContainer) + 4 * nparams;
             h->type     = PtpContainerType_Response;
@@ -374,31 +444,78 @@ namespace mtp {
 
         /* --- object database ---------------------------------------------- */
 
+        /* Handles are index+1 and objects are never removed mid-session
+         * (only orphaned), so this is a direct lookup. */
         Obj *FindHandle(Ctx *c, u32 h) {
-            for (auto &o : c->objs) if (o.handle == h) return std::addressof(o);
-            return nullptr;
+            if (h == 0 || h > c->objs.size()) return nullptr;
+            Obj *o = std::addressof(c->objs[h - 1]);
+            return o->handle == h ? o : nullptr;
         }
 
-        u32 AddOrFind(Ctx *c, u32 parent, const char *path, const char *name,
-                      bool is_dir, u64 size, time_t mtime) {
-            for (auto &o : c->objs) {
-                if (o.parent == parent && strcmp(o.name, name) == 0) {
-                    o.is_dir = is_dir;
-                    o.size   = size;
-                    o.mtime  = mtime;
-                    return o.handle;
+        std::string IdxKey(u32 parent, const char *name) {
+            char pre[16];
+            snprintf(pre, sizeof(pre), "%x/", parent);
+            return std::string(pre) + name;
+        }
+
+        void Reindex(Ctx *c, const Obj *o) {
+            c->idx[IdxKey(o->parent, o->name.c_str())] = o->handle;
+        }
+
+        /* Fill in a lazily-listed object's size/mtime (see AddLazy). */
+        void EnsureStat(Obj *o) {
+            if (!o->lazy) return;
+            struct stat st;
+            if (stat(o->path.c_str(), &st) == 0) {
+                o->size  = static_cast<u64>(st.st_size);
+                o->mtime = st.st_mtime;
+            }
+            o->lazy = false;
+        }
+
+        u32 AddEntry(Ctx *c, u32 parent, const char *path, const char *name,
+                     bool is_dir, bool lazy, u64 size, time_t mtime) {
+            auto it = c->idx.find(IdxKey(parent, name));
+            if (it != c->idx.end()) {
+                Obj *o = FindHandle(c, it->second);
+                if (o && o->parent == parent && strcmp(o->name.c_str(), name) == 0) {
+                    /* The parent may have been renamed/moved since this child
+                     * was listed (only the parent's own path is updated then),
+                     * so take the path from this fresh listing -- a stale one
+                     * made deletes/reads inside a renamed folder hit nothing. */
+                    if (o->path != path) o->path = path;
+                    o->is_dir = is_dir;
+                    o->lazy   = lazy;
+                    if (!lazy) { o->size = size; o->mtime = mtime; }
+                    return o->handle;
                 }
             }
             Obj o{};
             o.handle = static_cast<u32>(c->objs.size()) + 1;
             o.parent = parent;
             o.is_dir = is_dir;
+            o.lazy   = lazy;
             o.size   = size;
             o.mtime  = mtime;
-            snprintf(o.path, sizeof(o.path), "%s", path);
-            snprintf(o.name, sizeof(o.name), "%s", name);
+            o.path = path;
+            o.name = name;
             c->objs.push_back(o);
+            Reindex(c, std::addressof(c->objs.back()));
             return o.handle;
+        }
+
+        u32 AddOrFind(Ctx *c, u32 parent, const char *path, const char *name,
+                      bool is_dir, u64 size, time_t mtime) {
+            return AddEntry(c, parent, path, name, is_dir, false, size, mtime);
+        }
+
+        /* A directory entry listed without its stat(): size and mtime are read
+         * on first use (EnsureStat). Listing a big folder used to stat() every
+         * entry before replying -- seconds on a folder of a few thousand files,
+         * past Windows' MTP command timeout (the host then stops reading and
+         * the reply wedges the link; see ListGenerated). */
+        u32 AddLazy(Ctx *c, u32 parent, const char *path, const char *name, bool is_dir) {
+            return AddEntry(c, parent, path, name, is_dir, true, 0, 0);
         }
 
         /* Repoint an object at its new on-disk path after a rename/move. Kept
@@ -407,7 +524,19 @@ namespace mtp {
          * -Wformat-truncation. o->path is generously sized; real paths fit. */
         __attribute__((noinline))
         void SetObjPath(Obj *o, const char *path) {
-            snprintf(o->path, sizeof(o->path), "%s", path);
+            o->path = path;
+        }
+
+        /* After a folder's rename/move: every object already listed under it
+         * still carries the old path, and a host can act on those handles
+         * without listing again (delete, download, rename inside the folder
+         * would all hit the old, now-missing path). */
+        void RepathChildren(Ctx *c, const std::string &from, const char *to) {
+            std::string pre = from + "/";
+            for (Obj &x : c->objs) {
+                if (x.path.compare(0, pre.size(), pre) == 0)
+                    x.path = std::string(to) + x.path.substr(from.size());
+            }
         }
 
         /* The console key of the top-level folder `full` lives under, or "" for
@@ -524,6 +653,216 @@ namespace mtp {
             return true;
         }
 
+        /* The "_HaulNX" app-data folder: a synthetic object (no real path),
+         * listed by CollectInternal. Never deletable/renamable/movable, and
+         * only the companion's known control files can be written into it. */
+        const char *const kCtlPath = "haulnx:/_HaulNX";
+        const char *const kCtlName = "_HaulNX";
+
+        bool IsCtlHandle(Ctx *c, u32 h) {
+            Obj *o = FindHandle(c, h);
+            return o && strcmp(o->path.c_str(), kCtlPath) == 0;
+        }
+
+        /* The folder itself, or anything listed inside it. */
+        bool IsCtlObj(Ctx *c, Obj *o) {
+            return strcmp(o->path.c_str(), kCtlPath) == 0 || IsCtlHandle(c, o->parent);
+        }
+
+        void WriteBoxartStatus(const char *path) {
+            mtp::BoxartStatus bst = mtp::GetBoxartStatus();
+            FILE *bf = fopen(path, "wb");
+            if (!bf) return;
+            fprintf(bf,
+                    "{\"search_running\":%s,\"search_done\":%s,"
+                    "\"search_count\":%d,\"pick_running\":%s,"
+                    "\"pick_done\":%s,\"pick_ok\":%s,\"sizes\":[",
+                    bst.search_running ? "true" : "false",
+                    bst.search_done ? "true" : "false",
+                    bst.search_count,
+                    bst.pick_running ? "true" : "false",
+                    bst.pick_done ? "true" : "false",
+                    bst.pick_ok ? "true" : "false");
+            for (int i = 0; i < bst.search_count && i < BOXART_MAX_CANDIDATES; i++) {
+                fprintf(bf, "%s[%d,%d]", i ? "," : "", bst.search_w[i], bst.search_h[i]);
+            }
+            fputs("]}", bf);
+            fclose(bf);
+        }
+
+        /* Rebuild a generated root object's file (see ListGenerated). Returns
+         * false for an ordinary file, which is streamed as-is. */
+        bool RegenOnRead(const char *path) {
+            g_dg_step.store("regen on read");
+            u64 t0 = armGetSystemTick();
+            if      (strcmp(path, DIAG_BUNDLE_PATH) == 0)   diag_bundle_write();
+            else if (strcmp(path, QUEUE_STATUS_PATH) == 0)  queue_write_status_json(path);
+            else if (strcmp(path, BACKUPS_JSON_PATH) == 0)  app_backups_write_json(path);
+            else if (strcmp(path, BOXART_STATUS_PATH) == 0) WriteBoxartStatus(path);
+            else if (strcmp(path, SDUSAGE_JSON_PATH) == 0)  sdusage_write_json(path);
+            else return false;
+            u64 ms = DgMs(t0);
+            if (ms >= 200) mtp_log("usb        regen %s: %llums", path, (unsigned long long)ms);
+            return true;
+        }
+
+        /* List a root object whose content is generated, not stored: listing
+         * only stat()s it, and OpGetObject regenerates it right before the
+         * host reads it. Generating at listing time instead -- as this used to,
+         * on a throttle -- put several seconds of SD work (the debug bundle
+         * alone took 5-7 s) into the host's very first root listing. That ran
+         * past Windows' MTP command timeout: the host stopped reading, the
+         * reply's USB write never completed, and Explorer and the desktop both
+         * hung on "loading" until the link reset. Written once here only if it
+         * has never existed, so the object can be listed at all. */
+        void ListGenerated(Ctx *c, u32 parent, std::vector<u32> &out, const char *path, const char *name) {
+            struct stat st;
+            if (stat(path, &st) != 0) {
+                RegenOnRead(path);
+                if (stat(path, &st) != 0) return;
+            }
+            out.push_back(AddOrFind(c, parent, path, name, false,
+                                    static_cast<u64>(st.st_size), st.st_mtime));
+        }
+
+        /* The "_HaulNX" folder's contents: every object the desktop companion
+         * pulls or pushes, under parent handle `ctl`. Moved out of the storage
+         * root so Explorer shows a clean root (see CollectChildren). */
+        void CollectInternal(Ctx *c, u32 ctl, std::vector<u32> &out) {
+            u64 dt0 = 0;
+            (void)dt0;
+            if (c->sd_root && c->sd_root[0]) {
+                /* The desktop Storage page's report over USB (the Wi-Fi side
+                 * is GET sd_usage.json), generated on read (see
+                 * ListGenerated). A scan is started by a root push of
+                 * sd_usage_request.txt (see SendObjectInfo). Whole-card
+                 * paths, so only while Full SD access is on. */
+                ListGenerated(c, ctl, out, SDUSAGE_JSON_PATH, "sd_usage.json");
+            }
+
+            /* A read-only snapshot of what's installed, so a USB-connected PC
+             * companion can pull the same inventory the Wi-Fi server serves.
+             * Only appears once the UI thread has written it (see UsbMtpTick),
+             * and GetObject streams it straight from INVENTORY_PATH. */
+            struct stat ist;
+            if (stat(INVENTORY_PATH, &ist) == 0)
+                out.push_back(AddOrFind(c, ctl, INVENTORY_PATH,
+                                        "inventory.json", false,
+                                        static_cast<u64>(ist.st_size), ist.st_mtime));
+
+            /* The saved collection (archive.org sources), so a USB companion
+             * can pull it into its editor the same way the Wi-Fi server serves
+             * it. Present once a collection has been saved at least once. */
+            struct stat sst;
+            if (stat(SOURCES_PATH, &sst) == 0)
+                out.push_back(AddOrFind(c, ctl, SOURCES_PATH,
+                                        "dl_sources.json", false,
+                                        static_cast<u64>(sst.st_size), sst.st_mtime));
+
+            /* The saved archive.org S3 keys, so a USB companion can adopt
+             * them on connect the same way the Wi-Fi server hands them over.
+             * Present once the user has saved credentials at least once. */
+            struct stat cst;
+            if (stat(CREDS_PATH, &cst) == 0)
+                out.push_back(AddOrFind(c, ctl, CREDS_PATH,
+                                        "credentials.json", false,
+                                        static_cast<u64>(cst.st_size), cst.st_mtime));
+
+            /* The shared emulator/app update manifest, so a USB companion can
+             * pull and edit the same list the Wi-Fi server serves. Writing it
+             * back is handled specially in SendObject (validated + applied to
+             * UPDSRC_PATH). Present once the update manager has seeded it. */
+            struct stat ust;
+            if (stat(UPDSRC_PATH, &ust) == 0)
+                out.push_back(AddOrFind(c, ctl, UPDSRC_PATH,
+                                        "update_sources.json", false,
+                                        static_cast<u64>(ust.st_size), ust.st_mtime));
+
+            /* Generated-on-read root objects (see ListGenerated): the
+             * rolling debug-log bundle (GET /debug_bundle.txt over Wi-Fi),
+             * the live Queue tab snapshot (GET /queue_status.json) and the
+             * kept rollback builds (GET /backups.json, view-only -- no
+             * restore route exists on either transport). */
+            ListGenerated(c, ctl, out, DIAG_BUNDLE_PATH, "debug_bundle.txt");
+            ListGenerated(c, ctl, out, QUEUE_STATUS_PATH, "queue_status.json");
+            ListGenerated(c, ctl, out, BACKUPS_JSON_PATH, "backups.json");
+
+            /* Each console's current cover art (Console Art / companion
+             * push), so a USB companion can preview and cache it the same
+             * way GET /consoleart serves it over Wi-Fi -- boxart_lookup
+             * resolves the same "console:<target>" cache key either way.
+             * Named "art_<target>.png" so the companion can ask for one
+             * console's art directly instead of listing the whole root to
+             * find it; the reported mtime is what lets it skip re-pulling
+             * art that hasn't changed since the last sync.
+             *
+             * This loop's cost scales with the library's console count
+             * (a boxart_lookup + stat() per console) -- on a 50+ console
+             * library that's 50+ blocking syscalls on this thread, on
+             * every USB micro-op, since this whole branch runs that often
+             * (see the header comment on this function). Cache the
+             * resolved list, so ordinary browsing only pays this cost once
+             * every couple of seconds instead of on every listing. */
+            struct ArtEnt { char path[768]; char name[96]; u64 size; time_t mtime; };
+            static std::vector<ArtEnt> s_art_cache;
+            static time_t s_art_last = 0;
+            time_t art_now = time(nullptr);
+            if (art_now - s_art_last >= 2 || s_art_cache.empty()) {
+                dt0 = armGetSystemTick();
+                g_dg_step.store("root: console art");
+                s_art_cache.clear();
+                for (int i = 0; i < c->nfolders; i++) {
+                    char key[80], path[768];
+                    snprintf(key, sizeof(key), "console:%s", c->folders[i].name);
+                    if (!boxart_lookup(key, path, sizeof(path))) continue;
+                    struct stat ast;
+                    if (stat(path, &ast) != 0) continue;
+                    ArtEnt e{};
+                    snprintf(e.path, sizeof(e.path), "%s", path);
+                    snprintf(e.name, sizeof(e.name), "art_%s.png", c->folders[i].name);
+                    e.size = static_cast<u64>(ast.st_size);
+                    e.mtime = ast.st_mtime;
+                    s_art_cache.push_back(e);
+                }
+                DgStepEnd("console art", dt0);
+                s_art_last = art_now;
+            }
+            for (const auto &e : s_art_cache) {
+                out.push_back(AddOrFind(c, ctl, e.path, e.name,
+                                        false, e.size, e.mtime));
+            }
+
+            /* Box-art search/pick status, so a USB companion can poll the
+             * outcome of a boxart_request.json push the same way Wi-Fi
+             * polls GET boxartsearch_status/boxartpick_status. Written at
+             * read time (RegenOnRead), so a poll right after a new request
+             * always sees it running (see ApplyPendingBoxartReqs in mtp.cpp). */
+            ListGenerated(c, ctl, out, BOXART_STATUS_PATH, "boxart_status.json");
+            mtp::BoxartStatus bst = mtp::GetBoxartStatus();
+
+            /* Each candidate's downloaded thumbnail, so a USB companion
+             * can render the search results grid the same way GET
+             * boxartthumb?p=<i> serves it over Wi-Fi -- boxart_fetch_thumb
+             * (called from MainApplication's search worker regardless of
+             * transport) already wrote these; this just exposes whichever
+             * ones exist as root objects, one stat() per candidate slot,
+             * only while a completed search actually has results. */
+            {
+                if (bst.search_done) {
+                    for (int i = 0; i < bst.search_count && i < BOXART_MAX_CANDIDATES; i++) {
+                        char tpath[768], tname[32];
+                        snprintf(tpath, sizeof(tpath), "%s/%d.png", BOXART_TMP_DIR, i);
+                        struct stat tst;
+                        if (stat(tpath, &tst) != 0) continue;
+                        snprintf(tname, sizeof(tname), "boxart_thumb_%d.png", i);
+                        out.push_back(AddOrFind(c, ctl, tpath, tname,
+                                                false, static_cast<u64>(tst.st_size),
+                                                tst.st_mtime));
+                    }
+                }
+            }
+        }
+
         /* Enumerate the children of `parent` into the DB and return their
          * handles. */
         u16 CollectChildren(Ctx *c, u32 parent, std::vector<u32> &out) {
@@ -534,12 +873,15 @@ namespace mtp {
              * split lets a custom-folder console like 3ds -> sdmc:/3ds appear as
              * plain "3ds" while writes land at the real path. */
             if (pnorm == PtpRootParentObject) {
+                u64 dt0 = armGetSystemTick();
+                g_dg_step.store("root: console folders");
                 for (int i = 0; i < c->nfolders; i++) {
                     const Folder &f = c->folders[i];
                     struct stat st;
                     time_t mt = (stat(f.path, &st) == 0) ? st.st_mtime : 0;
                     out.push_back(AddOrFind(c, PtpRootParentObject, f.path, f.name, true, 0, mt));
                 }
+                DgStepEnd("console folders", dt0);
                 struct stat st;
                 time_t mt = (stat(c->inbox, &st) == 0) ? st.st_mtime : 0;
                 out.push_back(AddOrFind(c, PtpRootParentObject, c->inbox, "Inbox", true, 0, mt));
@@ -556,254 +898,44 @@ namespace mtp {
                     time_t sdmt = (stat(c->sd_root, &sdst) == 0) ? sdst.st_mtime : 0;
                     out.push_back(AddOrFind(c, PtpRootParentObject, c->sd_root,
                                             "SD Card", true, 0, sdmt));
-
-                    /* The desktop Storage page's report over USB (the Wi-Fi side
-                     * is GET sd_usage.json). Regenerated in OpGetObject, only
-                     * when the host actually reads it -- never here, since this
-                     * runs on every USB micro-op; written once here only so the
-                     * object exists to be listed. A scan is started by a root
-                     * push of sd_usage_request.txt (see SendObjectInfo).
-                     * Whole-card paths, so only while Full SD access is on. */
-                    struct stat ust2;
-                    if (stat(SDUSAGE_JSON_PATH, &ust2) != 0) sdusage_write_json(SDUSAGE_JSON_PATH);
-                    if (stat(SDUSAGE_JSON_PATH, &ust2) == 0)
-                        out.push_back(AddOrFind(c, PtpRootParentObject, SDUSAGE_JSON_PATH,
-                                                "sd_usage.json", false,
-                                                static_cast<u64>(ust2.st_size), ust2.st_mtime));
                 }
 
-                /* A read-only snapshot of what's installed, so a USB-connected PC
-                 * companion can pull the same inventory the Wi-Fi server serves.
-                 * Only appears once the UI thread has written it (see UsbMtpTick),
-                 * and GetObject streams it straight from INVENTORY_PATH. */
-                struct stat ist;
-                if (stat(INVENTORY_PATH, &ist) == 0)
-                    out.push_back(AddOrFind(c, PtpRootParentObject, INVENTORY_PATH,
-                                            "inventory.json", false,
-                                            static_cast<u64>(ist.st_size), ist.st_mtime));
-
-                /* The saved collection (archive.org sources), so a USB companion
-                 * can pull it into its editor the same way the Wi-Fi server serves
-                 * it. Present once a collection has been saved at least once. */
-                struct stat sst;
-                if (stat(SOURCES_PATH, &sst) == 0)
-                    out.push_back(AddOrFind(c, PtpRootParentObject, SOURCES_PATH,
-                                            "dl_sources.json", false,
-                                            static_cast<u64>(sst.st_size), sst.st_mtime));
-
-                /* The saved archive.org S3 keys, so a USB companion can adopt
-                 * them on connect the same way the Wi-Fi server hands them over.
-                 * Present once the user has saved credentials at least once. */
-                struct stat cst;
-                if (stat(CREDS_PATH, &cst) == 0)
-                    out.push_back(AddOrFind(c, PtpRootParentObject, CREDS_PATH,
-                                            "credentials.json", false,
-                                            static_cast<u64>(cst.st_size), cst.st_mtime));
-
-                /* The shared emulator/app update manifest, so a USB companion can
-                 * pull and edit the same list the Wi-Fi server serves. Writing it
-                 * back is handled specially in SendObject (validated + applied to
-                 * UPDSRC_PATH). Present once the update manager has seeded it. */
-                struct stat ust;
-                if (stat(UPDSRC_PATH, &ust) == 0)
-                    out.push_back(AddOrFind(c, PtpRootParentObject, UPDSRC_PATH,
-                                            "update_sources.json", false,
-                                            static_cast<u64>(ust.st_size), ust.st_mtime));
-
-                /* The rolling debug-log bundle (Settings > Diagnostics), so a
-                 * USB companion can pull the same file GET /debug_bundle.txt
-                 * serves over Wi-Fi -- see diag_bundle_write's own comment.
-                 * Unlike the Wi-Fi route (one regen per deliberate GET),
-                 * reaching this branch at all doesn't mean the host actually
-                 * wants the bundle -- top()/file_in() re-enumerate the whole
-                 * root on EVERY USB read (console-folder browsing, downloads,
-                 * every micro-op), so calling the Wi-Fi side's "cheap, do it
-                 * every time" logic here would mean re-concatenating every log
-                 * file on the SD card many times a second during something as
-                 * ordinary as browsing a console folder. Throttled instead: at
-                 * most once every few seconds, still fresh enough for a
-                 * deliberate pull. The object itself is still (re-)listed
-                 * every time off whatever's already on disk, so a lookup never
-                 * intermittently 404s just because this call landed inside a
-                 * throttle window. */
-                static time_t s_diag_last = 0;
-                time_t diag_now = time(nullptr);
-                if (diag_now - s_diag_last >= 3) {
-                    diag_bundle_write();
-                    s_diag_last = diag_now;
-                }
-                struct stat dst;
-                if (stat(DIAG_BUNDLE_PATH, &dst) == 0)
-                    out.push_back(AddOrFind(c, PtpRootParentObject, DIAG_BUNDLE_PATH,
-                                            "debug_bundle.txt", false,
-                                            static_cast<u64>(dst.st_size), dst.st_mtime));
-
-                /* The live Queue tab snapshot (active/recent transfers), so a
-                 * USB companion's Downloads tab can show the Switch's own
-                 * queue alongside its PC-side one -- same file GET
-                 * /queue_status.json serves over Wi-Fi. queue_write_status_json
-                 * is just an in-memory snapshot plus a small JSON write (much
-                 * cheaper than the debug bundle's log concatenation), but this
-                 * branch still runs on every USB micro-op, so it gets the same
-                 * throttle rather than writing the SD card that often -- a
-                 * shorter one since a live-feeling queue view is the whole
-                 * point here. */
-                static time_t s_qstat_last = 0;
-                time_t qstat_now = time(nullptr);
-                if (qstat_now - s_qstat_last >= 1) {
-                    queue_write_status_json(QUEUE_STATUS_PATH);
-                    s_qstat_last = qstat_now;
-                }
-                struct stat qst;
-                if (stat(QUEUE_STATUS_PATH, &qst) == 0)
-                    out.push_back(AddOrFind(c, PtpRootParentObject, QUEUE_STATUS_PATH,
-                                            "queue_status.json", false,
-                                            static_cast<u64>(qst.st_size), qst.st_mtime));
-
-                /* Kept rollback builds (view-only), so a USB companion can show
-                 * the same list GET /backups.json serves over Wi-Fi -- see
-                 * app_backups_write_json's own comment. Same throttle shape as
-                 * queue_status.json above (cheap, but this branch runs on every
-                 * USB micro-op). No restore route exists on either transport. */
-                static time_t s_bak_last = 0;
-                time_t bak_now = time(nullptr);
-                if (bak_now - s_bak_last >= 3) {
-                    app_backups_write_json(BACKUPS_JSON_PATH);
-                    s_bak_last = bak_now;
-                }
-                struct stat bkst;
-                if (stat(BACKUPS_JSON_PATH, &bkst) == 0)
-                    out.push_back(AddOrFind(c, PtpRootParentObject, BACKUPS_JSON_PATH,
-                                            "backups.json", false,
-                                            static_cast<u64>(bkst.st_size), bkst.st_mtime));
-
-                /* Each console's current cover art (Console Art / companion
-                 * push), so a USB companion can preview and cache it the same
-                 * way GET /consoleart serves it over Wi-Fi -- boxart_lookup
-                 * resolves the same "console:<target>" cache key either way.
-                 * Named "art_<target>.png" so the companion can ask for one
-                 * console's art directly instead of listing the whole root to
-                 * find it; the reported mtime is what lets it skip re-pulling
-                 * art that hasn't changed since the last sync.
-                 *
-                 * Unlike the two objects above, this loop's cost scales with
-                 * the library's console count (a boxart_lookup + stat() per
-                 * console) -- on a 50+ console library that's 50+ blocking
-                 * syscalls on this thread, on every USB micro-op, since this
-                 * whole branch runs that often (see the header comment on
-                 * this function). Cache the resolved list the same way the
-                 * objects above cache their own expensive part, so ordinary
-                 * browsing only pays this cost once every couple of seconds
-                 * instead of on every listing. */
-                struct ArtEnt { char path[768]; char name[96]; u64 size; time_t mtime; };
-                static std::vector<ArtEnt> s_art_cache;
-                static time_t s_art_last = 0;
-                time_t art_now = time(nullptr);
-                if (art_now - s_art_last >= 2 || s_art_cache.empty()) {
-                    s_art_cache.clear();
-                    for (int i = 0; i < c->nfolders; i++) {
-                        char key[80], path[768];
-                        snprintf(key, sizeof(key), "console:%s", c->folders[i].name);
-                        if (!boxart_lookup(key, path, sizeof(path))) continue;
-                        struct stat ast;
-                        if (stat(path, &ast) != 0) continue;
-                        ArtEnt e{};
-                        snprintf(e.path, sizeof(e.path), "%s", path);
-                        snprintf(e.name, sizeof(e.name), "art_%s.png", c->folders[i].name);
-                        e.size = static_cast<u64>(ast.st_size);
-                        e.mtime = ast.st_mtime;
-                        s_art_cache.push_back(e);
-                    }
-                    s_art_last = art_now;
-                }
-                for (const auto &e : s_art_cache) {
-                    out.push_back(AddOrFind(c, PtpRootParentObject, e.path, e.name,
-                                            false, e.size, e.mtime));
-                }
-
-                /* Box-art search/pick status, so a USB companion can poll the
-                 * outcome of a boxart_request.json push the same way Wi-Fi
-                 * polls GET boxartsearch_status/boxartpick_status. Cheap (an
-                 * in-memory struct + small JSON write), same 1s throttle as
-                 * queue_status.json since it should feel live while a search
-                 * is running. */
-                static time_t s_boxstat_last = 0;
-                static int s_boxstat_key = -1;
-                time_t boxstat_now = time(nullptr);
-                mtp::BoxartStatus bst = mtp::GetBoxartStatus();
-                /* Rewrite at once when the running/done state changed, not just
-                 * on the 1s throttle -- otherwise a poll right after a new
-                 * request reads the previous run's done:true file and takes its
-                 * stale result (see ApplyPendingBoxartReqs in mtp.cpp). */
-                int boxstat_key = (bst.search_running ? 1 : 0) | (bst.search_done ? 2 : 0) |
-                                  (bst.pick_running ? 4 : 0) | (bst.pick_done ? 8 : 0) |
-                                  (bst.pick_ok ? 16 : 0) | (bst.search_count << 5);
-                if (boxstat_now - s_boxstat_last >= 1 || boxstat_key != s_boxstat_key) {
-                    s_boxstat_key = boxstat_key;
-                    FILE *bf = fopen(BOXART_STATUS_PATH, "wb");
-                    if (bf) {
-                        fprintf(bf,
-                                "{\"search_running\":%s,\"search_done\":%s,"
-                                "\"search_count\":%d,\"pick_running\":%s,"
-                                "\"pick_done\":%s,\"pick_ok\":%s,\"sizes\":[",
-                                bst.search_running ? "true" : "false",
-                                bst.search_done ? "true" : "false",
-                                bst.search_count,
-                                bst.pick_running ? "true" : "false",
-                                bst.pick_done ? "true" : "false",
-                                bst.pick_ok ? "true" : "false");
-                        for (int i = 0; i < bst.search_count && i < BOXART_MAX_CANDIDATES; i++) {
-                            fprintf(bf, "%s[%d,%d]", i ? "," : "", bst.search_w[i], bst.search_h[i]);
-                        }
-                        fputs("]}", bf);
-                        fclose(bf);
-                    }
-                    s_boxstat_last = boxstat_now;
-                }
-                struct stat bst_st;
-                if (stat(BOXART_STATUS_PATH, &bst_st) == 0)
-                    out.push_back(AddOrFind(c, PtpRootParentObject, BOXART_STATUS_PATH,
-                                            "boxart_status.json", false,
-                                            static_cast<u64>(bst_st.st_size), bst_st.st_mtime));
-
-                /* Each candidate's downloaded thumbnail, so a USB companion
-                 * can render the search results grid the same way GET
-                 * boxartthumb?p=<i> serves it over Wi-Fi -- boxart_fetch_thumb
-                 * (called from MainApplication's search worker regardless of
-                 * transport) already wrote these; this just exposes whichever
-                 * ones exist as root objects, one stat() per candidate slot,
-                 * only while a completed search actually has results. */
-                {
-                    if (bst.search_done) { /* same snapshot as the status file above */
-                        for (int i = 0; i < bst.search_count && i < BOXART_MAX_CANDIDATES; i++) {
-                            char tpath[768], tname[32];
-                            snprintf(tpath, sizeof(tpath), "%s/%d.png", BOXART_TMP_DIR, i);
-                            struct stat tst;
-                            if (stat(tpath, &tst) != 0) continue;
-                            snprintf(tname, sizeof(tname), "boxart_thumb_%d.png", i);
-                            out.push_back(AddOrFind(c, PtpRootParentObject, tpath, tname,
-                                                    false, static_cast<u64>(tst.st_size),
-                                                    tst.st_mtime));
-                        }
-                    }
-                }
+                /* Everything the desktop companion reads/writes (inventory,
+                 * manifests, logs, art, requests...) lives in one "_HaulNX"
+                 * folder, so Explorer's root shows just the console folders,
+                 * Inbox and SD Card instead of ~80 internal files. See
+                 * CollectInternal. */
+                out.push_back(AddOrFind(c, PtpRootParentObject, kCtlPath, kCtlName, true, 0,
+                                        time(nullptr)));
                 return PtpResponseCode_Ok;
             }
 
             Obj *po = FindHandle(c, pnorm);
             if (!po)          return PtpResponseCode_InvalidObjectHandle;
             if (!po->is_dir)  return PtpResponseCode_InvalidParentObject;
+            if (strcmp(po->path.c_str(), kCtlPath) == 0) {
+                CollectInternal(c, po->handle, out);
+                return PtpResponseCode_Ok;
+            }
 
             /* Build the listing from the live directory so objects deleted
              * (by the host or elsewhere) drop out and new ones appear. */
-            DIR *d = opendir(po->path);
+            g_dg_step.store("folder listing");
+            DIR *d = opendir(po->path.c_str());
             if (d) {
                 struct dirent *e;
                 while ((e = readdir(d)) != nullptr) {
                     if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..")) continue;
                     char fp[1040];
-                    snprintf(fp, sizeof(fp), "%s/%s", po->path, e->d_name);
-                    struct stat st;
+                    snprintf(fp, sizeof(fp), "%s/%s", po->path.c_str(), e->d_name);
+                    /* Mid-delete (background worker): already gone as far as
+                     * the host is concerned. */
+                    if (DeletePending(fp)) continue;
+                    if (e->d_type == DT_DIR || e->d_type == DT_REG) {
+                        out.push_back(AddLazy(c, pnorm, fp, e->d_name, e->d_type == DT_DIR));
+                        continue;
+                    }
+                    struct stat st; /* no type from readdir: stat it now */
                     if (stat(fp, &st) != 0) continue;
                     out.push_back(AddOrFind(c, pnorm, fp, e->d_name, S_ISDIR(st.st_mode),
                                             static_cast<u64>(st.st_size), st.st_mtime));
@@ -826,7 +958,8 @@ namespace mtp {
                 PtpOperationCode_GetObjectPropDesc, PtpOperationCode_GetObjectPropValue,
                 PtpOperationCode_SendObjectInfo, PtpOperationCode_SendObject,
                 PtpOperationCode_DeleteObject, PtpOperationCode_MoveObject,
-                PtpOperationCode_SetObjectPropValue,
+                PtpOperationCode_SetObjectPropValue, PtpOperationCode_GetObjectPropList,
+                PtpOperationCode_SendObjectPropList,
             };
 
             bU16(b, 100);                          /* StandardVersion */
@@ -851,6 +984,7 @@ namespace mtp {
         }
 
         void BuildObjectInfo(Obj *o, Buf *b) {
+            EnsureStat(o);
             char date[32];
             FmtDate(o->mtime, date, sizeof(date));
 
@@ -869,7 +1003,7 @@ namespace mtp {
             bU16(b, o->is_dir ? PtpAssociationType_GenericFolder : 0);
             bU32(b, 0);                            /* AssociationDesc */
             bU32(b, 0);                            /* SequenceNumber */
-            bStr(b, o->name);                      /* Filename */
+            bStr(b, o->name.c_str());                      /* Filename */
             bStr(b, date);                         /* DateCreated */
             bStr(b, date);                         /* DateModified */
             bStr(b, "");                           /* Keywords */
@@ -892,16 +1026,17 @@ namespace mtp {
 
         /* Write a single object property value (no container header). */
         void WritePropValue(Obj *o, u16 pc, Buf *b) {
+            EnsureStat(o);
             char date[32];
             switch (pc) {
                 case PtpObjectPropertyCode_StorageId:        bU32(b, StorageId); break;
                 case PtpObjectPropertyCode_ObjectFormat:     bU16(b, o->is_dir ? PtpObjectFormatCode_Association : PtpObjectFormatCode_Undefined); break;
                 case PtpObjectPropertyCode_ProtectionStatus: bU16(b, PtpProtectionStatus_NoProtection); break;
                 case PtpObjectPropertyCode_ObjectSize:       bU64(b, o->size); break;
-                case PtpObjectPropertyCode_ObjectFileName:   bStr(b, o->name); break;
+                case PtpObjectPropertyCode_ObjectFileName:   bStr(b, o->name.c_str()); break;
                 case PtpObjectPropertyCode_ParentObject:     bU32(b, o->parent == PtpRootParentObject ? 0 : o->parent); break;
                 case PtpObjectPropertyCode_PersistentUniqueObjectIdentifier: bU128(b, o->handle, 0); break;
-                case PtpObjectPropertyCode_Name:             bStr(b, o->name); break;
+                case PtpObjectPropertyCode_Name:             bStr(b, o->name.c_str()); break;
                 case PtpObjectPropertyCode_DateModified:     FmtDate(o->mtime, date, sizeof(date)); bStr(b, date); break;
                 default: break;
             }
@@ -914,19 +1049,77 @@ namespace mtp {
             Obj *o = FindHandle(c, p[0]);
             if (!o)         return PtpResponseCode_InvalidObjectHandle;
             if (o->is_dir)  return PtpResponseCode_InvalidObjectHandle;
+            EnsureStat(o);
 
             /* The Storage page report (see the root listing): rebuilt now, at
              * the moment of the read. Its size changes with the report, so
              * it's re-read before the data phase is sized from it. */
-            if (strcmp(o->path, SDUSAGE_JSON_PATH) == 0) {
+            if (strcmp(o->path.c_str(), SDUSAGE_JSON_PATH) == 0) {
                 if (!c->sd_root || !c->sd_root[0]) return PtpResponseCode_AccessDenied;
                 struct stat ust3;
-                if (!sdusage_write_json(o->path) || stat(o->path, &ust3) != 0)
+                if (!sdusage_write_json(o->path.c_str()) || stat(o->path.c_str(), &ust3) != 0)
                     return PtpResponseCode_AccessDenied;
                 o->size = static_cast<u64>(ust3.st_size);
+            } else if (RegenOnRead(o->path.c_str())) {
+                /* Same for the other generated root objects (ListGenerated). */
+                struct stat gst;
+                if (stat(o->path.c_str(), &gst) != 0) return PtpResponseCode_AccessDenied;
+                o->size = static_cast<u64>(gst.st_size);
+            }
+            g_dg_step.store("GetObject data phase");
+
+            /* The data phase must carry exactly the length its header
+             * announces, or the host waits for bytes that never come (or
+             * takes our response as data) and the link wedges. Files can
+             * change under us -- inventory.json is rewritten in place when the
+             * UI thread's fs_move can't replace it while we hold it open, and
+             * a delete now triggers that rewrite right as the PC re-reads it --
+             * so small files are read into memory first and sent from that
+             * snapshot, and big ones are sent clamped/padded to the size we
+             * announced. */
+            constexpr u64 SnapMax = 8ull << 20;
+            if (o->size <= SnapMax) {
+                FILE *sf = fopen(o->path.c_str(), "rb");
+                if (!sf) return PtpResponseCode_AccessDenied;
+                std::vector<u8> snap;
+                for (;;) {
+                    size_t at = snap.size();
+                    if (at > SnapMax) break;
+                    snap.resize(at + IoCap);
+                    size_t got = fread(snap.data() + at, 1, IoCap, sf);
+                    snap.resize(at + got);
+                    if (got == 0) break;
+                }
+                fclose(sf);
+                if (snap.size() <= SnapMax) {
+                    o->size = snap.size();
+                    PtpUsbBulkContainer *sh = reinterpret_cast<PtpUsbBulkContainer *>(c->io);
+                    sh->length   = static_cast<u32>(sizeof(PtpUsbBulkContainer) + snap.size());
+                    sh->type     = PtpContainerType_Data;
+                    sh->code     = cmd->code;
+                    sh->trans_id = cmd->trans_id;
+                    size_t k = snap.size() < IoCap - sizeof(PtpUsbBulkContainer)
+                                   ? snap.size() : IoCap - sizeof(PtpUsbBulkContainer);
+                    memcpy(c->io + sizeof(PtpUsbBulkContainer), snap.data(), k);
+                    if (!WriteData(c, c->io, static_cast<u32>(sizeof(PtpUsbBulkContainer) + k)))
+                        return PtpResponseCode_IncompleteTransfer;
+                    for (size_t off = k; off < snap.size(); off += k) {
+                        k = snap.size() - off < IoCap ? snap.size() - off : IoCap;
+                        memcpy(c->io, snap.data() + off, k);
+                        if (!WriteData(c, c->io, static_cast<u32>(k)))
+                            return PtpResponseCode_IncompleteTransfer;
+                    }
+                    if (!EndDataPhase(c, sizeof(PtpUsbBulkContainer) + snap.size()))
+                        return PtpResponseCode_IncompleteTransfer;
+                    return PtpResponseCode_Ok;
+                }
+                /* Grew past the cap since it was listed: stream it below at
+                 * its current size. */
+                struct stat gst;
+                if (stat(o->path.c_str(), &gst) == 0) o->size = static_cast<u64>(gst.st_size);
             }
 
-            FILE *f = fopen(o->path, "rb");
+            FILE *f = fopen(o->path.c_str(), "rb");
             if (!f) return PtpResponseCode_AccessDenied;
 
             u64 total = sizeof(PtpUsbBulkContainer) + o->size;
@@ -944,8 +1137,19 @@ namespace mtp {
             h->code     = cmd->code;
             h->trans_id = cmd->trans_id;
 
-            size_t first = fread(bufs[cur] + sizeof(PtpUsbBulkContainer), 1,
-                                 IoCap - sizeof(PtpUsbBulkContainer), f);
+            /* Read up to `want` bytes; if the file came up short (shrank since
+             * we sized the header), zero-fill to `want` so the byte count
+             * still matches what we announced. */
+            bool padded = false;
+            auto read_exact = [&](u8 *dst, size_t want) -> size_t {
+                size_t got = fread(dst, 1, want, f);
+                if (got < want) { memset(dst + got, 0, want - got); padded = true; }
+                return want;
+            };
+            size_t first = read_exact(bufs[cur] + sizeof(PtpUsbBulkContainer),
+                                      o->size < IoCap - sizeof(PtpUsbBulkContainer)
+                                          ? static_cast<size_t>(o->size)
+                                          : IoCap - sizeof(PtpUsbBulkContainer));
             u32 curlen = static_cast<u32>(sizeof(PtpUsbBulkContainer) + first);
             u64 sent   = first;
 
@@ -960,10 +1164,11 @@ namespace mtp {
             while (posted) {
                 bool   more  = sent < o->size;
                 int    nxt   = cur ^ 1;
-                size_t chunk = more ? fread(bufs[nxt], 1, IoCap, f) : 0;
+                u64    left  = o->size - sent;
+                size_t chunk = more ? read_exact(bufs[nxt], left < IoCap ? static_cast<size_t>(left) : IoCap) : 0;
 
                 if (!WriteReap(c, urb)) { ok = false; break; }
-                if (!more || chunk == 0) break; /* done, or file shrank/hit EOF early */
+                if (!more) break;
                 sent += chunk;
 
                 posted = WritePost(c, bufs[nxt], static_cast<u32>(chunk), std::addressof(urb));
@@ -972,10 +1177,358 @@ namespace mtp {
             }
 
             fclose(f);
+            if (ok && !EndDataPhase(c, sizeof(PtpUsbBulkContainer) + o->size)) ok = false;
+            if (padded) mtp_log("usb        GetObject %s shrank while sending; padded to %llu bytes",
+                                o->path.c_str(), (unsigned long long)o->size);
             return ok ? PtpResponseCode_Ok : PtpResponseCode_IncompleteTransfer;
         }
 
         /* --- dispatch ----------------------------------------------------- */
+
+        /* The shared second half of SendObjectInfo and SendObjectPropList:
+         * validate the announced file and set up c->pending for the SendObject
+         * that follows. `big` is SendObjectPropList, whose size is 64-bit --
+         * SendObjectInfo's 32-bit field can't express 4 GiB or more. */
+        void BeginSendObject(Ctx *c, u32 trans, u16 format, u64 size, const char *fname,
+                             u32 parentReq, bool big) {
+            /* One path segment only -- fname is concatenated straight into
+             * the destination path below ("%s/%s", pdir, fname). Without
+             * this, a host sending "../../../whatever" walks straight out
+             * of pdir (a console folder, Inbox, or root) to write or mkdir
+             * anywhere reachable by traversal, regardless of the SD Card
+             * toggle. Mirrors the same guard SetObjectPropValue's rename
+             * already applies to newname. */
+            if (!fname[0] || strchr(fname, '/') || strchr(fname, '\\') ||
+                strcmp(fname, ".") == 0 || strcmp(fname, "..") == 0) {
+                RC(c, PtpResponseCode_NoValidObjectInfo, trans); return;
+            }
+
+            /* Resolve the parent directory. */
+            u32 pnorm;
+            const char *pdir;
+            if (parentReq == 0 || parentReq == PtpRootParentObject) {
+                pnorm = PtpRootParentObject;
+                pdir  = c->root;
+            } else {
+                Obj *po = FindHandle(c, parentReq);
+                if (!po || !po->is_dir) { RC(c, PtpResponseCode_InvalidParentObject, trans); return; }
+                pnorm = parentReq;
+                pdir  = po->path.c_str();
+            }
+
+            char full[1040];
+            snprintf(full, sizeof(full), "%s/%s", pdir, fname);
+            /* The companion's control files (manifest, art, requests,
+             * app/DAT bodies) are accepted in the "_HaulNX" folder and,
+             * for older desktop builds, at the root. */
+            bool in_ctl = IsCtlHandle(c, pnorm);
+            bool ctlp = pnorm == PtpRootParentObject || in_ctl;
+
+            /* ObjectInfo's size field is 32-bit, so a file of 4 GiB or
+             * more arrives as 0xFFFFFFFF ("unknown"). SendObject would
+             * take that as the real size and stop reading at 4 GiB --
+             * a cut-off file acked as a success, with the rest of the
+             * data left on the pipe. Refuse it up front instead: the
+             * desktop blocks these before sending, and Explorer shows
+             * its own "too large" error. */
+            if (format != PtpObjectFormatCode_Association && !big && size == 0xFFFFFFFFu) {
+                mtp_log("usb        refused %s: 4 GiB or larger", fname);
+                RC(c, PtpResponseCode_ObjectTooLarge, trans); return;
+            }
+            /* A 4 GiB+ file (SendObjectPropList only): refuse now, before the
+             * host streams gigabytes, if it can't land -- not enough free
+             * space, or a FAT32 card (no file can reach 4 GiB there; a probe
+             * file extended to exactly 4 GiB fails at once on FAT32). */
+            if (format != PtpObjectFormatCode_Association && big && size >= 0xFFFFFFFFull) {
+                u64 freeb = fs_free_bytes(pdir);
+                if (freeb != UINT64_MAX && freeb < size) {
+                    mtp_log("usb        refused %s: needs %llu bytes, %llu free", fname,
+                            (unsigned long long)size, (unsigned long long)freeb);
+                    RC(c, PtpResponseCode_StoreFull, trans); return;
+                }
+                char probe[1040];
+                snprintf(probe, sizeof(probe), "%s/.haulnx_4g_probe", pdir);
+                FILE *pf = fopen(probe, "wb");
+                bool fits = pf && ftruncate(fileno(pf), static_cast<off_t>(0x100000000ull)) == 0;
+                if (pf) fclose(pf);
+                remove(probe);
+                if (!fits) {
+                    mtp_log("usb        refused %s: 4 GiB or larger and the SD card can't hold it (FAT32?)",
+                            fname);
+                    RC(c, PtpResponseCode_ObjectTooLarge, trans); return;
+                }
+            }
+
+            if (format == PtpObjectFormatCode_Association) {
+                if (in_ctl) { RC(c, PtpResponseCode_AccessDenied, trans); return; }
+                fs_mkdir_p(full);
+                u32 h = AddOrFind(c, pnorm, full, fname, true, 0, time(nullptr));
+                c->pending.active = false;
+                u32 rp[3] = { StorageId, parentReq, h };
+                SendResponse(c, PtpResponseCode_Ok, trans, rp, 3);
+                return;
+            }
+
+            /* A companion pushing the shared update manifest at the root:
+             * capture it to a staging file so a malformed push can't clobber
+             * the live manifest, then validate + apply it on completion (see
+             * SendObject). This is the USB mirror of the Wi-Fi InvApplyPush. */
+            bool is_updsrc = ctlp &&
+                             strcmp(fname, "update_sources.json") == 0;
+            if (is_updsrc)
+                snprintf(full, sizeof(full), "%s.mtp", UPDSRC_PATH);
+
+            /* A companion pushing new console art at the root (see
+             * ParseArtPushName's own comment) -- stage to a fixed
+             * scratch path the same single-slot way is_updsrc does
+             * (only one MTP session's transfer is ever in flight on
+             * this responder, so no collision risk). */
+            char art_target[64] = "";
+            bool is_art_push = ctlp &&
+                               ParseArtPushName(fname, art_target, sizeof(art_target));
+            if (is_art_push)
+                snprintf(full, sizeof(full), "%s/incoming_art.mtp", CONFIG_DIR);
+
+            /* A companion kicking off a box-art search/pick at the
+             * root (the USB mirror of Wi-Fi's GET boxartsearch/POST
+             * boxartpick) -- a small JSON blob instead of a raw
+             * query-string param since MTP filenames can't safely
+             * carry arbitrary search text (the '/'/'\\' ban above
+             * would reject any query containing one). Staged the same
+             * single-slot way as the other two root special-cases;
+             * parsed on SendObject completion (see below). */
+            bool is_boxart_req = ctlp &&
+                                strcmp(fname, "boxart_request.json") == 0;
+            if (is_boxart_req)
+                snprintf(full, sizeof(full), "%s/incoming_boxart_req.mtp", CONFIG_DIR);
+
+            /* The desktop Storage page starting a scan: a few lines of
+             * folder names (the USB mirror of GET sd_usage_scan?p=).
+             * Staged single-slot like the others; read and handed to
+             * sdusage_request on completion. Full SD access only. */
+            bool is_sdusage_req = ctlp &&
+                                  c->sd_root && c->sd_root[0] &&
+                                  strcmp(fname, "sd_usage_request.txt") == 0;
+            if (is_sdusage_req)
+                snprintf(full, sizeof(full), "%s/incoming_sdusage_req.mtp", CONFIG_DIR);
+
+            /* An app install/update (see mtp::AppPush): the request
+             * first, then the body, both staged under CONFIG_DIR --
+             * never written into the ROM root they're addressed to. */
+            bool is_app_req = ctlp &&
+                              strcmp(fname, "app_request.json") == 0;
+            if (is_app_req)
+                snprintf(full, sizeof(full), "%s/incoming_app_req.mtp", CONFIG_DIR);
+            static const char kAppPrefix[] = "__haulnx_app__";
+            bool is_app_body = ctlp &&
+                               strncmp(fname, kAppPrefix, sizeof(kAppPrefix) - 1) == 0 &&
+                               fname[sizeof(kAppPrefix) - 1] != '\0';
+            if (is_app_body)
+                snprintf(full, sizeof(full), "%s/incoming_app_%u.mtp", CONFIG_DIR,
+                         static_cast<unsigned>(++c->app_seq));
+            /* The DAT Files tab's push (one or many DATs, zipped): the
+             * USB mirror of Wi-Fi's X-Dat-Bulk. Staged, then filed on
+             * the main thread by the same bulk-DAT unpack job. */
+            bool is_dat_bulk = ctlp &&
+                               strcmp(fname, "__haulnx_dats__.zip") == 0;
+            if (is_dat_bulk)
+                snprintf(full, sizeof(full), "%s/incoming_app_%u.mtp", CONFIG_DIR,
+                         static_cast<unsigned>(++c->app_seq));
+
+            if (in_ctl && !(is_updsrc || is_art_push || is_boxart_req || is_sdusage_req ||
+                            is_app_req || is_app_body || is_dat_bulk)) {
+                RC(c, PtpResponseCode_AccessDenied, trans); return;
+            }
+            u32 h = AddOrFind(c, pnorm, full, fname, false, size, time(nullptr));
+            c->pending.active = true;
+            c->pending.apply_updsrc = is_updsrc;
+            c->pending.boxart_req = is_boxart_req;
+            c->pending.sdusage_req = is_sdusage_req;
+            c->pending.app_req = is_app_req;
+            c->pending.app_body = is_app_body;
+            c->pending.dat_bulk = is_dat_bulk;
+            snprintf(c->pending.app_name, sizeof(c->pending.app_name), "%s",
+                     is_app_body ? fname + sizeof(kAppPrefix) - 1 : "");
+            snprintf(c->pending.art_target, sizeof(c->pending.art_target), "%s",
+                    is_art_push ? art_target : "");
+            /* Unpack archives dropped straight into a console folder,
+             * mirroring the download install step. Inbox drops are left
+             * whole so the sorter can identify them first; root drops
+             * have no console context. UnderKnownFolder additionally
+             * requires the destination to actually be inside one of
+             * the real console folders (not just "some folder that
+             * isn't Inbox or root") -- otherwise a drop anywhere else
+             * reachable generically (the SD Card tab's whole-card
+             * tree, or a nested Inbox subfolder) would wrongly
+             * auto-extract too. */
+            c->pending.extract =
+                (is_archive_name(fname) &&
+                 pnorm != PtpRootParentObject &&
+                 strcmp(pdir, c->inbox) != 0 &&
+                 UnderKnownFolder(c, full)) ||
+                (strcasecmp(fname, kBulkUploadMarker) == 0 &&
+                 UnderSdRoot(c, full));
+            c->pending.handle = h;
+            c->pending.size   = size;
+            snprintf(c->pending.path, sizeof(c->pending.path), "%s", full);
+            /* List the file now, at announce time, so it shows on the
+             * connect screen before its data phase starts, badged with
+             * the destination console (empty for Inbox / root). */
+            XferBegin(fname, size, ConsoleForPath(c, full));
+            u32 rp[3] = { StorageId, parentReq, h };
+            SendResponse(c, PtpResponseCode_Ok, trans, rp, 3);
+            return;
+        }
+
+        /* Bytes of one MTP property value of `type` at p, or -1 if the type
+         * isn't one we can size (stop parsing there). */
+        long PropValueLen(u16 type, const u8 *p, const u8 *end) {
+            switch (type) {
+                case 0x0001: case 0x0002: return 1;
+                case 0x0003: case 0x0004: return 2;
+                case 0x0005: case 0x0006: return 4;
+                case 0x0007: case 0x0008: return 8;
+                case 0x0009: case 0x000A: return 16;
+                case PtpDataTypeCode_String:
+                    return p < end ? 1 + 2 * static_cast<long>(*p) : -1;
+                default:
+                    if (type >= 0x4001 && type <= 0x400A && p + 4 <= end) {
+                        u32 cnt;
+                        memcpy(&cnt, p, 4);
+                        long el = PropValueLen(static_cast<u16>(type - 0x4000), p, end);
+                        return el < 0 ? -1 : 4 + el * static_cast<long>(cnt);
+                    }
+                    return -1;
+            }
+        }
+
+        /* A data phase bigger than one I/O buffer: header + payload sent in
+         * IoCap pieces through c->io (usbds wants aligned buffers). */
+        bool SendBigData(Ctx *c, u16 code, u32 trans, const u8 *pl, size_t n) {
+            g_dg_step.store("reply data phase");
+            PtpUsbBulkContainer *h = reinterpret_cast<PtpUsbBulkContainer *>(c->io);
+            h->length   = static_cast<u32>(sizeof(PtpUsbBulkContainer) + n);
+            h->type     = PtpContainerType_Data;
+            h->code     = code;
+            h->trans_id = trans;
+            size_t k = n < IoCap - sizeof(PtpUsbBulkContainer) ? n : IoCap - sizeof(PtpUsbBulkContainer);
+            memcpy(c->io + sizeof(PtpUsbBulkContainer), pl, k);
+            if (!WriteData(c, c->io, static_cast<u32>(sizeof(PtpUsbBulkContainer) + k))) return false;
+            for (size_t off = k; off < n; off += k) {
+                k = n - off < IoCap ? n - off : IoCap;
+                memcpy(c->io, pl + off, k);
+                if (!WriteData(c, c->io, static_cast<u32>(k))) return false;
+            }
+            return EndDataPhase(c, sizeof(PtpUsbBulkContainer) + n);
+        }
+
+        const u16 kObjProps[] = {
+            PtpObjectPropertyCode_StorageId, PtpObjectPropertyCode_ObjectFormat,
+            PtpObjectPropertyCode_ProtectionStatus, PtpObjectPropertyCode_ObjectSize,
+            PtpObjectPropertyCode_ObjectFileName, PtpObjectPropertyCode_ParentObject,
+            PtpObjectPropertyCode_PersistentUniqueObjectIdentifier,
+            PtpObjectPropertyCode_Name, PtpObjectPropertyCode_DateModified,
+        };
+
+        /* GetObjectPropList: every requested property of one object (depth 0)
+         * or of a folder's children (depth 1) in ONE command. Without it,
+         * Windows asks for each property of each object separately -- ~9 USB
+         * round trips per file, thousands for a big folder. */
+        void OpGetObjectPropList(Ctx *c, u32 trans, const u32 *p, u32 np) {
+            if (np < 5) { RC(c, PtpResponseCode_InvalidParameter, trans); return; }
+            u32 h = p[0], fmt = p[1], pc = p[2], depth = p[4];
+            if (pc == 0) { RC(c, PtpResponseCode_SpecificationByGroupUnsupported, trans); return; }
+            if (pc != 0xFFFFFFFFu && PropDataType(static_cast<u16>(pc)) == 0) {
+                RC(c, PtpResponseCode_ObjectPropNotSupported, trans); return;
+            }
+            std::vector<u32> hs;
+            if (depth == 0) {
+                if (h == 0 || h == 0xFFFFFFFFu) { RC(c, PtpResponseCode_SpecificationByDepthUnsupported, trans); return; }
+                if (!FindHandle(c, h)) { RC(c, PtpResponseCode_InvalidObjectHandle, trans); return; }
+                hs.push_back(h);
+            } else if (depth == 1) {
+                u16 rc = CollectChildren(c, (h == 0 || h == 0xFFFFFFFFu) ? PtpRootParentObject : h, hs);
+                if (rc != PtpResponseCode_Ok) { RC(c, rc, trans); return; }
+                /* Every file's size/date means a stat() each, all inside this
+                 * one command -- for a huge folder that could run past the
+                 * host's timeout (see AddLazy). Let the host fall back to
+                 * per-object requests instead. */
+                if (hs.size() > 1500) { RC(c, PtpResponseCode_SpecificationByDepthUnsupported, trans); return; }
+            } else {
+                RC(c, PtpResponseCode_SpecificationByDepthUnsupported, trans); return;
+            }
+            std::vector<u16> props;
+            if (pc == 0xFFFFFFFFu) props.assign(std::begin(kObjProps), std::end(kObjProps));
+            else props.push_back(static_cast<u16>(pc));
+
+            std::vector<Obj *> objs;
+            for (u32 x : hs) {
+                Obj *o = FindHandle(c, x);
+                if (!o) continue;
+                u16 of = o->is_dir ? PtpObjectFormatCode_Association : PtpObjectFormatCode_Undefined;
+                if (fmt != 0 && fmt != of) continue;
+                objs.push_back(o);
+            }
+
+            g_dg_step.store("prop list build");
+            std::vector<u8> buf(64 * 1024 + objs.size() * props.size() * 48);
+            for (;;) {
+                Buf b{ buf.data(), buf.data(), buf.data() + buf.size(), false };
+                bU32(&b, static_cast<u32>(objs.size() * props.size()));
+                for (Obj *o : objs) {
+                    for (u16 prop : props) {
+                        bU32(&b, o->handle);
+                        bU16(&b, prop);
+                        bU16(&b, PropDataType(prop));
+                        WritePropValue(o, prop, &b);
+                    }
+                }
+                if (!b.ovf) {
+                    if (SendBigData(c, PtpOperationCode_GetObjectPropList, trans, buf.data(),
+                                    static_cast<size_t>(b.p - b.base)))
+                        RC(c, PtpResponseCode_Ok, trans);
+                    return;
+                }
+                if (buf.size() > (64u << 20)) { RC(c, PtpResponseCode_GeneralError, trans); return; }
+                buf.resize(buf.size() * 2);
+            }
+        }
+
+        /* SendObjectPropList: Windows' newer "announce a file" -- like
+         * SendObjectInfo, but the size is 64-bit (params 3/4), so files of
+         * 4 GiB and more can be sent. The data phase is an ObjectPropList;
+         * we only need the file name out of it. */
+        void OpSendObjectPropList(Ctx *c, u32 trans, const u32 *p, u32 np) {
+            if (np < 5) { RC(c, PtpResponseCode_InvalidParameter, trans); return; }
+            u32 n = 0;
+            if (!ReadData(c, c->io, IoCap, &n)) return; /* stop / drop */
+            if (n < sizeof(PtpUsbBulkContainer) + 4) { RC(c, PtpResponseCode_NoValidObjectInfo, trans); return; }
+            const u8 *d   = c->io + sizeof(PtpUsbBulkContainer);
+            const u8 *end = c->io + n;
+            u32 cnt;
+            memcpy(&cnt, d, 4);
+            d += 4;
+            char fname[256] = "", name[256] = "";
+            for (u32 i = 0; i < cnt && d + 8 <= end; i++) {
+                u16 prop, type;
+                memcpy(&prop, d + 4, 2);
+                memcpy(&type, d + 6, 2);
+                d += 8;
+                if (type == PtpDataTypeCode_String &&
+                    (prop == PtpObjectPropertyCode_ObjectFileName || prop == PtpObjectPropertyCode_Name)) {
+                    ParseStr(&d, end, prop == PtpObjectPropertyCode_ObjectFileName ? fname : name, 256);
+                    continue;
+                }
+                long len = PropValueLen(type, d, end);
+                if (len < 0 || d + len > end) break;
+                d += len;
+            }
+            if (!fname[0]) snprintf(fname, sizeof(fname), "%s", name);
+            u16 format = static_cast<u16>(p[2]);
+            u64 size = (static_cast<u64>(p[3]) << 32) | p[4];
+            mtp_log("usb        SendObjectPropList %s (%llu bytes)", fname, (unsigned long long)size);
+            BeginSendObject(c, trans, format, size, fname, p[1], true);
+        }
 
         void Dispatch(Ctx *c, PtpUsbBulkContainer *cmd, u32 *p, u32 np) {
             u32 trans = cmd->trans_id;
@@ -994,6 +1547,7 @@ namespace mtp {
                     c->session_open = true;
                     c->session_id   = p[0];
                     c->objs.clear();
+                    c->idx.clear();
                     RC(c, PtpResponseCode_Ok, trans);
                     return;
                 }
@@ -1006,6 +1560,7 @@ namespace mtp {
                 case PtpOperationCode_CloseSession: {
                     c->session_open = false;
                     c->objs.clear();
+                    c->idx.clear();
                     RC(c, PtpResponseCode_Ok, trans);
                     return;
                 }
@@ -1104,6 +1659,14 @@ namespace mtp {
                     if (SendData(c, cmd->code, trans, &b)) RC(c, PtpResponseCode_Ok, trans);
                     return;
                 }
+                case PtpOperationCode_GetObjectPropList: {
+                    OpGetObjectPropList(c, trans, p, np);
+                    return;
+                }
+                case PtpOperationCode_SendObjectPropList: {
+                    OpSendObjectPropList(c, trans, p, np);
+                    return;
+                }
                 case PtpOperationCode_GetObjectPropValue: {
                     if (np < 2) { RC(c, PtpResponseCode_InvalidParameter, trans); return; }
                     Obj *o = FindHandle(c, p[0]);
@@ -1135,132 +1698,7 @@ namespace mtp {
                     const u8 *sp = d + 52;         /* Filename offset in the dataset */
                     char fname[256];               /* Obj.name caps at this anyway */
                     ParseStr(&sp, end, fname, sizeof(fname));
-                    /* One path segment only -- fname is concatenated straight into
-                     * the destination path below ("%s/%s", pdir, fname). Without
-                     * this, a host sending "../../../whatever" walks straight out
-                     * of pdir (a console folder, Inbox, or root) to write or mkdir
-                     * anywhere reachable by traversal, regardless of the SD Card
-                     * toggle. Mirrors the same guard SetObjectPropValue's rename
-                     * already applies to newname. */
-                    if (!fname[0] || strchr(fname, '/') || strchr(fname, '\\') ||
-                        strcmp(fname, ".") == 0 || strcmp(fname, "..") == 0) {
-                        RC(c, PtpResponseCode_NoValidObjectInfo, trans); return;
-                    }
-
-                    /* Resolve the parent directory. */
-                    u32 parentReq = p[1];
-                    u32 pnorm;
-                    const char *pdir;
-                    if (parentReq == 0 || parentReq == PtpRootParentObject) {
-                        pnorm = PtpRootParentObject;
-                        pdir  = c->root;
-                    } else {
-                        Obj *po = FindHandle(c, parentReq);
-                        if (!po || !po->is_dir) { RC(c, PtpResponseCode_InvalidParentObject, trans); return; }
-                        pnorm = parentReq;
-                        pdir  = po->path;
-                    }
-
-                    char full[1040];
-                    snprintf(full, sizeof(full), "%s/%s", pdir, fname);
-
-                    /* ObjectInfo's size field is 32-bit, so a file of 4 GiB or
-                     * more arrives as 0xFFFFFFFF ("unknown"). SendObject would
-                     * take that as the real size and stop reading at 4 GiB --
-                     * a cut-off file acked as a success, with the rest of the
-                     * data left on the pipe. Refuse it up front instead: the
-                     * desktop blocks these before sending, and Explorer shows
-                     * its own "too large" error. */
-                    if (format != PtpObjectFormatCode_Association && csize == 0xFFFFFFFFu) {
-                        mtp_log("usb        refused %s: 4 GiB or larger", fname);
-                        RC(c, PtpResponseCode_ObjectTooLarge, trans); return;
-                    }
-
-                    if (format == PtpObjectFormatCode_Association) {
-                        fs_mkdir_p(full);
-                        u32 h = AddOrFind(c, pnorm, full, fname, true, 0, time(nullptr));
-                        c->pending.active = false;
-                        u32 rp[3] = { StorageId, parentReq, h };
-                        SendResponse(c, PtpResponseCode_Ok, trans, rp, 3);
-                        return;
-                    }
-
-                    /* A companion pushing the shared update manifest at the root:
-                     * capture it to a staging file so a malformed push can't clobber
-                     * the live manifest, then validate + apply it on completion (see
-                     * SendObject). This is the USB mirror of the Wi-Fi InvApplyPush. */
-                    bool is_updsrc = (pnorm == PtpRootParentObject) &&
-                                     strcmp(fname, "update_sources.json") == 0;
-                    if (is_updsrc)
-                        snprintf(full, sizeof(full), "%s.mtp", UPDSRC_PATH);
-
-                    /* A companion pushing new console art at the root (see
-                     * ParseArtPushName's own comment) -- stage to a fixed
-                     * scratch path the same single-slot way is_updsrc does
-                     * (only one MTP session's transfer is ever in flight on
-                     * this responder, so no collision risk). */
-                    char art_target[64] = "";
-                    bool is_art_push = (pnorm == PtpRootParentObject) &&
-                                       ParseArtPushName(fname, art_target, sizeof(art_target));
-                    if (is_art_push)
-                        snprintf(full, sizeof(full), "%s/incoming_art.mtp", CONFIG_DIR);
-
-                    /* A companion kicking off a box-art search/pick at the
-                     * root (the USB mirror of Wi-Fi's GET boxartsearch/POST
-                     * boxartpick) -- a small JSON blob instead of a raw
-                     * query-string param since MTP filenames can't safely
-                     * carry arbitrary search text (the '/'/'\\' ban above
-                     * would reject any query containing one). Staged the same
-                     * single-slot way as the other two root special-cases;
-                     * parsed on SendObject completion (see below). */
-                    bool is_boxart_req = (pnorm == PtpRootParentObject) &&
-                                        strcmp(fname, "boxart_request.json") == 0;
-                    if (is_boxart_req)
-                        snprintf(full, sizeof(full), "%s/incoming_boxart_req.mtp", CONFIG_DIR);
-
-                    /* The desktop Storage page starting a scan: a few lines of
-                     * folder names (the USB mirror of GET sd_usage_scan?p=).
-                     * Staged single-slot like the others; read and handed to
-                     * sdusage_request on completion. Full SD access only. */
-                    bool is_sdusage_req = (pnorm == PtpRootParentObject) &&
-                                          c->sd_root && c->sd_root[0] &&
-                                          strcmp(fname, "sd_usage_request.txt") == 0;
-                    if (is_sdusage_req)
-                        snprintf(full, sizeof(full), "%s/incoming_sdusage_req.mtp", CONFIG_DIR);
-
-                    u32 h = AddOrFind(c, pnorm, full, fname, false, csize, time(nullptr));
-                    c->pending.active = true;
-                    c->pending.apply_updsrc = is_updsrc;
-                    c->pending.boxart_req = is_boxart_req;
-                    c->pending.sdusage_req = is_sdusage_req;
-                    snprintf(c->pending.art_target, sizeof(c->pending.art_target), "%s",
-                            is_art_push ? art_target : "");
-                    /* Unpack archives dropped straight into a console folder,
-                     * mirroring the download install step. Inbox drops are left
-                     * whole so the sorter can identify them first; root drops
-                     * have no console context. UnderKnownFolder additionally
-                     * requires the destination to actually be inside one of
-                     * the real console folders (not just "some folder that
-                     * isn't Inbox or root") -- otherwise a drop anywhere else
-                     * reachable generically (the SD Card tab's whole-card
-                     * tree, or a nested Inbox subfolder) would wrongly
-                     * auto-extract too. */
-                    c->pending.extract =
-                        (is_archive_name(fname) &&
-                         pnorm != PtpRootParentObject &&
-                         strcmp(pdir, c->inbox) != 0 &&
-                         UnderKnownFolder(c, full)) ||
-                        (strcasecmp(fname, kBulkUploadMarker) == 0 &&
-                         UnderSdRoot(c, full));
-                    c->pending.handle = h;
-                    c->pending.size   = csize;
-                    snprintf(c->pending.path, sizeof(c->pending.path), "%s", full);
-                    /* List the file now, at announce time, so it shows on the
-                     * connect screen before its data phase starts, badged with
-                     * the destination console (empty for Inbox / root). */
-                    XferBegin(fname, csize, ConsoleForPath(c, full));
-                    u32 rp[3] = { StorageId, parentReq, h };
-                    SendResponse(c, PtpResponseCode_Ok, trans, rp, 3);
+                    BeginSendObject(c, trans, format, csize, fname, p[1], false);
                     return;
                 }
                 case PtpOperationCode_SendObject: {
@@ -1451,6 +1889,93 @@ namespace mtp {
 
                     /* A Storage scan request, staged: read the folder list and
                      * start the (background) scan -- cheap, so done inline. */
+                    if (c->pending.app_req) {
+                        /* Validated with the Wi-Fi server's own rules; anything
+                         * that fails is dropped, same as a bad header there. */
+                        mtp::AppPush req{};
+                        size_t len = 0;
+                        char *body = json_read_file(c->pending.path, &len);
+                        bool ok = false;
+                        if (body) {
+                            int ntok = 0;
+                            jsmntok_t *tok = json_parse_alloc(body, len, &ntok);
+                            if (tok && tok[0].type == JSMN_OBJECT) {
+                                char v[768];
+                                v[0] = '\0';
+                                json_copy(body, tok, json_obj_get(body, tok, 0, "target"), v, sizeof(v));
+                                if (v[0]) httpsrv_sanitize_name(v, req.target, sizeof(req.target));
+                                v[0] = '\0';
+                                json_copy(body, tok, json_obj_get(body, tok, 0, "path"), v, sizeof(v));
+                                if (v[0] && !httpsrv_sanitize_app_path(v, req.path, sizeof(req.path)))
+                                    req.path[0] = '\0';
+                                req.install = req.path[0] &&
+                                              json_u64(body, tok, json_obj_get(body, tok, 0, "install")) != 0;
+                                v[0] = '\0';
+                                json_copy(body, tok, json_obj_get(body, tok, 0, "tag"), v, sizeof(v));
+                                if (v[0]) httpsrv_sanitize_tag(v, req.tag, sizeof(req.tag));
+                                /* A folder push is whole-card access: only with
+                                 * Full SD access on, and never outside sdmc:/. */
+                                v[0] = '\0';
+                                json_copy(body, tok, json_obj_get(body, tok, 0, "extract_to"), v, sizeof(v));
+                                if (v[0] && c->sd_root && c->sd_root[0] &&
+                                    strncmp(v, "sdmc:/", 6) == 0 && !strstr(v, ".."))
+                                    snprintf(req.extract_to, sizeof(req.extract_to), "%s", v);
+                                ok = req.target[0] || req.path[0] || req.extract_to[0];
+                            }
+                            free(tok);
+                            free(body);
+                        }
+                        remove(c->pending.path);
+                        c->app_req = req;
+                        c->app_req_set = ok;
+                        mtp_log("usb        app request %s (path=%s target=%s extract=%s)",
+                                ok ? "ok" : "REJECTED", req.path, req.target, req.extract_to);
+                        Obj *o = FindHandle(c, c->pending.handle);
+                        if (o) o->parent = 0xFFFFFFFEu; /* orphan the staging entry */
+                        if (!c->stopping) RC(c, ok ? PtpResponseCode_Ok : PtpResponseCode_InvalidParameter, trans);
+                        XferEnd(ok);
+                        c->pending.active = false;
+                        return;
+                    }
+
+                    if (c->pending.dat_bulk) {
+                        mtp::AppPush ap{};
+                        snprintf(ap.name, sizeof(ap.name), "%s", "dats.zip");
+                        snprintf(ap.staged, sizeof(ap.staged), "%s", c->pending.path);
+                        ap.dat_bulk = true;
+                        mtp::EnqueueAppPush(ap);
+                        mtp_log("usb        DAT bundle received, filing");
+                        Obj *o = FindHandle(c, c->pending.handle);
+                        if (o) o->parent = 0xFFFFFFFEu; /* orphan the staging entry */
+                        if (!c->stopping) RC(c, PtpResponseCode_Ok, trans);
+                        XferEnd(true);
+                        c->pending.active = false;
+                        return;
+                    }
+
+                    if (c->pending.app_body) {
+                        /* Pairs with the request just before it; one request
+                         * covers one body. No request -> nothing to apply. */
+                        bool ok = c->app_req_set;
+                        if (ok) {
+                            mtp::AppPush ap = c->app_req;
+                            snprintf(ap.name, sizeof(ap.name), "%s", c->pending.app_name);
+                            snprintf(ap.staged, sizeof(ap.staged), "%s", c->pending.path);
+                            mtp::EnqueueAppPush(ap);
+                        } else {
+                            remove(c->pending.path);
+                        }
+                        c->app_req_set = false;
+                        mtp_log("usb        app body %s %s", c->pending.app_name,
+                                ok ? "queued for install" : "REJECTED (no app_request.json)");
+                        Obj *o = FindHandle(c, c->pending.handle);
+                        if (o) o->parent = 0xFFFFFFFEu; /* orphan the staging entry */
+                        if (!c->stopping) RC(c, ok ? PtpResponseCode_Ok : PtpResponseCode_InvalidParameter, trans);
+                        XferEnd(ok);
+                        c->pending.active = false;
+                        return;
+                    }
+
                     if (c->pending.sdusage_req) {
                         char dirs[1024] = "";
                         FILE *rf = fopen(c->pending.path, "rb");
@@ -1548,7 +2073,7 @@ namespace mtp {
                     if (np < 1) { RC(c, PtpResponseCode_InvalidParameter, trans); return; }
                     Obj *o = FindHandle(c, p[0]);
                     if (!o) { RC(c, PtpResponseCode_InvalidObjectHandle, trans); return; }
-                    if (IsSdRoot(c, o->path)) { RC(c, PtpResponseCode_AccessDenied, trans); return; }
+                    if (IsSdRoot(c, o->path.c_str()) || IsCtlObj(c, o)) { RC(c, PtpResponseCode_AccessDenied, trans); return; }
                     /* A folder can be huge (a whole console's ROMs, or
                      * anywhere on the SD Card tree) -- recursing fs_rm_rf
                      * inline here would freeze this command loop for the
@@ -1559,7 +2084,7 @@ namespace mtp {
                      * command or the USB link. */
                     o->parent = 0xFFFFFFFEu; /* orphan it; re-enumeration rebuilds from disk */
                     RC(c, PtpResponseCode_Ok, trans);
-                    EnqueueDelete(o->path);
+                    EnqueueDelete(o->path.c_str());
                     return;
                 }
                 case PtpOperationCode_SetObjectPropValue: {
@@ -1568,7 +2093,7 @@ namespace mtp {
                     if (np < 2) { RC(c, PtpResponseCode_InvalidParameter, trans); return; }
                     Obj *o = FindHandle(c, p[0]);
                     if (!o) { RC(c, PtpResponseCode_InvalidObjectHandle, trans); return; }
-                    if (IsSdRoot(c, o->path)) { RC(c, PtpResponseCode_AccessDenied, trans); return; }
+                    if (IsSdRoot(c, o->path.c_str()) || IsCtlObj(c, o)) { RC(c, PtpResponseCode_AccessDenied, trans); return; }
                     u16 pc = static_cast<u16>(p[1]);
                     if (pc != PtpObjectPropertyCode_ObjectFileName &&
                         pc != PtpObjectPropertyCode_Name) {
@@ -1592,7 +2117,7 @@ namespace mtp {
                         RC(c, PtpResponseCode_InvalidObjectPropFormat, trans); return;
                     }
                     char dir[768];
-                    snprintf(dir, sizeof(dir), "%s", o->path);
+                    snprintf(dir, sizeof(dir), "%s", o->path.c_str());
                     char *slash = strrchr(dir, '/');
                     if (!slash) { RC(c, PtpResponseCode_GeneralError, trans); return; }
                     *slash = '\0';
@@ -1603,12 +2128,14 @@ namespace mtp {
                      * case-insensitively, so stat() finds the file itself there. Same
                      * exemption the Wi-Fi mv/fs_mv routes make (httpsrv.c). */
                     struct stat exists_st;
-                    if (strcasecmp(o->path, newpath) != 0 && stat(newpath, &exists_st) == 0) {
+                    if (strcasecmp(o->path.c_str(), newpath) != 0 && stat(newpath, &exists_st) == 0) {
                         RC(c, PtpResponseCode_AccessDenied, trans); return;
                     }
-                    if (rename(o->path, newpath) != 0) { RC(c, PtpResponseCode_GeneralError, trans); return; }
+                    if (rename(o->path.c_str(), newpath) != 0) { RC(c, PtpResponseCode_GeneralError, trans); return; }
+                    if (o->is_dir) RepathChildren(c, o->path, newpath);
                     SetObjPath(o, newpath);
-                    snprintf(o->name, sizeof(o->name), "%s", newname);
+                    o->name = newname;
+                    Reindex(c, o);
                     RC(c, PtpResponseCode_Ok, trans);
                     return;
                 }
@@ -1619,7 +2146,7 @@ namespace mtp {
                     if (np < 3) { RC(c, PtpResponseCode_InvalidParameter, trans); return; }
                     Obj *o = FindHandle(c, p[0]);
                     if (!o) { RC(c, PtpResponseCode_InvalidObjectHandle, trans); return; }
-                    if (IsSdRoot(c, o->path)) { RC(c, PtpResponseCode_AccessDenied, trans); return; }
+                    if (IsSdRoot(c, o->path.c_str()) || IsCtlObj(c, o)) { RC(c, PtpResponseCode_AccessDenied, trans); return; }
                     u32 destParent = p[2];
                     const char *ddir;
                     u32 dnorm;
@@ -1627,16 +2154,18 @@ namespace mtp {
                         dnorm = PtpRootParentObject; ddir = c->root;
                     } else {
                         Obj *dp = FindHandle(c, destParent);
-                        if (!dp || !dp->is_dir) { RC(c, PtpResponseCode_InvalidParentObject, trans); return; }
-                        dnorm = destParent; ddir = dp->path;
+                        if (!dp || !dp->is_dir || IsCtlObj(c, dp)) { RC(c, PtpResponseCode_InvalidParentObject, trans); return; }
+                        dnorm = destParent; ddir = dp->path.c_str();
                     }
                     char newpath[1040];
-                    snprintf(newpath, sizeof(newpath), "%s/%s", ddir, o->name);
+                    snprintf(newpath, sizeof(newpath), "%s/%s", ddir, o->name.c_str());
                     struct stat exists_st;
                     if (stat(newpath, &exists_st) == 0) { RC(c, PtpResponseCode_AccessDenied, trans); return; }
-                    if (rename(o->path, newpath) != 0) { RC(c, PtpResponseCode_GeneralError, trans); return; }
+                    if (rename(o->path.c_str(), newpath) != 0) { RC(c, PtpResponseCode_GeneralError, trans); return; }
+                    if (o->is_dir) RepathChildren(c, o->path, newpath);
                     SetObjPath(o, newpath);
                     o->parent = dnorm;
+                    Reindex(c, o);
                     RC(c, PtpResponseCode_Ok, trans);
                     return;
                 }
@@ -1647,6 +2176,35 @@ namespace mtp {
         }
 
     } // namespace
+
+    void DiagLog(const char *fmt, ...) {
+        va_list ap;
+        va_start(ap, fmt);
+        mtp_vlog(fmt, ap);
+        va_end(ap);
+    }
+
+    void DiagTick(Status s) {
+        static Status s_last = Status_Down;
+        static u64 s_reported_since = 0;
+        static u64 s_next_ms = 0;
+        if (s != s_last) {
+            static const char *const kNames[] = { "down", "waiting for host", "host configured" };
+            mtp_log("usb        link %s -> %s", kNames[s_last], kNames[s]);
+            s_last = s;
+        }
+        u32 op = g_dg_op.load();
+        if (op == 0) return;
+        u64 since = g_dg_since.load();
+        u64 ms = DgMs(since);
+        if (since != s_reported_since) { s_reported_since = since; s_next_ms = 3000; }
+        if (ms < s_next_ms) return;
+        /* 3s, then every 10s while it stays stuck. A long GetObject/SendObject
+         * is a real transfer, not a hang -- the step says which it is. */
+        mtp_log("usb        op=0x%04x still running after %llums (step: %s)", (unsigned)op,
+                (unsigned long long)ms, g_dg_step.load());
+        s_next_ms = ms + 10000;
+    }
 
     void RunResponder(UsbSession *session, UEvent *stop, const char *root,
                       const Folder *folders, int nfolders, const char *inbox,
@@ -1664,11 +2222,16 @@ namespace mtp {
         c.io2 = static_cast<u8 *>(memalign(0x1000, IoCap));
         if (!c.io || !c.io2) { free(c.io); free(c.io2); return; }
 
+        u64 mk0 = armGetSystemTick();
         fs_mkdir_p(inbox); /* so the synthetic Inbox object resolves to a real dir */
         for (int i = 0; i < nfolders; i++) fs_mkdir_p(folders[i].path); /* incl. custom paths */
+        mtp_log("usb        session start: %d folders%s, setup %llums", nfolders,
+                c.sd_root ? " + SD Card" : "", (unsigned long long)DgMs(mk0));
 
+        u32 ncmd = 0, nskip = 0;
         for (;;) {
             u32 n = 0;
+            g_dg_op.store(0); /* idle: waiting on the host, not a stall */
             if (!ReadData(&c, c.io, IoCap, &n)) break;      /* stop or link drop */
             if (n < sizeof(PtpUsbBulkContainer)) {
                 /* A short/zero read here is a stray end-of-data-phase terminator
@@ -1682,16 +2245,37 @@ namespace mtp {
 
             PtpUsbBulkContainer cmd;
             memcpy(&cmd, c.io, sizeof(cmd));
-            if (cmd.type != PtpContainerType_Command) continue;
+            if (cmd.type != PtpContainerType_Command) {
+                if (++nskip <= 8)
+                    mtp_log("usb        dropped non-command container type=%u code=0x%04x len=%u",
+                            (unsigned)cmd.type, (unsigned)cmd.code, (unsigned)n);
+                continue;
+            }
 
             u32 np = (n > sizeof(PtpUsbBulkContainer)) ? (n - sizeof(PtpUsbBulkContainer)) / 4 : 0;
             if (np > 5) np = 5;
             u32 params[5] = { 0 };
             memcpy(params, c.io + sizeof(PtpUsbBulkContainer), np * 4);
 
+            /* The first commands of a session are the host's whole bring-up
+             * (DeviceInfo/OpenSession/StorageInfo/root listing) -- log each of
+             * those; after that, only the slow ones. */
+            u64 t0 = armGetSystemTick();
+            g_dg_step.store("dispatch");
+            g_dg_since.store(t0);
+            g_dg_op.store(cmd.code);
             Dispatch(&c, &cmd, params, np);
+            g_dg_op.store(0);
+            u64 ms = DgMs(t0);
+            if (++ncmd <= 40 || ms >= 250)
+                mtp_log("usb        cmd #%u op=0x%04x p=[%x %x %x] -> %llums%s", ncmd,
+                        (unsigned)cmd.code, params[0], params[1], params[2],
+                        (unsigned long long)ms, c.stopping ? " (link lost)" : "");
             if (c.stopping) break;
         }
+        g_dg_op.store(0);
+        mtp_log("usb        session end after %u command(s)%s", ncmd,
+                c.stopping ? " (stop or link drop)" : "");
 
         free(c.io);
         free(c.io2);

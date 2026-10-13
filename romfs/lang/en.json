@@ -241,6 +241,7 @@
   "controls_body": "Tabs: L / R  (Library | Add | Queue | Settings)\nNavigate: D-pad (hold to repeat)   ZL/ZR: page\n+: exit   B: back\nAdd: A open  Y add  X edit/del  - search\nFiles: A get/queue selection  Y select  X view (filter/sort)  - search  ◀/▶: repo\nQueue: A cancel  X retry  ZL/ZR move  Y clear  - log",
 
   "exit_confirm": "%d download(s) active. Exit anyway?",
+  "exit_unpacking": "A transfer from your PC is still unpacking. If you exit now it finishes the next time HaulNX opens. Exit anyway?",
 
   "filter_prompt": "Filter",
   "rename_prompt": "Rename to",

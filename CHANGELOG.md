@@ -7,6 +7,35 @@ Notes for each release. `release.sh` pulls the section matching the version in
 `VERSION` and attaches it to the GitHub release. Add a `## <version>` section
 here before running a release.
 
+## 2.4.15
+
+**A USB overhaul: Explorer opens the Switch instantly, deletes/renames/downloads are reliable, and everything the desktop app does over Wi-Fi now works over USB too — including installing apps and emulators.** Update both the Switch app and the desktop app.
+
+### USB
+
+- **Explorer no longer hangs** opening the Switch, and big folders list quickly (whole-folder property lists instead of one request per file).
+- **Fixed stalls** on some replies whose size landed on a USB packet boundary — the cause of "Syncing with Switch…" freezing after a delete.
+- **Deletes run in the background**, so deleting a big folder no longer freezes the link, and several deletes in a row work. The desktop stops listing deleted files right away.
+- **Files over 4 GB can be sent over USB** on an exFAT card. A FAT32 or full card refuses up front instead of after the whole file is sent.
+- **Clean Explorer root:** just your console folders, Inbox, SD Card and one `_HaulNX` folder holding the app's internal files (which can't be deleted or renamed).
+- Renaming or moving a folder over USB no longer breaks actions on the files inside it.
+- Fixed a memory-safety bug in folder listings, and big SD cards use far less Switch memory while browsing.
+- The desktop notices when you unplug, keeps one USB connection open instead of reopening it for every action, and polls less often.
+- Debug logs are pulled over USB as well as Wi-Fi.
+
+### Desktop app
+
+- **Over USB now:** app and emulator installs/updates, DAT pushes, and console cover art.
+- New setting **Zip folders and multi-file sends** (Settings › Library). Turn it off to copy files as-is, keeping the folder structure — faster for large files, no unpacking on the Switch.
+- Sync status moved to its own spot above Settings, so it no longer covers the sidebar.
+- Download notifications show as HaulNX instead of PowerShell.
+
+### Switch app
+
+- **Exiting mid-unpack is safe:** a PC push that's still unpacking finishes the next time HaulNX opens (you get a warning on exit), and the console stays awake while a push unpacks.
+- New emulators: **NXStation** and **ScummVM**, plus **Neopop-SDL** (Neo Geo Pocket) and **UniPCemu** (PC/DOS) as legacy ports.
+- Emulators that cover 2–3 systems show each console's badge on their card.
+
 ## 2.4.0
 
 **A redesigned desktop app, a new Storage page, Wi-Fi transfers that resume after a dropout, and a new GameCube/Wii emulator.** Update both the Switch app and the desktop app.

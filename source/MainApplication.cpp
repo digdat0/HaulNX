@@ -2670,9 +2670,10 @@ void MainLayout::AddCard(const std::string &title, const std::string &subtitle,
                          pu::sdl2::Texture icon, bool pinned, bool dim,
                          bool art, const std::string &console,
                          bool badge_ring, pu::ui::Color flag_clr,
-                         const std::string &flag_text) {
+                         const std::string &flag_text,
+                         const std::vector<pu::sdl2::Texture> &icons) {
     this->grid->AddCard(title, subtitle, icon, pinned, dim, art, console,
-                        badge_ring, flag_clr, flag_text);
+                        badge_ring, flag_clr, flag_text, icons);
 }
 void MainLayout::SetCardCols(s32 n) { this->grid->SetCols(n); }
 void MainLayout::SetCardPoster(bool on) { this->grid->SetPoster(on); }
@@ -7006,6 +7007,13 @@ void MainApplication::PushExtractTick() {
         return;
     }
     this->pxt.Join();
+    if (this->pxt_cancel) {
+        // Shutdown stopped it mid-unpack: leave the job in the pending file
+        // (and its archive in place) so the next launch finishes it.
+        return;
+    }
+    this->pxt_cur_active = false;
+    this->PxtSave();
     if (this->pxt_kind == 2) {
         this->PushExtractApplyDatBulk();
     } else if (this->pxt_kind == 1) {
@@ -7035,7 +7043,82 @@ void MainApplication::PushExtractQueue(const std::string &path,
     job.kind = kind;
     job.app_tag = app_tag;
     this->pxt_queue.push_back(job);
+    this->PxtSave();
     this->PushExtractStartNext();
+}
+
+// The pending-unpack file: one job per line, tab-separated
+// (kind, archive, destination, name, target, app tag). Written whenever the
+// running job or the queue changes. Exiting HaulNX while a PC folder push
+// is still unpacking used to cancel it and drop the job -- the archive sat
+// in the inbox and every file it hadn't reached yet (the big ones, which
+// unpack last and longest) never arrived. Now the next launch picks it up.
+#define PXT_PENDING_PATH DATA_DIR "/pxt_pending.txt"
+void MainApplication::PxtSave() {
+    std::vector<PxtJob> jobs;
+    if (this->pxt_cur_active) {
+        PxtJob cur;
+        cur.path = this->pxt_path;
+        cur.dir = this->pxt_dir;
+        cur.name = this->pxt_name;
+        cur.target = this->pxt_target;
+        cur.app_tag = this->pxt_app_tag;
+        cur.kind = this->pxt_kind;
+        jobs.push_back(cur);
+    }
+    for (const auto &j : this->pxt_queue) {
+        jobs.push_back(j);
+    }
+    if (jobs.empty()) {
+        remove(PXT_PENDING_PATH);
+        return;
+    }
+    fs_mkdir_p(DATA_DIR);
+    FILE *f = fopen(PXT_PENDING_PATH, "wb");
+    if (!f) {
+        return;
+    }
+    for (const auto &j : jobs) {
+        fprintf(f, "%d\t%s\t%s\t%s\t%s\t%s\n", j.kind, j.path.c_str(), j.dir.c_str(),
+                j.name.c_str(), j.target.c_str(), j.app_tag.c_str());
+    }
+    fclose(f);
+}
+
+void MainApplication::PxtResume() {
+    FILE *f = fopen(PXT_PENDING_PATH, "rb");
+    if (!f) {
+        return;
+    }
+    std::vector<PxtJob> jobs;
+    char line[4096];
+    while (fgets(line, sizeof(line), f)) {
+        line[strcspn(line, "\r\n")] = '\0';
+        std::vector<std::string> fld;
+        const char *p = line;
+        for (;;) {
+            const char *t = strchr(p, '\t');
+            fld.emplace_back(p, t ? (size_t)(t - p) : strlen(p));
+            if (!t) break;
+            p = t + 1;
+        }
+        if (fld.size() < 6) continue;
+        PxtJob j;
+        j.kind = atoi(fld[0].c_str());
+        j.path = fld[1];
+        j.dir = fld[2];
+        j.name = fld[3];
+        j.target = fld[4];
+        j.app_tag = fld[5];
+        if (j.path.empty() || j.dir.empty() || !fs_exists(j.path.c_str())) continue;
+        jobs.push_back(j);
+    }
+    fclose(f);
+    remove(PXT_PENDING_PATH); // re-written below by PushExtractQueue
+    for (const auto &j : jobs) {
+        xfer_log("push       PC resuming unpack of %s -> %s", j.name.c_str(), j.dir.c_str());
+        this->PushExtractQueue(j.path, j.dir, j.name, j.target, j.kind, j.app_tag);
+    }
 }
 
 // Start the oldest queued job if no unpack is running. Without a worker
@@ -7054,6 +7137,8 @@ void MainApplication::PushExtractStartNext() {
     this->pxt_kind = job.kind;
     this->pxt_app_tag = job.app_tag;
     this->pxt_cancel = false;
+    this->pxt_cur_active = true;
+    this->PxtSave();
     if (job.kind == 2) {
         // DAT batch staging: clear any leftover from an aborted earlier batch.
         // Safe now -- the previous batch (if any) was fully applied by
@@ -7447,6 +7532,7 @@ static std::string fresh_nro_dest(const char *id, const std::string &fn) {
         {"nezumiiruka", "nezumiiruka"},   // README: sdmc:/switch/nezumiiruka/nezumiiruka.nro
         {"yabasanshiro", "yabasanshiro"}, // keeps games/, bios/, states/ beside the .nro
         {"flashnx", "FlashNX"},           // README: sdmc:/switch/FlashNX/FlashNX.nro
+        {"nxstation", "NXStation"},       // README: sdmc:/switch/NXStation/NXStation.nro
     };
     for (const auto &d : kInstallDirs) {
         if (strcasecmp(id, d.id) == 0) {
@@ -9419,7 +9505,7 @@ static const EmuSystems kEmuSystems[] = {
     {"psnes", {"snes"}, 1},
     {"pnes", {"nes"}, 1},
     {"pgba", {"gba"}, 1},
-    {"pgen", {"genesis"}, 1},
+    {"pgen", {"genesis", "master-system", "game-gear"}, 3},
     {"mame", {"arcade"}, 1},
     {"flycast", {"dc"}, 1}, // its flagship system; also plays NAOMI/Atomiswave
     {"duckstation", {"psx"}, 1},
@@ -9435,26 +9521,29 @@ static const EmuSystems kEmuSystems[] = {
     {"axchip8", {"chip8"}, 1},
     {"chip8-nx", {"chip8"}, 1},
     {"fake-08", {"pico8"}, 1},
-    {"gamelad", {"gb"}, 1},
-    {"noods", {"nds"}, 1},
+    {"gamelad", {"gb", "gbc"}, 2},
+    {"noods", {"nds", "gba"}, 2},
     {"tamatool-nx", {"tamagotchi"}, 1},
     {"yokoi", {"game-and-watch"}, 1},
     {"vba-next-switch", {"gba"}, 1},
     {"vapor-spec", {"zx-spectrum"}, 1},
     {"desmume-nx", {"nds"}, 1},
-    {"khedgb", {"gb"}, 1},
+    {"khedgb", {"gb", "gbc"}, 2},
     {"laines", {"nes"}, 1},
     {"noies", {"nes"}, 1},
     {"uae4all2", {"amiga"}, 1},
     {"uae4all2hd", {"amiga"}, 1},
     {"fceumm", {"nes"}, 1},
-    {"sms-plus-gx", {"master-system"}, 1},
+    {"sms-plus-gx", {"master-system", "game-gear"}, 2},
     {"snes9x2010", {"snes"}, 1},
     {"ppsspp-nx", {"psp"}, 1},
     {"freej2me", {"j2me"}, 1},
     {"dsmile", {"v-smile"}, 1},
     {"system22-nx", {"system22"}, 1},
     {"supermodel-nx", {"model3"}, 1},
+    {"scummvm", {"scummvm"}, 1},     // point-and-click adventure engine
+    {"neopop-sdl", {"neo-geo-pocket", "neo-geo-pocket-color"}, 2},
+    {"unipcemu", {"pc"}, 1},         // IBM PC (8086 - Pentium II), DOS games
 };
 static const EmuSystems *emu_systems_find(const char *id) {
     for (size_t i = 0; i < sizeof(kEmuSystems) / sizeof(kEmuSystems[0]); i++) {
@@ -9540,10 +9629,13 @@ static const char *console_short_name(const char *slug) {
         {"pico8", "PICO-8"},      {"flash", "Flash"},
         {"chip8", "CHIP-8"},      {"tamagotchi", "Tamagotchi"},
         {"game-and-watch", "G&W"}, {"zx-spectrum", "ZX Spectrum"},
-        {"amiga", "Amiga"},       {"master-system", "Master System"},
+        {"amiga", "Amiga"},       {"master-system", "SMS"},
+        {"game-gear", "GG"},
         {"fbneo", "FBNeo"},       {"neo-geo", "Neo Geo"},
         {"j2me", "J2ME"},         {"v-smile", "V.Smile"},
         {"system22", "Sys22"},    {"model3", "Model 3"},
+        {"neo-geo-pocket", "NGP"}, {"neo-geo-pocket-color", "NGPC"},
+        {"pc", "PC / DOS"},       {"scummvm", "Adventure"},
     };
     for (size_t i = 0; i < sizeof(map) / sizeof(map[0]); i++) {
         if (strcasecmp(slug, map[i].slug) == 0) {
@@ -9707,14 +9799,14 @@ void MainApplication::AppUpdatesRender() {
             break;
         }
         if (cards) {
-            // console_display_icon swaps in that console's own SteamGridDB
-            // cover when the user opted in (Manage Consoles > box art) and box
-            // art is on globally -- same helper/fallback chain Home's own
-            // console cards use -- and falls back to the plain badge for a
-            // multi-system entry ("default" slug) same as before.
+            // Always the stock console badge (allow_boxart=false), never the
+            // console's SteamGridDB cover: the Emulators tab keeps one
+            // consistent icon style even when box art is on for that console
+            // elsewhere. A multi-system entry gets the "default" slug.
             bool is_art = false;
             pu::sdl2::Texture ic =
-                console_display_icon(emu_console_icon_slug(e), &is_art);
+                console_display_icon(emu_console_icon_slug(e), &is_art,
+                                     false);
             // A status dot restores the at-a-glance signal list view's
             // colored pill gives (plain AddCard has no per-card subtitle
             // colour) -- only for states actually worth a second look; up to
@@ -9741,12 +9833,20 @@ void MainApplication::AppUpdatesRender() {
                 flag_clr = warn_red();
             }
             bool badge_ring = !emu_systems_for(e);
+            // 2-3 systems: each console's own badge, tiled smaller, instead
+            // of the generic one (plain badges, not box art -- a portrait
+            // cover shrunk to a third of the card would be unreadable).
+            std::vector<pu::sdl2::Texture> multi;
+            if (const EmuSystems *es = emu_systems_for(e)) {
+                for (int k = 0; es->count > 1 && k < es->count; k++) {
+                    multi.push_back(console_icon(es->slugs[k]));
+                }
+            }
             this->layout->AddCard(std::string(e.name), tag, ic, false, false,
                                   is_art, emu_console_label(e), badge_ring,
-                                  flag_clr, flag_text);
+                                  flag_clr, flag_text, multi);
         } else if (is_emu) {
-            // Same per-console icon (box art when opted in, else the stock
-            // badge) as card view above -- this used to hardcode "default"
+            // Same per-console stock badge (never box art) as card view above -- this used to hardcode "default"
             // for every row regardless of console. The "Name (Console)"
             // suffix mirrors card view's own console label (emu_console_label)
             // so the two views read the same for a given entry. Apps have no
@@ -9756,7 +9856,8 @@ void MainApplication::AppUpdatesRender() {
                 std::string(e.name) + " (" + emu_console_label(e) + ")";
             this->layout->AddRow2(
                 row_name, tag, lbl, clr, -1.0f,
-                console_display_icon(emu_console_icon_slug(e)), "", false,
+                console_display_icon(emu_console_icon_slug(e), nullptr, false),
+                "", false,
                 pill);
         } else {
             this->layout->AddRow2(std::string(e.name), tag, lbl, clr, -1.0f,
@@ -10183,6 +10284,45 @@ void MainApplication::PollXfers() {
     // Cheap to poll unconditionally -- just a mutex check when nothing's
     // waiting, same as PushExtractTick's own gate above being effectively
     // free when pxt isn't running.
+    // A USB app install/update (mtp::AppPush), already validated by the
+    // responder -- applied exactly the way InvApplyFile applies the Wi-Fi
+    // push's X-App-* / X-Fs-* headers, so both transports behave the same.
+    {
+        mtp::AppPush up;
+        while (mtp::PollAppPush(&up)) {
+            std::string part = up.staged, tag = up.tag, name = up.name;
+            std::string apath = up.path;
+            if (up.dat_bulk) {
+                // Same job Wi-Fi's X-Dat-Bulk queues (see InvApplyFile).
+                this->PushExtractQueue(part, std::string(DATS_DIR) + "/_bulk_incoming", name, "",
+                                       2, "");
+            } else if (up.extract_to[0]) {
+                std::string dest = up.extract_to;
+                while (dest.size() > 6 && dest.back() == '/') {
+                    dest.pop_back();
+                }
+                if (dest == "sdmc:/") {
+                    dest = "sdmc:";
+                } else {
+                    fs_mkdir_p(dest.c_str());
+                }
+                this->PushExtractQueue(part, dest, name, "", 1, tag);
+                xfer_log("push       PC unpacking %s -> %s (USB app install)", name.c_str(),
+                         dest.c_str());
+            } else if (up.install && !apath.empty() && !fs_exists(apath.c_str())) {
+                this->InvApplyEmuNroAt(apath.substr(apath.find_last_of('/') + 1), apath, part,
+                                       true, tag);
+            } else if (!apath.empty() && fs_exists(apath.c_str())) {
+                this->InvApplyEmuNroAt(apath.substr(apath.find_last_of('/') + 1), apath, part,
+                                       false, tag);
+            } else if (up.target[0]) {
+                this->InvApplyEmuNro(up.target, part, tag);
+            } else {
+                remove(part.c_str());
+                xfer_log("FAILED     PC USB app push %s: nothing to install it as", name.c_str());
+            }
+        }
+    }
     {
         mtp::ArtPush ap;
         while (mtp::PollArtPush(&ap)) {
@@ -10594,6 +10734,7 @@ void MainApplication::UsbMtpTick() {
     // session): tear device mode down so the USB-C port returns to host mode
     // for a controller, then leave exactly as a manual exit would.
     mtp::Status s = mtp::Poll();
+    mtp::DiagTick(s); // link changes + stalled-command watchdog -> debug.log
     this->usb_status = s; // drives CompanionConnected() for USB companions
     // The Diagnostics screen's USB 3.0 row is otherwise a one-shot query taken
     // when the screen is entered (see GotoDiagnostics) -- sitting on it while
@@ -10697,10 +10838,16 @@ void MainApplication::UsbMtpTick() {
     // receive) — same gate InvServerPoll uses.
     if (s == mtp::Status_Connected && !busy && !queue_io_active()) {
         static u64 last_inv = 0;
+        static u32 last_delgen = 0;
         u64 tnow = armGetSystemTick();
-        if (last_inv == 0 || armTicksToNs(tnow - last_inv) >= 15000000000ULL) {
+        // A finished USB delete rebuilds it right away rather than on the 15 s
+        // timer, so the PC's next read stops listing what it just deleted.
+        u32 delgen = mtp::DeleteGeneration();
+        if (last_inv == 0 || delgen != last_delgen ||
+            armTicksToNs(tnow - last_inv) >= 15000000000ULL) {
             this->WriteInventoryJson();
             last_inv = tnow;
+            last_delgen = delgen;
         }
     }
 
@@ -18497,9 +18644,22 @@ void MainApplication::HandleInput(u64 down, u64 held,
     // Keep the console awake while downloads are active (main-thread only).
     // Reuses qac (one active-count scan per frame, computed above) instead of
     // taking the queue mutex and rescanning QUEUE_MAX a second time.
+    // Transfers from the PC count too: a push still being received, and the
+    // unpack that follows it -- a big folder push spends minutes unpacking
+    // after its queue item is already done, and the console used to doze off
+    // mid-unpack (the "big files missing" folder pushes). A short linger
+    // bridges the gap between one pushed file and the next.
     {
         static bool cur = false;
-        bool want = g_prefs.prevent_sleep && (qac > 0);
+        static u64 last_busy = 0;
+        u64 now = armGetSystemTick();
+        bool pc_busy = httpsrv_receiving(&this->inv_srv, NULL, NULL) ||
+                       this->pxt.running || !this->pxt_queue.empty();
+        if (qac > 0 || pc_busy) {
+            last_busy = now;
+        }
+        bool recent = last_busy != 0 && armTicksToNs(now - last_busy) < 30000000000ULL;
+        bool want = g_prefs.prevent_sleep && recent;
         if (want != cur) {
             appletSetMediaPlaybackState(want);
             cur = want;
@@ -18594,6 +18754,12 @@ void MainApplication::HandleInput(u64 down, u64 held,
             char msg[80];
             snprintf(msg, sizeof(msg), tr(S_EXIT_CONFIRM), active);
             if (!this->Confirm(tr(S_EXIT), msg)) {
+                return;
+            }
+        } else if (this->pxt.running || !this->pxt_queue.empty()) {
+            // A PC push is still unpacking. Safe to leave (it resumes on the
+            // next launch), but say so rather than exit silently mid-way.
+            if (!this->Confirm(tr(S_EXIT), tr(S_EXIT_UNPACKING))) {
                 return;
             }
         }
@@ -21427,6 +21593,9 @@ void MainApplication::OnLoad() {
     // Land on the library (the manager's front door), not the Add/Browse tab.
     this->GotoInstalled(roms_root(&g_tico));
     this->RefreshStatus();
+
+    // Finish any PC push an earlier run exited in the middle of unpacking.
+    this->PxtResume();
 
     this->SetOnInput([&](const u64 down, const u64 up, const u64 held,
                          const pu::ui::TouchPoint touch) {

@@ -76,6 +76,11 @@ class CardGrid : public pu::ui::elm::Element {
         // limited) still flags the card without claiming an update exists.
         pu::ui::Color flag_clr{0, 0, 0, 0};
         std::string flag_text;
+        // Poster mode, fallback (non-art) icon only: 2-3 console badges
+        // (borrowed) drawn smaller and tiled in place of the single `icon` --
+        // an emulator card covering a couple of systems (Dolphin's GC + Wii,
+        // mGBA's GBA/GB/GBC) shows each one instead of the generic badge.
+        std::vector<pu::sdl2::Texture> icons;
     };
 
   private:
@@ -844,11 +849,13 @@ class CardGrid : public pu::ui::elm::Element {
                  const std::string &console = "",
                  bool badge_ring = false,
                  pu::ui::Color flag_clr = pu::ui::Color(0, 0, 0, 0),
-                 const std::string &flag_text = "") {
+                 const std::string &flag_text = "",
+                 const std::vector<pu::sdl2::Texture> &icons = {}) {
         Card c{title, subtitle, console, icon, pinned, dim, art};
         c.badge_ring = badge_ring;
         c.flag_clr = flag_clr;
         c.flag_text = flag_text;
+        c.icons = icons;
         this->cards.push_back(c);
         this->dirty = true;
     }
@@ -1580,7 +1587,79 @@ class CardGrid : public pu::ui::elm::Element {
                     }
                     const s32 ix = cx + (cw - iw) / 2;
                     const s32 iy = cy + PosterPad;
-                    if (cd.icon) {
+                    if (!cd.art && cd.icons.size() >= 2) {
+                        // Multi-console badges, overlapping: two cascade
+                        // from top-left to bottom-right (the second drawn
+                        // over the first); three put the first at the back,
+                        // top-centre, with the other two side by side in
+                        // front of it below. Each is aspect-fitted in its own
+                        // square, with one glow behind the group when
+                        // selected.
+                        const s32 n =
+                            cd.icons.size() > 3 ? 3 : (s32)cd.icons.size();
+                        const s32 icx = ix + iw / 2;
+                        const s32 icy = iy + ih / 2;
+                        if (selected) {
+                            s32 gr = (iw < ih ? iw : ih) / 2;
+                            for (s32 g = 0; g < 4; g++) {
+                                auto gc = this->glow_clr;
+                                gc.a = (u8)((14 + 5 * g) * this->sel_alpha /
+                                           255);
+                                drawer->RenderCircleFill(gc, icx, icy,
+                                                         gr + 2 - 6 * g);
+                            }
+                        }
+                        // Group footprint: two = 1.45 S square; three =
+                        // 1.9 S wide (the front pair overlap by 0.1 S) by
+                        // 1.6 S tall (the back one peeks 0.6 S above).
+                        s32 bsz;
+                        if (n == 2) {
+                            bsz = (iw < ih ? iw : ih) * 100 / 145;
+                        } else {
+                            s32 bw = iw * 10 / 19, bh = ih * 10 / 16;
+                            bsz = bw < bh ? bw : bh;
+                        }
+                        if (bsz < 1) {
+                            bsz = 1;
+                        }
+                        for (s32 k = 0; k < n; k++) {
+                            pu::sdl2::Texture t = cd.icons[k];
+                            if (!t) {
+                                continue;
+                            }
+                            s32 scx, scy; // this badge's square centre
+                            if (n == 2) {
+                                const s32 off = bsz * 45 / 100 / 2;
+                                scx = icx + (k == 0 ? -off : off);
+                                scy = icy + (k == 0 ? -off : off);
+                            } else if (k == 0) {
+                                scx = icx;
+                                scy = icy - bsz * 3 / 10;
+                            } else {
+                                const s32 off = bsz * 45 / 100;
+                                scx = icx + (k == 1 ? -off : off);
+                                scy = icy + bsz * 3 / 10;
+                            }
+                            s32 tw = pu::ui::render::GetTextureWidth(t);
+                            s32 th = pu::ui::render::GetTextureHeight(t);
+                            s32 dw = bsz, dh = bsz;
+                            if (tw > 0 && th > 0) {
+                                if (tw >= th) {
+                                    dh = bsz * th / tw;
+                                } else {
+                                    dw = bsz * tw / th;
+                                }
+                            }
+                            pu::ui::render::TextureRenderOptions o;
+                            o.width = dw;
+                            o.height = dh;
+                            if (cd.dim) {
+                                o.alpha_mod = 110;
+                            }
+                            drawer->RenderTexture(t, scx - dw / 2,
+                                                  scy - dh / 2, o);
+                        }
+                    } else if (cd.icon) {
                         pu::ui::render::TextureRenderOptions o;
                         if (cd.art) {
                             // Fit to the aspect computed above -- never

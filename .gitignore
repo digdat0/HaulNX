@@ -1,6 +1,7 @@
 # build output
 /build/
 /build-public/
+/build-lite/
 *.nro
 
 # desktop/ as a whole stays untracked (see build-public.ps1), but these two
