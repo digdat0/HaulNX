@@ -93,6 +93,16 @@ cp -r desktop/src-tauri "$EXPORT_DIR/desktop/"
 cp desktop/build-lite.ps1 desktop/.gitignore "$EXPORT_DIR/desktop/"
 rm -f "$EXPORT_DIR/desktop/src/local-ext.js" \
       "$EXPORT_DIR/desktop/src-tauri/src/ext_ops.rs"
+# Lite strip, same rule as build-lite.ps1: drop every block between
+# @lite-strip-begin/@lite-strip-end marker lines (Find Collections -- the
+# archive.org search tab) and un-comment "// @lite-only: " lines, so the
+# published Lite source doesn't carry the feature either.
+awk '/@lite-strip-begin/{s=1;next} /@lite-strip-end/{s=0;next} s{next}
+     {sub(/^[ \t]*\/\/ @lite-only: /,"")} {print}' \
+  desktop/src/index.html > "$EXPORT_DIR/desktop/src/index.html"
+if grep -q -e findCollections -e 'Find Collections' -e '@lite-' "$EXPORT_DIR/desktop/src/index.html"; then
+  echo "Lite strip left Find Collections code in the exported index.html"; exit 1
+fi
 rm -rf "$EXPORT_DIR/desktop/src-tauri/target" \
        "$EXPORT_DIR/desktop/src-tauri/target-lite" \
        "$EXPORT_DIR/desktop/src-tauri/target-public" \
