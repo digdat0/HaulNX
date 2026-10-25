@@ -58,7 +58,13 @@ acquire, organize, verify, and maintain.
   anywhere** (Settings → Storage → ROM Download Folder) or send **individual consoles
   to their own folders** (Settings → Storage → Install folders → *Custom per
   console*). Handy when one emulator insists on its own directory, or you keep a system
-  on a separate card. Full walkthrough on the
+  on a separate card.
+- **Already have your own folders** ("Sony PlayStation" instead of `psx`)? Open the folder in the
+  Library, press **X > Use for a console...**, and HaulNX adopts it for that console, with the
+  console's name and icon, an offer to move the games from the old folder, and a check that no
+  other console already uses it. You can also create a new folder and assign it in one go
+  (**Tools > New folder...**), hide or delete folders from the list, and do the same from the
+  desktop app (folder button on a console). Full walkthrough on the
   **[Custom Folders](https://github.com/digdat0/HaulNX/wiki/Reference-Custom-Folders)**
   wiki page.
 

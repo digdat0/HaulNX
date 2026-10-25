@@ -1430,6 +1430,17 @@ class MainApplication : public pu::ui::Application {
     // The per-console Options panel (right slide) for the console at g_inst[i].
     // Returns true if the user pressed Y to flip to the global Tools panel.
     bool ConsoleOptionsMenu(s32 i);
+    void FolderOptionsMenu(s32 i);
+    // Assign / create / delete a console's install folder (Use for a console,
+    // New folder, Delete folder, and the desktop's assign-a-folder request).
+    int PickConsoleForFolder(bool allow_skip);
+    bool AssignConsoleFolder(int ci, const std::string &dir, int move_mode);
+    std::string NewFolderPrompt(const std::string &parent);
+    void NewFolderAndAssign();
+    void DeleteFolderFlow(const std::string &dir, const std::string &label, int ci);
+    void ApplyPcFolderRequest(const char *target, const char *dir, bool move);
+    void InvFolderTick();
+    std::vector<std::string> manage_dirs; // unassigned folders listed on Manage consoles
     // The install-folder info / change dialog for the console at g_inst[i]. Lives
     // in the per-console Options menu (was its own Y button before Y became Tools).
     void InstFolderDialog(s32 i);

@@ -2348,6 +2348,45 @@ static int client_step(HttpSrv *s) {
                 client_reset(s);
                 return 0;
             }
+            /* Assign an existing SD folder to a console: "POST /<token>/
+             * setconsolefolder?p=<target_enc>:<move 0|1>:<dir_enc>" (no body).
+             * Only stashed here; the UI thread checks the folder really exists,
+             * isn't another console's, and isn't a system folder before it
+             * touches the config (MainApplication::InvFolderTick). The ':'
+             * separators are literal because the encoded parts never contain
+             * one (encodeURIComponent escapes it). */
+            size_t sflen = 0;
+            const char *sfval = route_pval(s, p, pl, "setconsolefolder", &sflen);
+            if (sfval) {
+                make_blocking(fd);
+                const char *c1 = memchr(sfval, ':', sflen);
+                const char *c2 = c1 ? memchr(c1 + 1, ':', sflen - (size_t)(c1 + 1 - sfval)) : NULL;
+                if (!host_ok(s, s->head)) {
+                    send_resp(fd, "403 Forbidden", "text/plain", "wrong host");
+                } else if (!c1 || !c2) {
+                    send_resp(fd, "400 Bad Request", "text/plain",
+                              "need target, move and folder");
+                } else {
+                    char target[64] = {0}, mv[8] = {0}, dir[512] = {0};
+                    pct_decode(sfval, (size_t)(c1 - sfval), target, sizeof(target));
+                    pct_decode(c1 + 1, (size_t)(c2 - (c1 + 1)), mv, sizeof(mv));
+                    pct_decode(c2 + 1, (size_t)((sfval + sflen) - (c2 + 1)), dir,
+                               sizeof(dir));
+                    if (target[0] && dir[0] && !s->folder_req_target[0]) {
+                        snprintf(s->folder_req_dir, sizeof(s->folder_req_dir), "%s", dir);
+                        s->folder_req_move = mv[0] == '1';
+                        snprintf(s->folder_req_target, sizeof(s->folder_req_target),
+                                 "%s", target);
+                        send_resp(fd, "200 OK", "text/plain", "queued");
+                    } else if (!target[0] || !dir[0]) {
+                        send_resp(fd, "400 Bad Request", "text/plain", "bad request");
+                    } else {
+                        send_resp(fd, "409 Conflict", "text/plain", "busy");
+                    }
+                }
+                client_reset(s);
+                return 0;
+            }
             /* The SD Card tab's three bodyless write actions — delete
              * (recursive: files and whole folders alike, matching what
              * Explorer-over-MTP already does), new folder, and move/rename —

@@ -7,6 +7,26 @@ Notes for each release. `release.sh` pulls the section matching the version in
 `VERSION` and attaches it to the GitHub release. Add a `## <version>` section
 here before running a release.
 
+## 2.4.21
+
+**Use your own folders for a console.** If your emulators already read from folders like "Sony PlayStation" or "Sony PSP", HaulNX can now use them instead of showing its own `psx` / `psp` beside them. Update both the Switch app and the desktop app.
+
+### Console folders (Switch)
+
+- **Library > any folder > X > Use for a console...** assigns that folder to a console. It then shows with the console's name and icon, and downloads, sends and USB transfers go there. Change or reset it from the console's own options menu.
+- **One folder per console.** If another console already uses the folder, HaulNX tells you which one.
+- **Move games from the old folder.** Assigning asks whether to move the games left in the old folder (instant on one SD card; name clashes are skipped). If you leave them, HaulNX explains that the old folder will no longer be listed and they would have to be moved by hand.
+- **Unassigned folders** appear in Manage consoles, where they can be shown or hidden like a console. Hiding only affects the HaulNX list; nothing is removed from the card.
+- **New folder...** in Tools, Manage consoles and the folder picker (Minus). Name it, pick a console, and the same overlap and move prompts apply.
+- **Delete folder...** for custom folders, with the file count and total size in the confirmation. It also resets the console to its default folder.
+- Folder names with spaces are fine. System folders (`atmosphere`, `switch`, `Nintendo`...) can't be assigned.
+- A console with a custom folder no longer has its unused default folder (e.g. an empty `psx`) re-created at every launch.
+
+### Desktop app
+
+- **Folder button on each console** (Switch tab) picks one of the Switch's real SD folders for that console, over Wi-Fi or USB, with the move-games choice. It needs Full SD card access and an up-to-date Switch app, and confirms once the Switch has applied it.
+- **SD Card viewer:** select several folders and download them in one go.
+
 ## 2.4.15
 
 **A USB overhaul: Explorer opens the Switch instantly, deletes/renames/downloads are reliable, and everything the desktop app does over Wi-Fi now works over USB too — including installing apps and emulators.** Update both the Switch app and the desktop app.

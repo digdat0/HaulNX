@@ -216,6 +216,7 @@ typedef struct {
 } Credentials;
 
 #define MAX_PINNED_DIRS 32
+#define MAX_HIDDEN_DIRS 64
 #define MAX_FILTER_EXTS 40
 
 /* One entry in the Browse file-view extension filter. */
@@ -262,6 +263,11 @@ typedef struct {
     /* Top-level ROM folders pinned to the top of the Installed tab. */
     char pinned_dirs[MAX_PINNED_DIRS][64];
     int pinned_dir_count;
+    /* Top-level ROM-root folders the user hid from the Library: folders that
+     * belong to no console (BIOS, themes, a stray "Sony PlayStation"). A console's
+     * own folder is hidden through the console's Installed visibility instead. */
+    char hidden_dirs[MAX_HIDDEN_DIRS][64];
+    int hidden_dir_count;
     /* Browse file-view extension filter. filter_exts is the master switch; the
      * per-entry enabled flags persist regardless of it (turning it off just
      * stops the filtering from being applied). Seeded with defaults on first run. */
@@ -403,7 +409,10 @@ void config_sort(SourcesConfig *cfg);
 /* Create <roms_root>/<target> for every supported console that doesn't already
  * have a folder, so consoles show in the Installed tab before their first
  * download. Existing folders are left untouched. */
-void config_seed_rom_folders(const SourcesConfig *cfg, const char *roms_root);
+/* custom_on: per-console custom folders are enabled, so a console that has one
+ * does not get its (unused) default folder re-created. */
+void config_seed_rom_folders(const SourcesConfig *cfg, const char *roms_root,
+                             bool custom_on);
 
 /* Check whether js/len is a usable dl_sources.json without touching disk or
  * the live config, reporting what it holds. False if it has no consoles. */
@@ -448,6 +457,9 @@ bool prefs_save(const Prefs *p);
 
 /* Pinned Installed-tab folders (by top-level folder name). */
 bool prefs_dir_pinned(const Prefs *p, const char *name);
+/* Hidden (unassigned) ROM-root folders: same shape as the pin list. */
+bool prefs_dir_hidden(const Prefs *p, const char *name);
+void prefs_dir_hide_toggle(Prefs *p, const char *name);
 void prefs_dir_pin_toggle(Prefs *p, const char *name);
 
 /* Browse file-view extension filter. */

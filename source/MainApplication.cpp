@@ -4253,7 +4253,7 @@ void MainApplication::GotoRomPicker(const std::string &path) {
         this->layout->SetTitle(tr(S_TITLE_ROM_PICKER));
     }
     if (!this->picker_nro_mode) {
-        this->layout->SetSubtitle(tr(S_SUB_ROM_PICKER));
+        this->layout->SetSubtitle(tr(S_SUB_ROM_PICKER_NEW));
     }
     this->layout->ClearMenu();
 
@@ -5847,6 +5847,11 @@ void MainApplication::InvJsonBegin() {
     fputs(",\n  \"sd_usage\": true", f);
     // GET push_resume + X-Resume-Id/From (httpsrv.c): interrupted Wi-Fi pushes resume.
     fputs(",\n  \"push_resume\": true", f);
+    // POST setconsolefolder / console_folder_request.json: the desktop can
+    // assign an existing SD folder to a console. roms_root is where the default
+    // console folders live (the desktop offers the folders found there).
+    fputs(",\n  \"folder_assign\": true,\n  \"roms_root\": ", f);
+    json_write_escaped(f, roms_root(&g_tico));
     fputs(",\n  \"consoles\": [", f);
 
     // Rebuilt in lockstep with the JSON, one console at a time in
@@ -6486,7 +6491,7 @@ void MainApplication::InvApplyPush() {
     xfer_log("push       PC applied %d console(s), %d repo(s); previous %d kept "
              "for restore", consoles, repos, SOURCES_BAK_SLOTS);
     config_sort_az(&g_cfg); // commit_config's internal sort is by slug, not display name
-    config_seed_rom_folders(&g_cfg, roms_root(&g_tico));
+    config_seed_rom_folders(&g_cfg, roms_root(&g_tico), g_prefs.custom_folders);
     this->inv_last_gen_ns = 0; // regenerate the inventory with the new collection
 
     char done[96];
@@ -10279,6 +10284,7 @@ void MainApplication::PollXfers() {
     // inventory server toggle is off; runs unconditionally every frame same
     // as it always did inside InvServerPoll, just no longer gated on inv_open.
     this->InvBoxartTick();
+    this->InvFolderTick(); // assign-a-folder requests from the desktop (Wi-Fi or USB)
     // Console art pushed over USB (see EnqueueArtPush's own comment for why
     // the responder thread stages it here instead of applying it itself).
     // Cheap to poll unconditionally -- just a mutex check when nothing's
@@ -11348,7 +11354,7 @@ void MainApplication::ImportApply() {
     xfer_log("import     applied %d console(s), %d repo(s); previous %d kept for "
              "restore", consoles, repos, SOURCES_BAK_SLOTS);
     config_sort_az(&g_cfg); // commit_config's internal sort is by slug, not display name
-    config_seed_rom_folders(&g_cfg, roms_root(&g_tico));
+    config_seed_rom_folders(&g_cfg, roms_root(&g_tico), g_prefs.custom_folders);
 
     char done[96];
     snprintf(done, sizeof(done), tr(S_IMPORT_DONE), consoles, repos);
@@ -11808,7 +11814,7 @@ void MainApplication::RestoreBackup() {
     xfer_log("restore    applied %d console(s), %d repo(s) from backup slot %d",
              consoles, repos, slot[pick]);
     config_sort_az(&g_cfg); // commit_config's internal sort is by slug, not display name
-    config_seed_rom_folders(&g_cfg, roms_root(&g_tico));
+    config_seed_rom_folders(&g_cfg, roms_root(&g_tico), g_prefs.custom_folders);
 
     char done[96];
     snprintf(done, sizeof(done), tr(S_RESTORE_DONE), consoles, repos);
@@ -14014,6 +14020,165 @@ void MainApplication::GotoLanguage() {
     }
 }
 
+// ---- Folders: assigning, creating, hiding and deleting ----------------------
+// A console installs into exactly one folder. These helpers answer "which
+// folder is that", "does another console already own this one", and "is this a
+// folder we must never touch" for the Use-for-a-console / New folder / Delete
+// folder flows and for the desktop's assign-a-folder request.
+static std::string folder_norm(std::string v) {
+    while (v.size() > 6 && v.back() == '/') v.pop_back(); // keep "sdmc:/"
+    return v;
+}
+
+// The console a Library-root ROW stands for: only when the row is named by the
+// console's folder target ("psx") -- which is also what the synthetic custom-
+// folder rows use. A folder merely *named like* a console's display name (the
+// user's own "Sony PlayStation") is an ordinary folder, not that console.
+static ConsoleGroup *console_for_row(const std::string &name) {
+    for (int i = 0; i < g_cfg.console_count; i++)
+        if (strcasecmp(g_cfg.consoles[i].target, name.c_str()) == 0)
+            return &g_cfg.consoles[i];
+    return nullptr;
+}
+
+static std::string folder_leaf(const std::string &dir) {
+    std::string d = folder_norm(dir);
+    auto p = d.find_last_of('/');
+    return p == std::string::npos ? d : d.substr(p + 1);
+}
+
+// The folder a console installs into right now (honours the master switch).
+static std::string console_effective_dir(const ConsoleGroup &c) {
+    if (g_prefs.custom_folders && c.folder[0]) return folder_norm(c.folder);
+    return folder_norm(std::string(roms_root(&g_tico)) + "/" + c.target);
+}
+
+// The console (other than `except`) that owns `dir`, counting a stored custom
+// folder even while the master switch is off -- assigning turns it on, which
+// makes every stored folder live again.
+static ConsoleGroup *console_owning_dir(const std::string &dir,
+                                        const ConsoleGroup *except) {
+    std::string d = folder_norm(dir);
+    for (int i = 0; i < g_cfg.console_count; i++) {
+        ConsoleGroup *c = &g_cfg.consoles[i];
+        if (c == except) continue;
+        std::string cd =
+            c->folder[0]
+                ? folder_norm(c->folder)
+                : folder_norm(std::string(roms_root(&g_tico)) + "/" + c->target);
+        if (strcasecmp(cd.c_str(), d.c_str()) == 0) return c;
+    }
+    return nullptr;
+}
+
+// A name the FAT card accepts. Spaces are fine (and common: "Sony PlayStation").
+static bool folder_name_ok(const std::string &n) {
+    if (n.empty() || n.size() > 80) return false;
+    if (n == "." || n == "..") return false;
+    if (n.back() == '.' || n.back() == ' ') return false;
+    for (unsigned char ch : n)
+        if (ch < 32 || strchr("\\/:*?\"<>|", ch)) return false;
+    return true;
+}
+
+// Folders HaulNX must never hand to a console or delete: the card root, the
+// ROM root itself (or anything above it), and the system/CFW folders.
+static bool folder_is_system(const std::string &dir_in) {
+    std::string d = folder_norm(dir_in);
+    if (d.size() < 7 || d.compare(0, 6, "sdmc:/") != 0) return true;
+    if (d.find("..") != std::string::npos || d.find('\\') != std::string::npos)
+        return true;
+    std::string root = folder_norm(roms_root(&g_tico));
+    if (strcasecmp(d.c_str(), root.c_str()) == 0) return true;
+    if (strncasecmp(root.c_str(), (d + "/").c_str(), d.size() + 1) == 0)
+        return true; // an ancestor of the ROM root
+    std::string rel = d.substr(6);
+    std::string top = rel.substr(0, rel.find('/'));
+    static const char *const kTop[] = {
+        "atmosphere", "switch",   "bootloader", "config",  "Nintendo", "emummc",
+        "backup",     "contents", "sept",       "ReiNX",   "SXOS",     "_HaulNX",
+        "warmboot_mariko"};
+    for (const char *k : kTop) {
+        if (strcasecmp(top.c_str(), k) != 0) continue;
+        // The few folders users keep their own things under are only
+        // protected as a whole; everything inside the CFW/system ones is too.
+        bool whole_only = !strcasecmp(k, "switch") || !strcasecmp(k, "config") ||
+                          !strcasecmp(k, "backup") || !strcasecmp(k, "contents");
+        if (!whole_only || rel == top) return true;
+    }
+    return false;
+}
+
+static void tree_stats(const std::string &path, int *files, uint64_t *bytes,
+                       int depth = 16) {
+    if (depth <= 0) return;
+    DIR *d = opendir(path.c_str());
+    if (!d) return;
+    while (struct dirent *e = readdir(d)) {
+        if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..")) continue;
+        std::string full = path + "/" + e->d_name;
+        struct stat st;
+        if (stat(full.c_str(), &st) != 0) continue;
+        if (S_ISDIR(st.st_mode)) {
+            tree_stats(full, files, bytes, depth - 1);
+        } else {
+            (*files)++;
+            *bytes += (uint64_t)st.st_size;
+        }
+    }
+    closedir(d);
+}
+
+// Move every entry of `from` into `to` with a rename (instant on one card).
+// Anything whose name already exists in `to`, or that is `to` itself or holds
+// it, is left where it is and counted as skipped.
+static void move_dir_contents(const std::string &from, const std::string &to,
+                              int *moved, int *skipped) {
+    fs_mkdir_p(to.c_str());
+    std::string tdir = folder_norm(to);
+    for (const DirEnt &e : list_dir(from)) {
+        std::string src = folder_norm(from) + "/" + e.name;
+        std::string dst = tdir + "/" + e.name;
+        struct stat st;
+        bool holds_target = strcasecmp(src.c_str(), tdir.c_str()) == 0 ||
+                            strncasecmp(tdir.c_str(), (src + "/").c_str(),
+                                        src.size() + 1) == 0;
+        if (holds_target || stat(dst.c_str(), &st) == 0 ||
+            rename(src.c_str(), dst.c_str()) != 0) {
+            (*skipped)++;
+        } else {
+            (*moved)++;
+        }
+    }
+}
+
+// Top-level ROM-root folders that belong to no console: what the Library lists
+// as plain, icon-less rows, and what can be hidden or deleted by name.
+static std::vector<std::string> unassigned_root_dirs() {
+    std::vector<std::string> out;
+    std::string root = roms_root(&g_tico);
+    for (const DirEnt &e : list_dir(root)) {
+        if (!e.is_dir) continue;
+        if (console_for_row(e.name)) continue;
+        if (g_prefs.custom_folders) {
+            std::string d = folder_norm(root + "/" + e.name);
+            bool adopted = false;
+            for (int c = 0; c < g_cfg.console_count; c++)
+                if (g_cfg.consoles[c].folder[0] &&
+                    strcasecmp(folder_norm(g_cfg.consoles[c].folder).c_str(),
+                               d.c_str()) == 0)
+                    adopted = true;
+            if (adopted) continue;
+        }
+        out.push_back(e.name);
+    }
+    std::sort(out.begin(), out.end(),
+              [](const std::string &a, const std::string &b) {
+                  return strcasecmp(a.c_str(), b.c_str()) < 0;
+              });
+    return out;
+}
+
 // Colour of the Shown/Hidden state label on the Manage consoles rows. Shared
 // by the initial build and the in-place toggle so the two never drift.
 // Per-console visibility spans the two tabs it can appear on. It is stored as
@@ -14082,6 +14247,19 @@ void MainApplication::GotoManage() {
     if (g_cfg.console_count == 0) {
         this->layout->AddRow(tr(S_NO_CONSOLES));
     }
+    // Folders that belong to no console follow the consoles, so each can be
+    // hidden from (or shown in) the Library the same way, plus a row to make a
+    // new one. Row index past console_count maps into manage_dirs.
+    this->manage_dirs = unassigned_root_dirs();
+    for (const std::string &name : this->manage_dirs) {
+        bool hid = prefs_dir_hidden(&g_prefs, name.c_str());
+        this->layout->AddRow2(std::string(tr(S_DIR_PREFIX)) + name,
+                              hid ? tr(S_VIS_HIDDEN) : tr(S_FOLDER_SHOWN),
+                              g_theme->row_text,
+                              console_vis_color(hid ? VIS_HIDDEN : VIS_BOTH),
+                              -1.0f, console_display_icon(name.c_str()));
+    }
+    this->layout->AddRow(tr(S_NEW_FOLDER));
 }
 
 // Y on Manage consoles: bulk-set every console's visibility in one shot
@@ -14159,6 +14337,23 @@ void MainApplication::GotoCreds() {
 
 // Display name used for Installed sorting: root console folders sort by their
 // full name (matching what's shown), everything else by its raw name.
+// True if `dir` is some console's custom install folder (case-insensitive,
+// trailing slashes ignored -- FAT names). Lets the Library root drop the raw
+// folder row for a folder adopted via "Use for a console", which is already
+// listed under that console's own name.
+static bool is_console_custom_dir(const std::string &dir) {
+    auto trim = [](std::string v) {
+        while (v.size() > 1 && v.back() == '/') v.pop_back();
+        return v;
+    };
+    std::string d = trim(dir);
+    for (int c = 0; c < g_cfg.console_count; c++) {
+        const char *f = g_cfg.consoles[c].folder;
+        if (f[0] && strcasecmp(trim(f).c_str(), d.c_str()) == 0) return true;
+    }
+    return false;
+}
+
 static const char *inst_disp_name(const DirEnt &d, bool is_root) {
     if (is_root && d.is_dir) {
         const char *f = console_full_name(d.name.c_str());
@@ -14461,13 +14656,13 @@ bool MainApplication::ToolsMenu() {
     // console art) — collapsed into one row each that opens a small chooser
     // dialog, so the panel doesn't keep growing as more transfer/scan
     // methods land. live.row tracks the inventory toggle's new index.
-    live.row = 9;
+    live.row = 10;
     int r = this->SideMenu(tr(S_TOOLS),
                            {tr(S_SORT_INBOX), tr(S_PC_SYNC),
                             tr(S_TIDY_LIBRARY), tr(S_VERIFY_ALL), tr(S_SORT_MENU),
                             tr(S_STORAGE_OVERVIEW), tr(S_ONEGR_SCAN),
                             tr(S_SCAN_ART),
-                            tr(S_APPMAN_MENU),
+                            tr(S_APPMAN_MENU), tr(S_NEW_FOLDER),
                             tr(S_INV_SERVER)},
                            0, "", false, /*from_left=*/true,
                            console_icon("default"), &live, // generic joystick icon
@@ -14502,7 +14697,8 @@ bool MainApplication::ToolsMenu() {
         return false;
     }
     case 8: this->GotoAppUpdates(UPD_KIND_EMU); return false; // Emulators tab, shortcut
-    // row 9 (inventory toggle) is handled in-place by SideMenu; never returns here
+    case 9: this->NewFolderAndAssign(); return false; // New folder (+ pick a console)
+    // row 10 (inventory toggle) is handled in-place by SideMenu; never returns here
     case SIDEMENU_SWITCH: return true;            // flip to per-console Options
     default: return false;                        // dismissed (B)
     }
@@ -14587,16 +14783,28 @@ void MainApplication::ToolsScanConsoleArt() {
 // pressed Y to flip to the Tools panel instead.
 bool MainApplication::ConsoleOptionsMenu(s32 i) {
     if (i < 0 || i >= (s32)g_inst.size() || !g_inst[i].is_dir) return false;
-    ConsoleGroup *g = config_find_console(&g_cfg, g_inst[i].name.c_str());
+    ConsoleGroup *g = console_for_row(g_inst[i].name);
+    // A folder that isn't any console's (the user's own "Sony PlayStation"
+    // next to the default psx): most console actions can't apply, so it gets
+    // its own short menu -- chiefly "Use for a console", which adopts it.
+    if (!g) {
+        this->FolderOptionsMenu(i);
+        return false;
+    }
     const char *full = g ? console_full_name(g->target) : nullptr;
     std::string title = full ? full : g_inst[i].name;
     bool pinned = prefs_dir_pinned(&g_prefs, g_inst[i].name.c_str());
+    // A console living in its own custom folder can have that folder deleted
+    // (last row); the default <ROM root>/<console> folder never can.
+    bool has_custom = g_prefs.custom_folders && g->folder[0];
+    std::vector<std::string> rows = {
+        tr(S_CONSOLE_ART), tr(S_INSTALL_FOLDER), tr(S_CONSOLE_INFO),
+        tr(S_RECEIVE_FROM_PC), tr(S_TIDY_CONSOLE),
+        pinned ? tr(S_UNPIN) : tr(S_PIN), tr(S_HIDE_FROM_PAGE),
+        tr(S_VERIFY_DAT), tr(S_HAVE_MISSING), tr(S_SCAN_BOX_ART_CONSOLE)};
+    if (has_custom) rows.push_back(tr(S_DELETE_FOLDER));
     int r = this->SideMenu(
-        title,
-        {tr(S_CONSOLE_ART), tr(S_INSTALL_FOLDER), tr(S_CONSOLE_INFO),
-         tr(S_RECEIVE_FROM_PC), tr(S_TIDY_CONSOLE),
-         pinned ? tr(S_UNPIN) : tr(S_PIN), tr(S_HIDE_FROM_PAGE),
-         tr(S_VERIFY_DAT), tr(S_HAVE_MISSING), tr(S_SCAN_BOX_ART_CONSOLE)},
+        title, rows,
         0, "", false, /*from_left=*/false,
         console_display_icon(g_inst[i].name.c_str()), nullptr,
         HidNpadButton_Y); // Y → global Tools panel
@@ -14652,10 +14860,316 @@ bool MainApplication::ConsoleOptionsMenu(s32 i) {
         } else {
             this->ToastErr(tr(S_SCAN_BOX_ART_NEED_KEY));
         }
+    } else if (r == 10 && has_custom) { // Delete this console's custom folder
+        this->DeleteFolderFlow(inst_entry_path(this->inst_path, g_inst[i]), title,
+                               (int)(g - g_cfg.consoles));
     } else if (r == SIDEMENU_SWITCH) {
         return true; // flip to the global Tools panel
     }
     return false;
+}
+
+// A console to point a folder at: every console, sorted by its full name.
+// Returns an index into g_cfg.consoles, -1 if the user backed out, or -2 when
+// allow_skip is set and they chose "just create the folder".
+int MainApplication::PickConsoleForFolder(bool allow_skip) {
+    std::vector<std::pair<std::string, int>> picks; // (label, console index)
+    for (int c = 0; c < g_cfg.console_count; c++) {
+        const char *full = console_full_name(g_cfg.consoles[c].target);
+        picks.emplace_back(full ? full : g_cfg.consoles[c].target, c);
+    }
+    std::sort(picks.begin(), picks.end(),
+              [](const std::pair<std::string, int> &a,
+                 const std::pair<std::string, int> &b) {
+                  return strcasecmp(a.first.c_str(), b.first.c_str()) < 0;
+              });
+    std::vector<std::string> opts;
+    for (auto &p : picks) opts.push_back(p.first);
+    if (allow_skip) opts.push_back(tr(S_NEW_FOLDER_NO_CONSOLE));
+    opts.push_back(tr(S_CANCEL));
+    int pr = this->SideMenu(tr(S_USE_FOR_CONSOLE_PICK), opts, 0, "", false, false,
+                            console_icon("default"));
+    if (pr < 0) return -1;
+    if (pr < (int)picks.size()) return picks[pr].second;
+    if (allow_skip && pr == (int)picks.size()) return -2;
+    return -1;
+}
+
+// Point console `ci` at the existing SD folder `dir_in` ("" = back to its
+// default <ROM root>/<console>). Refuses a folder another console already
+// uses, a missing folder and system folders; and when the console's current
+// folder holds games, offers to move them across (move_mode 0 asks, 1 moves,
+// 2 leaves them -- the PC passes 1/2 since it asked the user itself). Only the
+// folder *listing* changes: nothing is ever deleted. Returns true if applied.
+bool MainApplication::AssignConsoleFolder(int ci, const std::string &dir_in,
+                                          int move_mode) {
+    if (ci < 0 || ci >= g_cfg.console_count) return false;
+    const bool ask = (move_mode == 0);
+    ConsoleGroup *g = &g_cfg.consoles[ci];
+    const char *full = console_full_name(g->target);
+    const std::string cname = full ? full : g->target;
+    auto fail = [&](const std::string &msg) {
+        if (ask) this->SideMenu(tr(S_USE_FOR_CONSOLE), {tr(S_OK)}, 0, msg);
+        else this->ToastErr(msg);
+        return false;
+    };
+    char msg[1024];
+
+    const std::string def =
+        folder_norm(std::string(roms_root(&g_tico)) + "/" + g->target);
+    char norm[512];
+    roms_normalize_path(dir_in.c_str(), norm, sizeof(norm));
+    const std::string dir = norm[0] ? folder_norm(norm) : def;
+    const bool is_default = strcasecmp(dir.c_str(), def.c_str()) == 0;
+    const std::string leaf = folder_leaf(dir);
+
+    if (!is_default && folder_is_system(dir)) {
+        snprintf(msg, sizeof(msg), tr(S_FOLDER_PROTECTED), leaf.c_str());
+        return fail(msg);
+    }
+    if (ConsoleGroup *other = console_owning_dir(dir, g)) {
+        const char *of = console_full_name(other->target);
+        snprintf(msg, sizeof(msg), tr(S_FOLDER_IN_USE), leaf.c_str(),
+                 of ? of : other->target);
+        return fail(msg);
+    }
+    struct stat st;
+    if (stat(dir.c_str(), &st) != 0 || !S_ISDIR(st.st_mode)) {
+        if (!is_default || !fs_mkdir_p(dir.c_str())) {
+            snprintf(msg, sizeof(msg), tr(S_FOLDER_MISSING), leaf.c_str());
+            return fail(msg);
+        }
+    }
+
+    const std::string old_dir = console_effective_dir(*g);
+    const bool same = strcasecmp(old_dir.c_str(), dir.c_str()) == 0;
+    bool do_move = false;
+    int moved = 0, skipped = 0;
+    if (!same) {
+        int nfiles = 0;
+        uint64_t nbytes = 0;
+        tree_stats(old_dir, &nfiles, &nbytes);
+        if (nfiles > 0) {
+            if (ask) {
+                const std::string ol = folder_leaf(old_dir);
+                snprintf(msg, sizeof(msg), tr(S_MOVE_GAMES_BODY), nfiles,
+                         human_size(nbytes).c_str(), ol.c_str(), leaf.c_str(),
+                         ol.c_str());
+                int r = this->SideMenu(
+                    tr(S_MOVE_GAMES_TITLE),
+                    {tr(S_MOVE_GAMES_YES), tr(S_MOVE_GAMES_NO), tr(S_CANCEL)}, 0,
+                    msg);
+                if (r < 0 || r == 2) return false; // cancelled: change nothing
+                do_move = (r == 0);
+            } else {
+                do_move = (move_mode == 1);
+            }
+        }
+    }
+    if (do_move) move_dir_contents(old_dir, dir, &moved, &skipped);
+
+    snprintf(g->folder, sizeof(g->folder), "%s", is_default ? "" : dir.c_str());
+    g->shown_installed = true;
+    config_save(&g_cfg);
+    if (!is_default && !g_prefs.custom_folders) g_prefs.custom_folders = true;
+    // An adopted folder is that console's row now; a stale "hidden" mark on its
+    // raw name would only confuse a later un-assign.
+    if (prefs_dir_hidden(&g_prefs, leaf.c_str()))
+        prefs_dir_hide_toggle(&g_prefs, leaf.c_str());
+    prefs_save(&g_prefs);
+
+    snprintf(msg, sizeof(msg), tr(S_USE_FOR_CONSOLE_DONE), leaf.c_str(),
+             cname.c_str());
+    std::string note = msg;
+    if (do_move) {
+        snprintf(msg, sizeof(msg), tr(S_MOVE_GAMES_DONE), moved, skipped);
+        note += "  ·  ";
+        note += msg;
+    }
+    this->Toast(note);
+    return true;
+}
+
+// Ask for a name and create that folder under `parent`. Returns the new
+// folder's path, or "" if cancelled or it couldn't be made.
+std::string MainApplication::NewFolderPrompt(const std::string &parent) {
+    char v[256] = {0};
+    if (!prompt(tr(S_NEW_FOLDER_NAME), "", v, sizeof(v))) return "";
+    std::string name = v;
+    while (!name.empty() && name.front() == ' ') name.erase(0, 1);
+    while (!name.empty() && name.back() == ' ') name.pop_back();
+    if (!folder_name_ok(name)) {
+        this->ToastErr(tr(S_FOLDER_BAD_NAME));
+        return "";
+    }
+    std::string path = folder_norm(parent) + "/" + name;
+    struct stat st;
+    char msg[400];
+    if (stat(path.c_str(), &st) == 0) {
+        snprintf(msg, sizeof(msg), tr(S_FOLDER_EXISTS), name.c_str());
+        this->ToastErr(msg);
+        return "";
+    }
+    if (!fs_mkdir_p(path.c_str())) {
+        snprintf(msg, sizeof(msg), tr(S_FOLDER_CREATE_FAILED), name.c_str());
+        this->ToastErr(msg);
+        return "";
+    }
+    snprintf(msg, sizeof(msg), tr(S_FOLDER_CREATED), name.c_str());
+    this->Toast(msg);
+    return path;
+}
+
+// Tools / Manage consoles "New folder": make a folder in the ROM root, then
+// optionally hand it to a console right away.
+void MainApplication::NewFolderAndAssign() {
+    std::string path = this->NewFolderPrompt(roms_root(&g_tico));
+    if (path.empty()) return;
+    int ci = this->PickConsoleForFolder(/*allow_skip=*/true);
+    std::string reselect = folder_leaf(path);
+    if (ci >= 0 && this->AssignConsoleFolder(ci, path, 0))
+        reselect = g_cfg.consoles[ci].target;
+    if (this->screen == Screen::Installed &&
+        this->inst_path == roms_root(&g_tico)) {
+        this->GotoInstalled(this->inst_path);
+        for (s32 k = 0; k < (s32)g_inst.size(); k++) {
+            if (g_inst[k].name == reselect) {
+                this->layout->SetSel(k);
+                break;
+            }
+        }
+    }
+}
+
+// Delete a custom folder and everything in it, after a confirmation that
+// spells out how much is about to go. `ci` >= 0 when it is that console's own
+// custom folder (the console falls back to its default folder afterwards).
+void MainApplication::DeleteFolderFlow(const std::string &dir_in,
+                                       const std::string &label, int ci) {
+    const std::string dir = folder_norm(dir_in);
+    char msg[768];
+    struct stat st;
+    if (folder_is_system(dir)) {
+        snprintf(msg, sizeof(msg), tr(S_FOLDER_PROTECTED), label.c_str());
+        this->ToastErr(msg);
+        return;
+    }
+    if (stat(dir.c_str(), &st) != 0 || !S_ISDIR(st.st_mode)) {
+        snprintf(msg, sizeof(msg), tr(S_FOLDER_MISSING), label.c_str());
+        this->ToastErr(msg);
+        return;
+    }
+    int nfiles = 0;
+    uint64_t nbytes = 0;
+    tree_stats(dir, &nfiles, &nbytes);
+    snprintf(msg, sizeof(msg), tr(S_DELETE_FOLDER_CONFIRM), label.c_str(),
+             nfiles, human_size(nbytes).c_str());
+    if (!this->ConfirmDanger(tr(S_DELETE_FOLDER), msg)) return;
+    bool ok = fs_rm_rf(dir.c_str());
+    if (ok && ci >= 0 && ci < g_cfg.console_count) {
+        g_cfg.consoles[ci].folder[0] = '\0';
+        config_save(&g_cfg);
+    }
+    snprintf(msg, sizeof(msg),
+             ok ? tr(S_DELETE_FOLDER_DONE) : tr(S_DELETE_FOLDER_FAILED),
+             label.c_str());
+    if (ok) this->Toast(msg);
+    else this->ToastErr(msg);
+    if (this->screen == Screen::Installed)
+        this->GotoInstalled(roms_root(&g_tico));
+}
+
+// The desktop asking us to use an existing folder for a console. Everything is
+// re-checked here (the PC's own checks are a convenience, not a gate).
+void MainApplication::ApplyPcFolderRequest(const char *target, const char *dir,
+                                           bool move) {
+    ConsoleGroup *g = config_find_console(&g_cfg, target);
+    std::string d = dir;
+    if (!g || d.compare(0, 6, "sdmc:/") != 0 || d.find("..") != std::string::npos) {
+        this->ToastErr(tr(S_FOLDER_BAD_NAME));
+        return;
+    }
+    if (!this->AssignConsoleFolder((int)(g - g_cfg.consoles), d, move ? 1 : 2))
+        return;
+    if (this->screen == Screen::Installed &&
+        this->inst_path == roms_root(&g_tico))
+        this->GotoInstalled(this->inst_path);
+}
+
+// Per frame, like InvBoxartTick: pick up an assign-folder request from either
+// transport (Wi-Fi's setconsolefolder route or USB's console_folder_request.json).
+void MainApplication::InvFolderTick() {
+    mtp::FolderReq usb;
+    if (mtp::PollFolderReq(&usb))
+        this->ApplyPcFolderRequest(usb.target, usb.dir, usb.move);
+    if (this->inv_srv.folder_req_target[0]) {
+        std::string t = this->inv_srv.folder_req_target;
+        std::string d = this->inv_srv.folder_req_dir;
+        bool mv = this->inv_srv.folder_req_move;
+        this->inv_srv.folder_req_target[0] = '\0';
+        this->ApplyPcFolderRequest(t.c_str(), d.c_str(), mv);
+    }
+}
+
+// X on a Library-root folder that matches no console. "Use for a console"
+// points that console's folder at this one (turning per-console folders on if
+// needed), so it shows with the console's icon/name, can be hidden or pinned
+// like any console, and is where that console's downloads and PC transfers go
+// from now on -- instead of a nameless extra row beside the default folder.
+// Nothing on the card is ever deleted by assigning; Delete folder is separate.
+void MainApplication::FolderOptionsMenu(s32 i) {
+    if (i < 0 || i >= (s32)g_inst.size() || !g_inst[i].is_dir) return;
+    const std::string name = g_inst[i].name;
+    const std::string dir = inst_entry_path(this->inst_path, g_inst[i]);
+    bool pinned = prefs_dir_pinned(&g_prefs, name.c_str());
+    int r = this->SideMenu(name,
+                           {tr(S_USE_FOR_CONSOLE), tr(S_HIDE_FROM_PAGE),
+                            tr(S_CONSOLE_INFO), pinned ? tr(S_UNPIN) : tr(S_PIN),
+                            tr(S_DELETE_FOLDER)},
+                           0, "", false, /*from_left=*/false,
+                           console_display_icon(name.c_str()));
+    if (r == 1) { // hide: it stays on the card, and Manage consoles brings it back
+        prefs_dir_hide_toggle(&g_prefs, name.c_str());
+        prefs_save(&g_prefs);
+        this->GotoInstalled(this->inst_path);
+        this->layout->SetSel(i);
+        return;
+    }
+    if (r == 2) {
+        this->ConsoleInfoDialog(i);
+        return;
+    }
+    if (r == 3) {
+        prefs_dir_pin_toggle(&g_prefs, name.c_str());
+        prefs_save(&g_prefs);
+        this->GotoInstalled(this->inst_path);
+        this->layout->SetSel(i);
+        return;
+    }
+    if (r == 4) {
+        this->DeleteFolderFlow(dir, name, -1);
+        return;
+    }
+    if (r != 0) return;
+
+    int ci = this->PickConsoleForFolder(false);
+    if (ci < 0) return;
+    ConsoleGroup *g = &g_cfg.consoles[ci];
+    const char *full = console_full_name(g->target);
+    char msg[768];
+    snprintf(msg, sizeof(msg), tr(S_USE_FOR_CONSOLE_CONFIRM), name.c_str(),
+             full ? full : g->target);
+    if (!this->Confirm(tr(S_USE_FOR_CONSOLE), msg)) return;
+    if (!this->AssignConsoleFolder(ci, dir, 0)) return;
+
+    std::string target = g->target;
+    this->GotoInstalled(this->inst_path);
+    for (s32 k = 0; k < (s32)g_inst.size(); k++) {
+        if (g_inst[k].name == target) {
+            this->layout->SetSel(k);
+            break;
+        }
+    }
 }
 
 // Read-only stats for one console (its Options "Console info" row): where it
@@ -15109,11 +15623,20 @@ void MainApplication::GotoInstalled(const std::string &path) {
     // the vector the input handler opens from.
     if (is_root) {
         g_inst.erase(std::remove_if(g_inst.begin(), g_inst.end(),
-                                    [](const DirEnt &e) {
+                                    [&path](const DirEnt &e) {
                                         if (!e.is_dir) return false;
-                                        ConsoleGroup *g = config_find_console(
-                                            &g_cfg, e.name.c_str());
-                                        if (!g) return false;
+                                        ConsoleGroup *g =
+                                            console_for_row(e.name);
+                                        // Not a console's own name, but some
+                                        // console's custom folder: it's listed
+                                        // below under that console instead
+                                        // ("Use for a console"), not twice.
+                                        if (!g)
+                                            return (g_prefs.custom_folders &&
+                                                    is_console_custom_dir(
+                                                        path + "/" + e.name)) ||
+                                                   prefs_dir_hidden(
+                                                       &g_prefs, e.name.c_str());
                                         // Hidden from Installed, or (when custom
                                         // folders are on) redirected to a custom
                                         // folder — re-added below as a synthetic
@@ -19421,14 +19944,10 @@ void MainApplication::HandleInput(u64 down, u64 held,
         // Set (or, with chosen=="", clear) this console's custom install folder,
         // then return to wherever the pick was launched from.
         auto apply_console = [&](const char *chosen) {
-            char norm[512];
-            roms_normalize_path(chosen, norm, sizeof(norm));
             int ci = this->picker_console;
-            snprintf(g_cfg.consoles[ci].folder,
-                     sizeof(g_cfg.consoles[ci].folder), "%s", norm);
-            config_save(&g_cfg);
-            this->Toast(norm[0] ? tr(S_INSTALL_FOLDER_SET)
-                                : tr(S_INSTALL_FOLDER_CLEARED));
+            // Shared with "Use for a console" and the desktop: refuses a folder
+            // another console owns, and offers to move the old folder's games.
+            if (!this->AssignConsoleFolder(ci, chosen, 0)) return;
             return_from_console(ci);
         };
         bool at_root = (this->picker_path == "sdmc:/");
@@ -19471,6 +19990,10 @@ void MainApplication::HandleInput(u64 down, u64 held,
                                          tr(S_ROMS_OVERRIDE_WARN))) {
                 apply_roms(this->picker_path.c_str());
             }
+        } else if (down & HidNpadButton_Minus) {
+            // New folder inside the one being browsed; step into it so X picks it.
+            std::string made = this->NewFolderPrompt(this->picker_path);
+            if (!made.empty()) this->GotoRomPicker(made);
         } else if (down & HidNpadButton_Y) {
             // Reset to the default: the ROM root, or this console's default
             // <ROM root>/<console> folder.
@@ -21106,6 +21629,19 @@ void MainApplication::HandleInput(u64 down, u64 held,
                 // the selected row to the bottom of the viewport.
                 this->layout->SetRowRight(i, console_vis_label(st),
                                           console_vis_color(st));
+            } else if (i >= g_cfg.console_count &&
+                       i - g_cfg.console_count < (s32)this->manage_dirs.size()) {
+                // A folder that belongs to no console: hide / show it.
+                const std::string &nm = this->manage_dirs[i - g_cfg.console_count];
+                prefs_dir_hide_toggle(&g_prefs, nm.c_str());
+                prefs_save(&g_prefs);
+                bool hid = prefs_dir_hidden(&g_prefs, nm.c_str());
+                this->layout->SetRowRight(
+                    i, hid ? tr(S_VIS_HIDDEN) : tr(S_FOLDER_SHOWN),
+                    console_vis_color(hid ? VIS_HIDDEN : VIS_BOTH));
+            } else if (i >= g_cfg.console_count) {
+                this->NewFolderAndAssign();
+                this->GotoManage();
             }
         } else if (down & HidNpadButton_Y) {
             this->ManageConsolesBulkMenu();
@@ -21554,7 +22090,7 @@ void MainApplication::OnLoad() {
     /* Pre-create a folder for every supported console so they appear in the
      * Installed tab before their first download (downloads mkdir on their own,
      * but an untouched console would otherwise never show). */
-    config_seed_rom_folders(&g_cfg, roms_root(&g_tico));
+    config_seed_rom_folders(&g_cfg, roms_root(&g_tico), g_prefs.custom_folders);
     select_theme();
     if (g_prefs.lang[0] && strcmp(g_prefs.lang, "en") != 0) {
         char lpath[256];

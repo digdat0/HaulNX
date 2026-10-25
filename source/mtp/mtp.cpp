@@ -225,6 +225,7 @@ namespace mtp {
          * enough for contention to matter. */
         Mutex         g_boxartlock;
         std::vector<BoxartReq> g_boxartq;
+        std::vector<FolderReq> g_folderq; /* guarded by g_boxartlock too */
         BoxartStatus  g_boxart_status;
 
         void DeleteWorker(void *) {
@@ -357,6 +358,23 @@ namespace mtp {
         if (have) {
             *out = g_boxartq.front();
             g_boxartq.erase(g_boxartq.begin());
+        }
+        mutexUnlock(std::addressof(g_boxartlock));
+        return have;
+    }
+
+    void EnqueueFolderReq(const FolderReq &req) {
+        mutexLock(std::addressof(g_boxartlock));
+        if (g_folderq.size() < 8) g_folderq.push_back(req);
+        mutexUnlock(std::addressof(g_boxartlock));
+    }
+
+    bool PollFolderReq(FolderReq *out) {
+        mutexLock(std::addressof(g_boxartlock));
+        bool have = !g_folderq.empty();
+        if (have) {
+            *out = g_folderq.front();
+            g_folderq.erase(g_folderq.begin());
         }
         mutexUnlock(std::addressof(g_boxartlock));
         return have;

@@ -370,7 +370,8 @@ void config_sort(SourcesConfig *cfg) {
     qsort(cfg->consoles, cfg->console_count, sizeof(ConsoleGroup), cmp_console);
 }
 
-void config_seed_rom_folders(const SourcesConfig *cfg, const char *roms_root) {
+void config_seed_rom_folders(const SourcesConfig *cfg, const char *roms_root,
+                             bool custom_on) {
     if (!cfg || !roms_root || !roms_root[0]) {
         return;
     }
@@ -380,6 +381,19 @@ void config_seed_rom_folders(const SourcesConfig *cfg, const char *roms_root) {
      * repos configured. */
     for (int i = 0; i < cfg->supported_count; i++) {
         if (!cfg->supported[i][0]) {
+            continue;
+        }
+        /* A console that lives in its own custom folder doesn't use
+         * <roms>/<target>; re-creating it every launch is what brought an
+         * empty "psx" back after the user had adopted "Sony PlayStation". */
+        bool custom = false;
+        for (int c = 0; custom_on && c < cfg->console_count; c++) {
+            if (cfg->consoles[c].folder[0] &&
+                strcasecmp(cfg->consoles[c].target, cfg->supported[i]) == 0) {
+                custom = true;
+            }
+        }
+        if (custom) {
             continue;
         }
         char dir[1024];
@@ -917,6 +931,7 @@ void prefs_load(Prefs *p) {
     p->roms_override[0] = '\0';
     p->custom_folders = false;
     p->pinned_dir_count = 0;
+    p->hidden_dir_count = 0;
     p->filter_exts = true;
     p->exclude_ext_count = 0;
     p->skip_installed = true;
@@ -1117,6 +1132,22 @@ void prefs_load(Prefs *p) {
                 child = json_tok_skip(tok, child);
             }
         }
+        idx = json_obj_get(js, tok, 0, "hiddenDirs");
+        if (idx >= 0 && tok[idx].type == JSMN_ARRAY) {
+            int n = tok[idx].size;
+            int child = idx + 1;
+            for (int i = 0; i < n && p->hidden_dir_count < MAX_HIDDEN_DIRS; i++) {
+                if (tok[child].type == JSMN_STRING) {
+                    json_copy(js, tok, child,
+                              p->hidden_dirs[p->hidden_dir_count],
+                              sizeof(p->hidden_dirs[0]));
+                    if (p->hidden_dirs[p->hidden_dir_count][0]) {
+                        p->hidden_dir_count++;
+                    }
+                }
+                child = json_tok_skip(tok, child);
+            }
+        }
     }
     free(tok);
     free(js);
@@ -1163,6 +1194,13 @@ bool prefs_save(const Prefs *p) {
             fputs(", ", f);
         }
         json_write_escaped(f, p->pinned_dirs[i]);
+    }
+    fputs("],\n  \"hiddenDirs\": [", f);
+    for (int i = 0; i < p->hidden_dir_count; i++) {
+        if (i) {
+            fputs(", ", f);
+        }
+        json_write_escaped(f, p->hidden_dirs[i]);
     }
     fprintf(f, "],\n  \"skipInstalled\": %s,\n  \"filterExts\": %s,\n"
                "  \"exBench\": %s,\n  \"exPrealloc\": %s,\n  \"exChunkMb\": %d,\n"
@@ -1224,6 +1262,33 @@ void prefs_dir_pin_toggle(Prefs *p, const char *name) {
         snprintf(p->pinned_dirs[p->pinned_dir_count],
                  sizeof(p->pinned_dirs[0]), "%s", name);
         p->pinned_dir_count++;
+    }
+}
+
+bool prefs_dir_hidden(const Prefs *p, const char *name) {
+    for (int i = 0; i < p->hidden_dir_count; i++) {
+        if (strcasecmp(p->hidden_dirs[i], name) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void prefs_dir_hide_toggle(Prefs *p, const char *name) {
+    for (int i = 0; i < p->hidden_dir_count; i++) {
+        if (strcasecmp(p->hidden_dirs[i], name) == 0) {
+            for (int j = i; j < p->hidden_dir_count - 1; j++) {
+                memcpy(p->hidden_dirs[j], p->hidden_dirs[j + 1],
+                       sizeof(p->hidden_dirs[0]));
+            }
+            p->hidden_dir_count--;
+            return;
+        }
+    }
+    if (p->hidden_dir_count < MAX_HIDDEN_DIRS) {
+        snprintf(p->hidden_dirs[p->hidden_dir_count],
+                 sizeof(p->hidden_dirs[0]), "%s", name);
+        p->hidden_dir_count++;
     }
 }
 

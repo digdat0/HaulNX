@@ -167,6 +167,12 @@ typedef struct {
     int  boxsearch_w[BOXART_MAX_CANDIDATES];
     int  boxsearch_h[BOXART_MAX_CANDIDATES];
     char boxpick_req_target[64]; /* set by POST .../boxartpick; consumed by InvBoxartTick */
+    /* POST .../setconsolefolder: the companion assigning an existing SD folder
+     * to a console. The UI thread (MainApplication::InvFolderTick) validates and
+     * applies it, since the config is UI-thread state. */
+    char folder_req_target[64];
+    char folder_req_dir[512];
+    bool folder_req_move;      /* also move the old folder's games across */
     int  boxpick_req_index;      /* index into the last search's results */
     bool boxpick_running;
     bool boxpick_done; /* stays true until the next pick starts */

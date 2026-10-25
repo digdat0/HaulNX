@@ -218,6 +218,19 @@ namespace mtp {
     // false (out untouched) when none is waiting.
     bool PollBoxartReq(BoxartReq *out);
 
+    // The companion asking the Switch to use an existing SD folder as one
+    // console's install folder ("console_folder_request.json", the USB mirror
+    // of POST setconsolefolder). Same hand-off as BoxartReq: stashed by the
+    // responder thread, applied (validated, with the optional move of the old
+    // folder's games) by the main thread, which owns the config.
+    struct FolderReq {
+        char target[64];
+        char dir[512];
+        bool move;
+    };
+    void EnqueueFolderReq(const FolderReq &req);
+    bool PollFolderReq(FolderReq *out);
+
     struct BoxartStatus {
         bool search_running = false, search_done = false;
         int  search_count = 0;

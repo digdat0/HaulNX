@@ -137,6 +137,7 @@ namespace mtp {
             bool apply_updsrc; /* root update_sources.json push: validate + apply on finish */
             char art_target[64]; /* non-empty: a console-art push, see kArtPushPrefix */
             bool boxart_req; /* root boxart_request.json push: parse + hand off on finish */
+            bool folder_req; /* console_folder_request.json push: parse + hand off on finish */
             bool sdusage_req; /* root sd_usage_request.txt push: start a Storage scan on finish */
             bool app_req;    /* root app_request.json push: the next app body's metadata */
             bool app_body;   /* root __haulnx_app__<name> push: an app install/update body */
@@ -1302,6 +1303,14 @@ namespace mtp {
             if (is_boxart_req)
                 snprintf(full, sizeof(full), "%s/incoming_boxart_req.mtp", CONFIG_DIR);
 
+            /* The desktop assigning an existing SD folder to a console (the
+             * USB mirror of POST setconsolefolder): a tiny JSON, staged and
+             * parsed on completion like boxart_request.json. */
+            bool is_folder_req = ctlp &&
+                                 strcmp(fname, "console_folder_request.json") == 0;
+            if (is_folder_req)
+                snprintf(full, sizeof(full), "%s/incoming_folder_req.mtp", CONFIG_DIR);
+
             /* The desktop Storage page starting a scan: a few lines of
              * folder names (the USB mirror of GET sd_usage_scan?p=).
              * Staged single-slot like the others; read and handed to
@@ -1335,7 +1344,7 @@ namespace mtp {
                 snprintf(full, sizeof(full), "%s/incoming_app_%u.mtp", CONFIG_DIR,
                          static_cast<unsigned>(++c->app_seq));
 
-            if (in_ctl && !(is_updsrc || is_art_push || is_boxart_req || is_sdusage_req ||
+            if (in_ctl && !(is_updsrc || is_art_push || is_boxart_req || is_folder_req || is_sdusage_req ||
                             is_app_req || is_app_body || is_dat_bulk)) {
                 RC(c, PtpResponseCode_AccessDenied, trans); return;
             }
@@ -1343,6 +1352,7 @@ namespace mtp {
             c->pending.active = true;
             c->pending.apply_updsrc = is_updsrc;
             c->pending.boxart_req = is_boxart_req;
+            c->pending.folder_req = is_folder_req;
             c->pending.sdusage_req = is_sdusage_req;
             c->pending.app_req = is_app_req;
             c->pending.app_body = is_app_body;
@@ -2001,6 +2011,35 @@ namespace mtp {
                      * silently ignored on the Wi-Fi side (see InvBoxartTick,
                      * which validates the console once on the UI thread
                      * either way). */
+                    if (c->pending.folder_req) {
+                        size_t len = 0;
+                        char *body = json_read_file(c->pending.path, &len);
+                        if (body) {
+                            int ntok = 0;
+                            jsmntok_t *tok = json_parse_alloc(body, len, &ntok);
+                            if (tok && tok[0].type == JSMN_OBJECT) {
+                                mtp::FolderReq req{};
+                                json_copy(body, tok, json_obj_get(body, tok, 0, "target"),
+                                         req.target, sizeof(req.target));
+                                json_copy(body, tok, json_obj_get(body, tok, 0, "dir"),
+                                         req.dir, sizeof(req.dir));
+                                req.move = json_bool(body, tok,
+                                         json_obj_get(body, tok, 0, "move"));
+                                if (req.target[0] && req.dir[0])
+                                    mtp::EnqueueFolderReq(req);
+                            }
+                            free(tok);
+                            free(body);
+                        }
+                        remove(c->pending.path);
+                        Obj *o = FindHandle(c, c->pending.handle);
+                        if (o) o->parent = 0xFFFFFFFEu; /* orphan the staging entry */
+                        if (!c->stopping) RC(c, PtpResponseCode_Ok, trans);
+                        XferEnd(true);
+                        c->pending.active = false;
+                        return;
+                    }
+
                     if (c->pending.boxart_req) {
                         size_t len = 0;
                         char *body = json_read_file(c->pending.path, &len);
